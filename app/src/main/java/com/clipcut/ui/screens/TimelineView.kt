@@ -2,7 +2,6 @@ package com.clipcut.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -61,7 +60,7 @@ fun TimelineView(
                 .pointerInput(totalDurationUs) {
                     detectTapGestures { offset ->
                         if (totalDurationUs > 0) {
-                            val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                            val fraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
                             onSeek((fraction * totalDurationUs).toLong())
                         }
                     }
@@ -70,7 +69,7 @@ fun TimelineView(
                     detectHorizontalDragGestures(
                         onDragStart = { offset ->
                             if (totalDurationUs > 0) {
-                                val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                                val fraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
                                 onSeek((fraction * totalDurationUs).toLong())
                             }
                         },
@@ -168,7 +167,9 @@ fun TimelineView(
                                 .height(56.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(DarkSurface)
-                                .clickable { onAddMediaClick() },
+                                .pointerInput(Unit) {
+                                    detectTapGestures { onAddMediaClick() }
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -181,7 +182,7 @@ fun TimelineView(
                         var runningOffsetUs = 0L
                         videoClips.forEachIndexed { index, clip ->
                             val isSelected = clip.id == selectedClipId
-                            val weight = (clip.effectiveDurationUs.toFloat() /
+                            val clipWeight = (clip.effectiveDurationUs.toFloat() /
                                     maxOf(1L, totalDurationUs).toFloat())
                                 .coerceAtLeast(0.08f)
                             val clipStartUs = runningOffsetUs
@@ -191,10 +192,9 @@ fun TimelineView(
                                 clip = clip,
                                 index = index,
                                 isSelected = isSelected,
-                                clipWeight = weight,
+                                clipWeight = clipWeight,
                                 clipStartUs = clipStartUs,
                                 onSelectClip = onSelectClip,
-                                onSeek = onSeek,
                                 onTrimClip = onTrimClip
                             )
                         }
@@ -287,18 +287,14 @@ fun TimelineView(
     }
 }
 
-/**
- * One clip row with local trim state. Commits to the ViewModel on drag end.
- */
 @Composable
 private fun RowScope.TimelineClip(
     clip: TimelineItem,
     index: Int,
     isSelected: Boolean,
     clipWeight: Float,
-    clipStartUs: Long,
+    @Suppress("UNUSED_PARAMETER") clipStartUs: Long,
     onSelectClip: (String) -> Unit,
-    onSeek: (Long) -> Unit,
     onTrimClip: (String, Long, Long) -> Unit
 ) {
     BoxWithConstraints(
@@ -334,9 +330,12 @@ private fun RowScope.TimelineClip(
                     color = if (isSelected) AccentPrimary else TimelineClipBorder,
                     shape = RoundedCornerShape(8.dp)
                 )
-                .clickable {
-                    onSelectClip(clip.id)
-                    onSeek(clipStartUs)
+                .pointerInput(clip.id) {
+                    detectTapGestures(
+                        onTap = {
+                            onSelectClip(clip.id)
+                        }
+                    )
                 }
         ) {
             Column(
@@ -365,7 +364,6 @@ private fun RowScope.TimelineClip(
             }
 
             if (isSelected) {
-                // -------- Left trim handle --------
                 TrimHandle(
                     edge = TrimEdge.LEFT,
                     pixelsPerUs = pixelsPerSourceUs,
@@ -380,7 +378,6 @@ private fun RowScope.TimelineClip(
                     }
                 )
 
-                // -------- Right trim handle --------
                 TrimHandle(
                     edge = TrimEdge.RIGHT,
                     pixelsPerUs = pixelsPerSourceUs,
@@ -404,10 +401,6 @@ private fun RowScope.TimelineClip(
 
 enum class TrimEdge { LEFT, RIGHT }
 
-/**
- * Draggable trim handle. Claims the gesture on the first down so the parent
- * scrub detector never sees the event.
- */
 @Composable
 private fun TrimHandle(
     edge: TrimEdge,

@@ -7,6 +7,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.clipcut.core.log.AppLog
+import com.clipcut.core.model.AudioTrackItem
 import com.clipcut.core.model.Project
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,7 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class PreviewPlayerManager(private val context: Context) {
 
     private var exoPlayer: ExoPlayer? = null
-    private var musicPlayer: ExoPlayer? = null
+    private val musicPlayers = mutableMapOf<String, ExoPlayer>()
 
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
@@ -45,10 +46,10 @@ class PreviewPlayerManager(private val context: Context) {
                         _isPlaying.value = playing
                         if (playing) {
                             startPositionUpdates()
-                            musicPlayer?.play()
+                            musicPlayers.values.forEach { it.play() }
                         } else {
                             stopPositionUpdates()
-                            musicPlayer?.pause()
+                            musicPlayers.values.forEach { it.pause() }
                         }
                     }
 
@@ -58,7 +59,7 @@ class PreviewPlayerManager(private val context: Context) {
                             _isPlaying.value = false
                             _currentPositionUs.value = _totalDurationUs.value
                             stopPositionUpdates()
-                            musicPlayer?.pause()
+                            musicPlayers.values.forEach { it.pause() }
                             AppLog.d(TAG, "Playback reached END - ready to replay")
                         }
                     }
@@ -69,9 +70,6 @@ class PreviewPlayerManager(private val context: Context) {
                 })
             }
             exoPlayer = player
-
-            val mPlayer = ExoPlayer.Builder(context).build()
-            musicPlayer = mPlayer
             AppLog.i(TAG, "ExoPlayer preview initialized")
         }
         return exoPlayer!!
@@ -86,15 +84,13 @@ class PreviewPlayerManager(private val context: Context) {
 
         if (project.videoClips.isEmpty()) {
             player.clearMediaItems()
-            musicPlayer?.clearMediaItems()
+            releaseAllMusicPlayers()
             _totalDurationUs.value = 0L
             lastClipsFingerprint = null
             lastMusicFingerprint = null
             return
         }
 
-        // Generate fingerprint of clips (id, uri, trims, speed)
-        // If only filters, text overlays, or volumes changed, DO NOT re-prepare ExoPlayer!
         val newClipsFingerprint = project.videoClips.joinToString(";") { clip ->
             "${clip.id}:${clip.uri}:${clip.trimStartUs}:${clip.trimEndUs}:${clip.speed}"
         }
@@ -129,38 +125,76 @@ class PreviewPlayerManager(private val context: Context) {
             AppLog.d(TAG, "Re-prepared ExoPlayer with ${mediaItems.size} clips (dur=${project.totalDurationUs / 1000}ms)")
         }
 
-        // Background music player sync
-        if (project.audioTracks.isNotEmpty()) {
-            val musicItem = project.audioTracks.first()
-            val mPlayer = musicPlayer ?: ExoPlayer.Builder(context).build().also { musicPlayer = it }
-            mPlayer.volume = (project.backgroundMusicVolume * musicItem.volume).coerceIn(0f, 2f)
+        syncMusicPlayers(project)
+    }
 
-            val newMusicFingerprint = "${musicItem.id}:${musicItem.uri}"
-            if (lastMusicFingerprint != newMusicFingerprint) {
-                lastMusicFingerprint = newMusicFingerprint
-                mPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(musicItem.uri)))
-                mPlayer.prepare()
-            }
-        } else {
-            musicPlayer?.clearMediaItems()
-            lastMusicFingerprint = null
+    private fun syncMusicPlayers(project: Project) {
+        val newFingerprint = project.audioTracks.joinToString(";") { track ->
+            "${track.id}:${track.uri}"
         }
+
+        if (lastMusicFingerprint == newFingerprint) {
+            updateMusicVolumes(project)
+            return
+        }
+
+        lastMusicFingerprint = newFingerprint
+
+        val currentTrackIds = project.audioTracks.map { it.id }.toSet()
+        val toRemove = musicPlayers.keys.filter { it !in currentTrackIds }
+        for (id in toRemove) {
+            musicPlayers.remove(id)?.release()
+        }
+
+        for (track in project.audioTracks) {
+            val existing = musicPlayers[track.id]
+            if (existing == null) {
+                val newPlayer = ExoPlayer.Builder(context).build().apply {
+                    repeatMode = Player.REPEAT_MODE_OFF
+                    setMediaItem(MediaItem.fromUri(Uri.parse(track.uri)))
+                    prepare()
+                }
+                musicPlayers[track.id] = newPlayer
+            }
+        }
+
+        updateMusicVolumes(project)
+
+        val videoPlayer = exoPlayer
+        if (videoPlayer != null && videoPlayer.isPlaying) {
+            musicPlayers.values.forEach { it.play() }
+        }
+    }
+
+    private fun updateMusicVolumes(project: Project) {
+        val bgVol = project.backgroundMusicVolume
+        for (track in project.audioTracks) {
+            val player = musicPlayers[track.id] ?: continue
+            player.volume = (bgVol * track.volume).coerceIn(0f, 2f)
+        }
+    }
+
+    private fun releaseAllMusicPlayers() {
+        musicPlayers.values.forEach { it.release() }
+        musicPlayers.clear()
+        lastMusicFingerprint = null
     }
 
     fun play() {
         val player = exoPlayer ?: return
-        // If playback has ended or is at the very end of timeline, rewind to start first!
-        if (player.playbackState == Player.STATE_ENDED || _currentPositionUs.value >= (_totalDurationUs.value - 50_000L).coerceAtLeast(0L)) {
+        if (player.playbackState == Player.STATE_ENDED ||
+            _currentPositionUs.value >= (_totalDurationUs.value - 50_000L).coerceAtLeast(0L)
+        ) {
             AppLog.d(TAG, "Playback at end; rewinding to 0 before play")
             seekToUs(0L)
         }
         player.play()
-        musicPlayer?.play()
+        musicPlayers.values.forEach { it.play() }
     }
 
     fun pause() {
         exoPlayer?.pause()
-        musicPlayer?.pause()
+        musicPlayers.values.forEach { it.pause() }
     }
 
     fun togglePlayPause() {
@@ -193,7 +227,17 @@ class PreviewPlayerManager(private val context: Context) {
         }
 
         player.seekTo(targetWindowIndex, windowOffsetMs.coerceAtLeast(0L))
-        musicPlayer?.seekTo(clampedTargetUs / 1000)
+
+        for (track in proj.audioTracks) {
+            val musicPlayer = musicPlayers[track.id] ?: continue
+            val localPlaybackUs = clampedTargetUs - track.timelineStartUs
+            if (localPlaybackUs >= 0L) {
+                musicPlayer.seekTo(localPlaybackUs / 1000)
+            } else {
+                musicPlayer.seekTo(0L)
+            }
+        }
+
         _currentPositionUs.value = clampedTargetUs
     }
 
@@ -206,7 +250,7 @@ class PreviewPlayerManager(private val context: Context) {
         positionJob = scope.launch {
             while (isActive) {
                 updateCurrentTimelinePosition()
-                delay(33) // ~30 fps position ticker
+                delay(33)
             }
         }
     }
@@ -249,8 +293,7 @@ class PreviewPlayerManager(private val context: Context) {
         scope.cancel()
         exoPlayer?.release()
         exoPlayer = null
-        musicPlayer?.release()
-        musicPlayer = null
+        releaseAllMusicPlayers()
         AppLog.d(TAG, "PreviewPlayerManager released")
     }
 

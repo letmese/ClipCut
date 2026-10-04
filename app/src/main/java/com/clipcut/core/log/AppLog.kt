@@ -16,6 +16,16 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 
+private val TIME_FORMATTER: ThreadLocal<SimpleDateFormat> = object : ThreadLocal<SimpleDateFormat>() {
+    override fun initialValue(): SimpleDateFormat =
+        SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+}
+
+private val FILE_NAME_FORMATTER: ThreadLocal<SimpleDateFormat> = object : ThreadLocal<SimpleDateFormat>() {
+    override fun initialValue(): SimpleDateFormat =
+        SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+}
+
 data class LogEntry(
     val timestamp: Long = System.currentTimeMillis(),
     val level: Level,
@@ -26,7 +36,7 @@ data class LogEntry(
     enum class Level { VERBOSE, DEBUG, INFO, WARN, ERROR, FATAL }
 
     val formattedTime: String
-        get() = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(timestamp))
+        get() = TIME_FORMATTER.get()!!.format(Date(timestamp))
 
     fun toLogLine(): String {
         val base = "[$formattedTime] [${level.name.first()}] [$tag] $message"
@@ -43,7 +53,9 @@ data class LogEntry(
 object AppLog {
     private const val MAX_MEMORY_LOGS = 2000
     private const val MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
-    private val diskExecutor = Executors.newSingleThreadExecutor()
+    private val diskExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "AppLog-Disk")
+    }
 
     private val _logsFlow = MutableStateFlow<List<LogEntry>>(emptyList())
     val logsFlow: StateFlow<List<LogEntry>> = _logsFlow.asStateFlow()
@@ -60,7 +72,6 @@ object AppLog {
         logDir = dir
         logFile = File(dir, "clipcut.log")
 
-        // Set uncaught exception handler
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             f("CRASH", "FATAL CRASH on thread ${thread.name}: ${throwable.message}", throwable)
@@ -83,7 +94,6 @@ object AppLog {
     private fun log(level: LogEntry.Level, tag: String, message: String, throwable: Throwable? = null) {
         val entry = LogEntry(level = level, tag = tag, message = message, throwable = throwable)
 
-        // Native logcat
         when (level) {
             LogEntry.Level.VERBOSE -> Log.v(tag, message, throwable)
             LogEntry.Level.DEBUG -> Log.d(tag, message, throwable)
@@ -93,14 +103,12 @@ object AppLog {
             LogEntry.Level.FATAL -> Log.wtf(tag, message, throwable)
         }
 
-        // Memory buffer
         if (inMemoryLogs.size >= MAX_MEMORY_LOGS) {
             inMemoryLogs.removeFirst()
         }
         inMemoryLogs.addLast(entry)
         _logsFlow.value = inMemoryLogs.toList()
 
-        // Disk write
         val target = logFile
         if (target != null) {
             val line = entry.toLogLine()
@@ -172,10 +180,11 @@ object AppLog {
                 "${context.packageName}.fileprovider",
                 file
             )
+            val timestamp = FILE_NAME_FORMATTER.get()!!.format(Date())
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_SUBJECT, "ClipCut Error Log - ${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}")
+                putExtra(Intent.EXTRA_SUBJECT, "ClipCut Error Log - $timestamp")
                 putExtra(Intent.EXTRA_TEXT, "ClipCut diagnostic log file attached.")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
