@@ -73,6 +73,7 @@ class ExportEngine(
         var overlayRenderer: OverlayRenderer? = null
         var transitionFilter: TransitionFilter? = null
         var outgoingFbo: FramebufferTexture? = null
+        var incomingTransitionTexId = 0
 
         val startTimeMs = System.currentTimeMillis()
 
@@ -97,6 +98,15 @@ class ExportEngine(
             transitionFilter = TransitionFilter().also { it.init() }
             outgoingFbo = FramebufferTexture(config.customWidth, config.customHeight).also { it.init() }
 
+            incomingTransitionTexId = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTransitionTexId)
+            GLES20.glTexImage2D(
+                GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
+                config.customWidth, config.customHeight, 0,
+                GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null
+            )
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+
             val texMatrix = FloatArray(16)
             val mvpMatrix = FloatArray(16)
             var currentTimelineOffsetUs = 0L
@@ -107,12 +117,15 @@ class ExportEngine(
 
                 AppLog.i(TAG, "Processing clip ${clipIndex + 1}/${project.videoClips.size}: ${clip.id} (transition=${clip.transitionType})")
 
-                // IMAGE clips: no transition capture
+                val nextClip = project.videoClips.getOrNull(clipIndex + 1)
+                val nextNeedsTransition = nextClip != null && nextClip.transitionType != TransitionType.NONE
+
+                // IMAGE clips
                 if (clip.mediaType == MediaType.IMAGE) {
                     renderImageClip(
                         clip, currentTimelineOffsetUs, inputSurface, colorFilter,
                         overlayRenderer, muxerWrapper, videoEncoder,
-                        totalDurationUs, onProgress
+                        totalDurationUs, onProgress, outgoingFbo, nextNeedsTransition
                     )
                     currentTimelineOffsetUs += clip.effectiveDurationUs
                     continue
@@ -175,13 +188,12 @@ class ExportEngine(
                                 height = config.customHeight
                             )
 
-                            // 2. Capture the incoming frame into a temporary texture
-                            //    using glCopyTexImage2D from the current framebuffer.
-                            val incomingTexId = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
-                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTexId)
-                            GLES20.glCopyTexImage2D(
-                                GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
-                                0, 0, config.customWidth, config.customHeight, 0
+                            // 2. Capture the incoming frame into pre-allocated texture
+                            //    using glCopyTexSubImage2D from the current framebuffer (zero alloc).
+                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTransitionTexId)
+                            GLES20.glCopyTexSubImage2D(
+                                GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                                config.customWidth, config.customHeight
                             )
                             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
 
@@ -195,14 +207,12 @@ class ExportEngine(
                             transitionFilter!!.setProgress(progress)
                             transitionFilter!!.drawTransition(
                                 textureOutId = outgoingFbo!!.textureId,
-                                textureInId = incomingTexId,
+                                textureInId = incomingTransitionTexId,
                                 texMatrix = GlUtil.IDENTITY_MATRIX,
                                 mvpMatrix = GlUtil.IDENTITY_MATRIX,
                                 width = config.customWidth,
                                 height = config.customHeight
                             )
-
-                            GLES20.glDeleteTextures(1, intArrayOf(incomingTexId), 0)
                         } else {
                             // Normal render
                             colorFilter.updateConfig(clip.filterConfig)
@@ -223,23 +233,16 @@ class ExportEngine(
                             viewportHeight = config.customHeight
                         )
 
-                        // Capture the current frame into the outgoing FBO so the
-                        // next clip's transition has something to blend from.
-                        outgoingFbo!!.bind()
-                        GLES20.glClearColor(0f, 0f, 0f, 1f)
-                        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-                        colorFilter.drawOes(
-                            texId = oesTexId,
-                            texMatrix = texMatrix,
-                            mvpMatrix = mvpMatrix,
-                            rotationDegrees = rotation,
-                            width = config.customWidth,
-                            height = config.customHeight
-                        )
-                        outgoingFbo!!.unbind()
-
-                        // Restore default viewport
-                        GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
+                        // Bug #1 & #2 Fix: Capture composited frame with overlays directly into outgoingFbo
+                        // only when the next clip actually requires a transition.
+                        if (nextNeedsTransition) {
+                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, outgoingFbo!!.textureId)
+                            GLES20.glCopyTexSubImage2D(
+                                GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                                config.customWidth, config.customHeight
+                            )
+                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+                        }
 
                         inputSurface.setPresentationTime(outputPtsUs * 1000L)
                         inputSurface.swapBuffers()
@@ -290,6 +293,9 @@ class ExportEngine(
             if (outputFile.exists()) outputFile.delete()
             Result.failure(t)
         } finally {
+            if (incomingTransitionTexId != 0) {
+                GLES20.glDeleteTextures(1, intArrayOf(incomingTransitionTexId), 0)
+            }
             outgoingFbo?.release()
             transitionFilter?.release()
             colorFilter?.release()
@@ -308,7 +314,9 @@ class ExportEngine(
         muxerWrapper: MediaMuxerWrapper,
         videoEncoder: VideoEncoder,
         totalDurationUs: Long,
-        onProgress: (Float, String) -> Unit
+        onProgress: (Float, String) -> Unit,
+        outgoingFbo: FramebufferTexture?,
+        nextNeedsTransition: Boolean
     ) {
         val bitmap = try {
             context.contentResolver.openInputStream(Uri.parse(clip.uri))?.use { BitmapFactory.decodeStream(it) }
@@ -338,9 +346,23 @@ class ExportEngine(
                 colorFilter.draw(texId, GlUtil.IDENTITY_MATRIX, mvpMatrix, config.customWidth, config.customHeight, GLES20.GL_TEXTURE_2D)
                 overlayRenderer.renderOverlays(project.overlays, outputPtsUs, config.customWidth, config.customHeight)
 
+                // Bug #4 Fix: Capture final frame of image clip into outgoingFbo for transition into next clip
+                if (nextNeedsTransition && outgoingFbo != null && (framePtsUs + frameIntervalUs >= durationUs)) {
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, outgoingFbo.textureId)
+                    GLES20.glCopyTexSubImage2D(
+                        GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                        config.customWidth, config.customHeight
+                    )
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+                }
+
                 inputSurface.setPresentationTime(outputPtsUs * 1000L)
                 inputSurface.swapBuffers()
                 videoEncoder.drainEncoder(muxerWrapper, false)
+
+                val videoProgress = (outputPtsUs.toFloat() / totalDurationUs.toFloat()).coerceIn(0f, 1f) * 0.75f
+                onProgress(videoProgress, "Encoding video frames...")
+
                 framePtsUs += frameIntervalUs
             }
         } finally {

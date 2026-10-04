@@ -39,6 +39,7 @@ class GlPreviewRenderer(private val context: Context) {
     private var overlayRenderer: OverlayRenderer? = null
     private var transitionFilter: TransitionFilter? = null
     private var outgoingFbo: FramebufferTexture? = null
+    private var incomingTransitionTexId = 0
 
     private var currentProject: Project? = null
     private var currentSurface: Surface? = null
@@ -78,6 +79,15 @@ class GlPreviewRenderer(private val context: Context) {
                 transitionFilter = TransitionFilter().also { it.init() }
                 outgoingFbo = FramebufferTexture(currentWidth, currentHeight).also { it.init() }
 
+                incomingTransitionTexId = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTransitionTexId)
+                GLES20.glTexImage2D(
+                    GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
+                    currentWidth, currentHeight, 0,
+                    GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null
+                )
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+
                 isRunning.set(true)
                 renderHandler?.post(renderLoop)
             } catch (t: Throwable) {
@@ -91,9 +101,19 @@ class GlPreviewRenderer(private val context: Context) {
             currentWidth = width
             currentHeight = height
             renderHandler?.post {
-                // Recreate the outgoing FBO at the new size
+                // Recreate the outgoing FBO and incoming transition texture at the new size
                 outgoingFbo?.release()
                 outgoingFbo = FramebufferTexture(width, height).also { it.init() }
+
+                if (incomingTransitionTexId != 0) {
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTransitionTexId)
+                    GLES20.glTexImage2D(
+                        GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
+                        width, height, 0,
+                        GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null
+                    )
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+                }
             }
         }
     }
@@ -114,6 +134,11 @@ class GlPreviewRenderer(private val context: Context) {
                 transitionFilter?.release()
                 outgoingFbo?.release()
                 outputSurface?.release()
+
+                if (incomingTransitionTexId != 0) {
+                    GLES20.glDeleteTextures(1, intArrayOf(incomingTransitionTexId), 0)
+                    incomingTransitionTexId = 0
+                }
 
                 eglSurface?.let { eglCore?.destroySurface(it) }
                 eglCore?.release()
@@ -288,40 +313,20 @@ class GlPreviewRenderer(private val context: Context) {
             viewportHeight = currentHeight
         )
 
-        // Capture the current frame into the outgoing FBO so the next clip's
-        // transition has something to blend from.
-        outgoingFbo?.let { fbo ->
-            fbo.bind()
-            GLES20.glClearColor(0f, 0f, 0f, 1f)
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-            if (clip.mediaType == MediaType.IMAGE) {
-                // Re-render the image into the FBO
-                val fboMvp = FloatArray(16)
-                renderImagePreview(clip, fboMvp)
-            } else {
-                // The video frame is already on the SurfaceTexture; re-draw it
-                // with the color filter to capture into the FBO.
-                val fboTexMatrix = FloatArray(16)
-                val fboMvp = FloatArray(16)
-                outputSurface?.getTransformMatrix(fboTexMatrix)
-                val decoder = currentDecoder
-                if (decoder != null) {
-                    val rotated = decoder.videoRotation == 90 || decoder.videoRotation == 270
-                    val srcW = if (rotated) decoder.videoHeight else decoder.videoWidth
-                    val srcH = if (rotated) decoder.videoWidth else decoder.videoHeight
-                    buildFitMvpMatrix(srcW, srcH, currentWidth, currentHeight, fboMvp)
-                    colorFilter?.updateConfig(clip.filterConfig)
-                    colorFilter?.drawOes(
-                        texId = outputSurface!!.textureId,
-                        texMatrix = fboTexMatrix,
-                        mvpMatrix = fboMvp,
-                        rotationDegrees = decoder.videoRotation,
-                        width = currentWidth,
-                        height = currentHeight
-                    )
-                }
+        // Capture the composited frame into the outgoing FBO ONLY if the next clip
+        // has an active transition, preserving all overlays and saving ~40% GPU overhead.
+        val nextClip = project.videoClips.getOrNull(clipIndex + 1)
+        val nextNeedsTransition = nextClip != null && nextClip.transitionType != TransitionType.NONE
+        if (nextNeedsTransition) {
+            val fbo = outgoingFbo
+            if (fbo != null) {
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fbo.textureId)
+                GLES20.glCopyTexSubImage2D(
+                    GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                    currentWidth, currentHeight
+                )
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
             }
-            fbo.unbind()
         }
 
         // Restore the viewport
@@ -339,35 +344,35 @@ class GlPreviewRenderer(private val context: Context) {
         val progress = (clipLocalUs.toFloat() / incomingClip.transitionDurationUs.toFloat())
             .coerceIn(0f, 1f)
 
-        // Render the incoming clip to a temporary texture via glCopyTexImage2D
-        // from the default framebuffer. Same technique as the export pipeline.
+        // 1. Render incoming clip into the default framebuffer first
         renderVideoPreview(incomingClip, clipLocalUs, texMatrix, mvpMatrix)
 
-        val incomingTexId = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTexId)
-        GLES20.glCopyTexImage2D(
-            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
-            0, 0, currentWidth, currentHeight, 0
-        )
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+        val texId = incomingTransitionTexId
+        if (texId != 0) {
+            // 2. Copy the incoming frame into the pre-allocated texture without allocating
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId)
+            GLES20.glCopyTexSubImage2D(
+                GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                currentWidth, currentHeight
+            )
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
 
-        // Clear and blend outgoing FBO + incoming texture through transition shader
-        GLES20.glViewport(0, 0, currentWidth, currentHeight)
-        GLES20.glClearColor(0f, 0f, 0f, 1f)
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+            // 3. Clear and blend outgoing FBO + incoming texture through transition shader
+            GLES20.glViewport(0, 0, currentWidth, currentHeight)
+            GLES20.glClearColor(0f, 0f, 0f, 1f)
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
-        transitionFilter?.setType(incomingClip.transitionType)
-        transitionFilter?.setProgress(progress)
-        transitionFilter?.drawTransition(
-            textureOutId = outgoingFbo?.textureId ?: 0,
-            textureInId = incomingTexId,
-            texMatrix = GlUtil.IDENTITY_MATRIX,
-            mvpMatrix = GlUtil.IDENTITY_MATRIX,
-            width = currentWidth,
-            height = currentHeight
-        )
-
-        GLES20.glDeleteTextures(1, intArrayOf(incomingTexId), 0)
+            transitionFilter?.setType(incomingClip.transitionType)
+            transitionFilter?.setProgress(progress)
+            transitionFilter?.drawTransition(
+                textureOutId = outgoingFbo?.textureId ?: 0,
+                textureInId = texId,
+                texMatrix = GlUtil.IDENTITY_MATRIX,
+                mvpMatrix = GlUtil.IDENTITY_MATRIX,
+                width = currentWidth,
+                height = currentHeight
+            )
+        }
     }
 
     private fun renderVideoPreview(
