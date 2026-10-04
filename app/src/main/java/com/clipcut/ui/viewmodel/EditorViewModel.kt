@@ -217,7 +217,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun deleteClip(clipId: String) {
         val current = _project.value ?: return
-        val updated = current.videoClips.filter { it.id != clipId }
+        val filtered = current.videoClips.filter { it.id != clipId }
+        val updated = filtered.mapIndexed { index, clip ->
+            if (index == 0 && clip.transitionType != TransitionType.NONE) {
+                clip.copy(transitionType = TransitionType.NONE)
+            } else clip
+        }
         updateProjectInternal(current.copy(videoClips = updated))
         _selectedClipId.value = updated.firstOrNull()?.id
     }
@@ -228,7 +233,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (fromIndex in list.indices && toIndex in list.indices) {
             val item = list.removeAt(fromIndex)
             list.add(toIndex, item)
-            updateProjectInternal(current.copy(videoClips = list))
+            val updated = list.mapIndexed { index, clip ->
+                if (index == 0 && clip.transitionType != TransitionType.NONE) {
+                    clip.copy(transitionType = TransitionType.NONE)
+                } else clip
+            }
+            updateProjectInternal(current.copy(videoClips = updated))
         }
     }
 

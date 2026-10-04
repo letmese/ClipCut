@@ -314,10 +314,11 @@ class GlPreviewRenderer(private val context: Context) {
         )
 
         // Capture the composited frame into the outgoing FBO ONLY if the next clip
-        // has an active transition, preserving all overlays and saving ~40% GPU overhead.
+        // has an active transition and we are NOT currently rendering inside an incoming transition window,
+        // preserving all overlays and preventing compound fade.
         val nextClip = project.videoClips.getOrNull(clipIndex + 1)
         val nextNeedsTransition = nextClip != null && nextClip.transitionType != TransitionType.NONE
-        if (nextNeedsTransition) {
+        if (nextNeedsTransition && !transitionActive) {
             val fbo = outgoingFbo
             if (fbo != null) {
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fbo.textureId)
@@ -344,8 +345,12 @@ class GlPreviewRenderer(private val context: Context) {
         val progress = (clipLocalUs.toFloat() / incomingClip.transitionDurationUs.toFloat())
             .coerceIn(0f, 1f)
 
-        // 1. Render incoming clip into the default framebuffer first
-        renderVideoPreview(incomingClip, clipLocalUs, texMatrix, mvpMatrix)
+        // 1. Render incoming clip into the default framebuffer first (support both images and video)
+        if (incomingClip.mediaType == MediaType.IMAGE) {
+            renderImagePreview(incomingClip, mvpMatrix)
+        } else {
+            renderVideoPreview(incomingClip, clipLocalUs, texMatrix, mvpMatrix)
+        }
 
         val texId = incomingTransitionTexId
         if (texId != 0) {

@@ -123,9 +123,10 @@ class ExportEngine(
                 // IMAGE clips
                 if (clip.mediaType == MediaType.IMAGE) {
                     renderImageClip(
-                        clip, currentTimelineOffsetUs, inputSurface, colorFilter,
-                        overlayRenderer, muxerWrapper, videoEncoder,
-                        totalDurationUs, onProgress, outgoingFbo, nextNeedsTransition
+                        clip, clipIndex, currentTimelineOffsetUs, inputSurface, colorFilter,
+                        overlayRenderer, transitionFilter, incomingTransitionTexId,
+                        muxerWrapper, videoEncoder, totalDurationUs, onProgress,
+                        outgoingFbo, nextNeedsTransition
                     )
                     currentTimelineOffsetUs += clip.effectiveDurationUs
                     continue
@@ -234,8 +235,9 @@ class ExportEngine(
                         )
 
                         // Bug #1 & #2 Fix: Capture composited frame with overlays directly into outgoingFbo
-                        // only when the next clip actually requires a transition.
-                        if (nextNeedsTransition) {
+                        // only when the next clip actually requires a transition and we are not currently
+                        // inside an incoming transition window (prevents compound/quadratic fade).
+                        if (nextNeedsTransition && !inTransition) {
                             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, outgoingFbo!!.textureId)
                             GLES20.glCopyTexSubImage2D(
                                 GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
@@ -307,10 +309,13 @@ class ExportEngine(
 
     private fun renderImageClip(
         clip: TimelineItem,
+        clipIndex: Int,
         timelineStartUs: Long,
         inputSurface: com.clipcut.core.gl.InputSurface,
         colorFilter: ColorAdjustFilter,
         overlayRenderer: OverlayRenderer,
+        transitionFilter: TransitionFilter?,
+        incomingTransitionTexId: Int,
         muxerWrapper: MediaMuxerWrapper,
         videoEncoder: VideoEncoder,
         totalDurationUs: Long,
@@ -336,18 +341,58 @@ class ExportEngine(
 
             buildFitMvpMatrix(bitmapW, bitmapH, config.customWidth, config.customHeight, mvpMatrix)
 
+            val transitionActive = clip.transitionType != TransitionType.NONE &&
+                    clipIndex > 0 &&
+                    transitionFilter != null &&
+                    outgoingFbo != null
+            val transitionDurationUs = if (transitionActive) clip.transitionDurationUs else 0L
+
             while (framePtsUs < durationUs && !isCancelled.get()) {
                 val outputPtsUs = timelineStartUs + framePtsUs
                 GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
                 GLES20.glClearColor(0f, 0f, 0f, 1f)
                 GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
-                colorFilter.updateConfig(clip.filterConfig)
-                colorFilter.draw(texId, GlUtil.IDENTITY_MATRIX, mvpMatrix, config.customWidth, config.customHeight, GLES20.GL_TEXTURE_2D)
+                val inTransition = transitionActive && framePtsUs < transitionDurationUs
+
+                if (inTransition) {
+                    // 1. Render incoming image frame to default framebuffer
+                    colorFilter.updateConfig(clip.filterConfig)
+                    colorFilter.draw(texId, GlUtil.IDENTITY_MATRIX, mvpMatrix, config.customWidth, config.customHeight, GLES20.GL_TEXTURE_2D)
+
+                    // 2. Capture into incomingTransitionTexId
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTransitionTexId)
+                    GLES20.glCopyTexSubImage2D(
+                        GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                        config.customWidth, config.customHeight
+                    )
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+
+                    // 3. Clear and blend outgoing FBO + incoming image texture
+                    GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
+                    GLES20.glClearColor(0f, 0f, 0f, 1f)
+                    GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+
+                    transitionFilter!!.setType(clip.transitionType)
+                    val progress = (framePtsUs.toFloat() / transitionDurationUs.toFloat()).coerceIn(0f, 1f)
+                    transitionFilter.setProgress(progress)
+                    transitionFilter.drawTransition(
+                        textureOutId = outgoingFbo!!.textureId,
+                        textureInId = incomingTransitionTexId,
+                        texMatrix = GlUtil.IDENTITY_MATRIX,
+                        mvpMatrix = GlUtil.IDENTITY_MATRIX,
+                        width = config.customWidth,
+                        height = config.customHeight
+                    )
+                } else {
+                    colorFilter.updateConfig(clip.filterConfig)
+                    colorFilter.draw(texId, GlUtil.IDENTITY_MATRIX, mvpMatrix, config.customWidth, config.customHeight, GLES20.GL_TEXTURE_2D)
+                }
+
                 overlayRenderer.renderOverlays(project.overlays, outputPtsUs, config.customWidth, config.customHeight)
 
-                // Bug #4 Fix: Capture final frame of image clip into outgoingFbo for transition into next clip
-                if (nextNeedsTransition && outgoingFbo != null && (framePtsUs + frameIntervalUs >= durationUs)) {
+                // Capture final frame of image clip into outgoingFbo for transition into next clip (when not in transition)
+                if (nextNeedsTransition && outgoingFbo != null && (framePtsUs + frameIntervalUs >= durationUs) && !inTransition) {
                     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, outgoingFbo.textureId)
                     GLES20.glCopyTexSubImage2D(
                         GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
