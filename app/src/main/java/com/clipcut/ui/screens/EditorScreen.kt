@@ -3,7 +3,7 @@ package com.clipcut.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import kotlin.OptIn
+import androidx.compose.foundation.AndroidExternalSurface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -24,14 +24,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.ui.PlayerView
 import com.clipcut.core.model.MediaType
 import com.clipcut.ui.theme.*
 import com.clipcut.ui.viewmodel.EditorViewModel
 
-@OptIn(UnstableApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(
     projectId: String,
@@ -56,7 +53,6 @@ fun EditorScreen(
     var showExportDialog by remember { mutableStateOf(false) }
     var showSpeedDialog by remember { mutableStateOf(false) }
 
-    // Media pickers
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -71,6 +67,13 @@ fun EditorScreen(
 
     val selectedClip = remember(project, selectedClipId) {
         project?.videoClips?.find { it.id == selectedClipId }
+    }
+
+    // Wire the GL preview renderer to the timeline clock
+    LaunchedEffect(Unit) {
+        viewModel.previewRenderer.positionProvider = {
+            viewModel.playerManager.currentPositionUs.value
+        }
     }
 
     Scaffold(
@@ -121,7 +124,7 @@ fun EditorScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // Video Preview Player Area
+            // GL Preview
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -138,32 +141,22 @@ fun EditorScreen(
                 contentAlignment = Alignment.Center
             ) {
                 if (project?.videoClips?.isNotEmpty() == true) {
-                    AndroidView(
-                        factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                player = viewModel.playerManager.initialize()
-                                useController = false // Custom UI overlay
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    val renderer = viewModel.previewRenderer
 
-                    // Overlay live preview text
-                    project?.overlays?.forEach { overlay ->
-                        if (currentPositionUs in overlay.timelineStartUs..overlay.timelineEndUs) {
-                            Text(
-                                text = overlay.text,
-                                color = androidx.compose.ui.graphics.Color(overlay.textColor),
-                                fontSize = overlay.textSizeSp.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .align(Alignment.Center)
-                                    .padding(8.dp)
-                            )
+                    LaunchedEffect(project) {
+                        project?.let { renderer.setProject(it) }
+                    }
+
+                    AndroidExternalSurface(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        onSurface { surface, width, height ->
+                            renderer.onSurfaceCreated(surface, width, height)
+                            surface.onChanged { w, h -> renderer.onSurfaceChanged(w, h) }
+                            surface.onDestroyed { renderer.onSurfaceDestroyed() }
                         }
                     }
 
-                    // Play/Pause Center Indicator (semi-transparent when playing)
                     if (!isPlaying) {
                         val isAtEnd = totalDurationUs > 0 && currentPositionUs >= (totalDurationUs - 50_000L)
                         IconButton(
@@ -197,7 +190,7 @@ fun EditorScreen(
                 }
             }
 
-            // Dedicated Playback Transport Controls Bar
+            // Transport bar (unchanged)
             if (project?.videoClips?.isNotEmpty() == true) {
                 Surface(
                     color = DarkSurface,
@@ -211,33 +204,18 @@ fun EditorScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Rewind to start
                         IconButton(
                             onClick = { viewModel.playerManager.seekToUs(0L) },
                             modifier = Modifier.size(36.dp)
                         ) {
-                            Icon(
-                                Icons.Default.SkipPrevious,
-                                contentDescription = "Start",
-                                tint = TextPrimary,
-                                modifier = Modifier.size(22.dp)
-                            )
+                            Icon(Icons.Default.SkipPrevious, "Start", tint = TextPrimary, modifier = Modifier.size(22.dp))
                         }
-
-                        // Step backward 1 sec
                         IconButton(
                             onClick = { viewModel.playerManager.seekByUs(-1_000_000L) },
                             modifier = Modifier.size(36.dp)
                         ) {
-                            Icon(
-                                Icons.Default.FastRewind,
-                                contentDescription = "-1s",
-                                tint = TextSecondary,
-                                modifier = Modifier.size(20.dp)
-                            )
+                            Icon(Icons.Default.FastRewind, "-1s", tint = TextSecondary, modifier = Modifier.size(20.dp))
                         }
-
-                        // Big Play / Pause / Replay Button
                         Button(
                             onClick = { viewModel.playerManager.togglePlayPause() },
                             colors = ButtonDefaults.buttonColors(
@@ -253,42 +231,28 @@ fun EditorScreen(
                                     isAtEnd -> Icons.Default.Replay
                                     else -> Icons.Default.PlayArrow
                                 },
-                                contentDescription = if (isPlaying) "Pause" else if (isAtEnd) "Replay" else "Play",
+                                contentDescription = "Play/Pause",
                                 tint = TextPrimary,
                                 modifier = Modifier.size(26.dp)
                             )
                         }
-
-                        // Step forward 1 sec
                         IconButton(
                             onClick = { viewModel.playerManager.seekByUs(1_000_000L) },
                             modifier = Modifier.size(36.dp)
                         ) {
-                            Icon(
-                                Icons.Default.FastForward,
-                                contentDescription = "+1s",
-                                tint = TextSecondary,
-                                modifier = Modifier.size(20.dp)
-                            )
+                            Icon(Icons.Default.FastForward, "+1s", tint = TextSecondary, modifier = Modifier.size(20.dp))
                         }
-
-                        // Jump to end
                         IconButton(
                             onClick = { viewModel.playerManager.seekToUs(totalDurationUs) },
                             modifier = Modifier.size(36.dp)
                         ) {
-                            Icon(
-                                Icons.Default.SkipNext,
-                                contentDescription = "End",
-                                tint = TextPrimary,
-                                modifier = Modifier.size(22.dp)
-                            )
+                            Icon(Icons.Default.SkipNext, "End", tint = TextPrimary, modifier = Modifier.size(22.dp))
                         }
                     }
                 }
             }
 
-            // Timeline View
+            // Timeline
             TimelineView(
                 videoClips = project?.videoClips ?: emptyList(),
                 audioTracks = project?.audioTracks ?: emptyList(),
@@ -302,7 +266,7 @@ fun EditorScreen(
                 onTrimClip = { clipId, startUs, endUs -> viewModel.trimClip(clipId, startUs, endUs) }
             )
 
-            // Bottom Action Toolbar
+            // Toolbar (unchanged)
             Surface(
                 color = DarkSurface,
                 modifier = Modifier
@@ -319,83 +283,42 @@ fun EditorScreen(
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    EditorActionButton(Icons.Default.Add, "Add") { videoPickerLauncher.launch("video/*") }
                     EditorActionButton(
-                        icon = Icons.Default.Add,
-                        label = "Add",
-                        onClick = { videoPickerLauncher.launch("video/*") }
-                    )
-
+                        Icons.Default.ContentCut, "Split",
+                        enabled = selectedClip != null && currentPositionUs > 30_000L && currentPositionUs < (totalDurationUs - 30_000L)
+                    ) { viewModel.splitClipAtPlayhead() }
                     EditorActionButton(
-                        icon = Icons.Default.ContentCut,
-                        label = "Split",
-                        enabled = selectedClip != null && currentPositionUs > 30_000L && currentPositionUs < (totalDurationUs - 30_000L),
-                        onClick = { viewModel.splitClipAtPlayhead() }
-                    )
-
+                        Icons.Default.ArrowBack, "Move ◀",
+                        enabled = selectedIndex > 0
+                    ) { viewModel.reorderClips(selectedIndex, selectedIndex - 1) }
                     EditorActionButton(
-                        icon = Icons.Default.ArrowBack,
-                        label = "Move ◀",
-                        enabled = selectedIndex > 0,
-                        onClick = { viewModel.reorderClips(selectedIndex, selectedIndex - 1) }
-                    )
-
+                        Icons.Default.ArrowForward, "Move ▶",
+                        enabled = selectedIndex >= 0 && selectedIndex < clips.lastIndex
+                    ) { viewModel.reorderClips(selectedIndex, selectedIndex + 1) }
+                    EditorActionButton(Icons.Default.Speed, "Speed", enabled = selectedClip != null) { showSpeedDialog = true }
+                    EditorActionButton(Icons.Default.Tune, "Filters", enabled = selectedClip != null) { showFilterSheet = true }
+                    EditorActionButton(Icons.Default.TextFields, "Text") { showOverlaySheet = true }
+                    EditorActionButton(Icons.Default.MusicNote, "Audio") { showAudioSheet = true }
                     EditorActionButton(
-                        icon = Icons.Default.ArrowForward,
-                        label = "Move ▶",
-                        enabled = selectedIndex >= 0 && selectedIndex < clips.lastIndex,
-                        onClick = { viewModel.reorderClips(selectedIndex, selectedIndex + 1) }
-                    )
-
-                    EditorActionButton(
-                        icon = Icons.Default.Speed,
-                        label = "Speed",
-                        enabled = selectedClip != null,
-                        onClick = { showSpeedDialog = true }
-                    )
-
-                    EditorActionButton(
-                        icon = Icons.Default.Tune,
-                        label = "Filters",
-                        enabled = selectedClip != null,
-                        onClick = { showFilterSheet = true }
-                    )
-
-                    EditorActionButton(
-                        icon = Icons.Default.TextFields,
-                        label = "Text",
-                        onClick = { showOverlaySheet = true }
-                    )
-
-                    EditorActionButton(
-                        icon = Icons.Default.MusicNote,
-                        label = "Audio",
-                        onClick = { showAudioSheet = true }
-                    )
-
-                    EditorActionButton(
-                        icon = Icons.Default.Delete,
-                        label = "Delete",
+                        Icons.Default.Delete, "Delete",
                         tint = AccentPrimary,
-                        enabled = selectedClip != null,
-                        onClick = { selectedClipId?.let { viewModel.deleteClip(it) } }
-                    )
+                        enabled = selectedClip != null
+                    ) { selectedClipId?.let { viewModel.deleteClip(it) } }
                 }
             }
         }
     }
 
-    // Filter Bottom Sheet
+    // Sheets and dialogs — unchanged from v1.0.5
     if (showFilterSheet && selectedClip != null) {
         FilterSheet(
             initialConfig = selectedClip.filterConfig,
-            onApplyFilter = { newConfig ->
-                viewModel.setClipFilter(selectedClip.id, newConfig)
-            },
+            onApplyFilter = { newConfig -> viewModel.setClipFilter(selectedClip.id, newConfig) },
             onDismiss = { showFilterSheet = false }
         )
     }
 
-    // Overlay Bottom Sheet
     if (showOverlaySheet) {
         OverlaySheet(
             totalDurationUs = totalDurationUs,
@@ -408,7 +331,6 @@ fun EditorScreen(
         )
     }
 
-    // Audio Bottom Sheet
     if (showAudioSheet) {
         AudioSheet(
             originalVideoVolume = project?.originalVideoVolume ?: 1f,
@@ -420,7 +342,6 @@ fun EditorScreen(
         )
     }
 
-    // Speed Selection Dialog
     if (showSpeedDialog && selectedClip != null) {
         val speeds = listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 4.0f)
         AlertDialog(
@@ -468,7 +389,6 @@ fun EditorScreen(
         )
     }
 
-    // Export Dialog
     if (showExportDialog || exportState !is com.clipcut.ui.viewmodel.ExportState.Idle) {
         ExportDialog(
             exportState = exportState,

@@ -1,7 +1,6 @@
 package com.clipcut.ui.viewmodel
 
 import android.app.Application
-import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
@@ -9,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.clipcut.core.codec.ExportEngine
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.*
+import com.clipcut.core.player.GlPreviewRenderer
 import com.clipcut.core.player.PreviewPlayerManager
 import com.clipcut.data.db.ClipCutDatabase
 import com.clipcut.data.db.ProjectEntity
@@ -32,6 +32,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val dao = db.projectDao()
 
     val playerManager = PreviewPlayerManager(application)
+    val previewRenderer = GlPreviewRenderer(application)
 
     private val _project = MutableStateFlow<Project?>(null)
     val project: StateFlow<Project?> = _project.asStateFlow()
@@ -53,6 +54,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 _project.value = proj
                 _selectedClipId.value = proj.videoClips.firstOrNull()?.id
                 playerManager.syncWithProject(proj)
+                previewRenderer.setProject(proj)
                 AppLog.i(TAG, "Loaded project: ${proj.name} (${proj.videoClips.size} clips)")
             } else {
                 AppLog.e(TAG, "Project not found with id $projectId")
@@ -68,7 +70,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val current = _project.value ?: return
         viewModelScope.launch {
             if (mediaType == MediaType.IMAGE) {
-                val defaultImageDurationUs = 5_000_000L // 5 seconds default
+                val defaultImageDurationUs = 5_000_000L
                 val newClip = TimelineItem(
                     uri = uri.toString(),
                     mediaType = MediaType.IMAGE,
@@ -132,9 +134,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        // If playhead is at the very end or start, don't split
         if (playheadUs <= 50_000L || playheadUs >= totalDurUs - 50_000L) {
-            AppLog.w(TAG, "Cannot split at edge: playhead is at ${playheadUs / 1000}ms (total: ${totalDurUs / 1000}ms)")
+            AppLog.w(TAG, "Cannot split at edge")
             return
         }
 
@@ -146,24 +147,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val clipDurationUs = clip.effectiveDurationUs
             val clipEndUs = accumulatedUs + clipDurationUs
             if (!didSplit && playheadUs > accumulatedUs + 30_000L && playheadUs < clipEndUs - 30_000L) {
-                // Split point safely inside this clip
                 val relativeTimelineOffsetUs = playheadUs - accumulatedUs
                 val relativeSourceUs = (relativeTimelineOffsetUs * clip.speed).toLong()
                 val splitSourceUs = clip.trimStartUs + relativeSourceUs
 
-                val clip1 = clip.copy(
-                    id = java.util.UUID.randomUUID().toString(),
-                    trimEndUs = splitSourceUs
-                )
-                val clip2 = clip.copy(
-                    id = java.util.UUID.randomUUID().toString(),
-                    trimStartUs = splitSourceUs
-                )
+                val clip1 = clip.copy(id = java.util.UUID.randomUUID().toString(), trimEndUs = splitSourceUs)
+                val clip2 = clip.copy(id = java.util.UUID.randomUUID().toString(), trimStartUs = splitSourceUs)
                 updatedClips.add(clip1)
                 updatedClips.add(clip2)
                 _selectedClipId.value = clip2.id
                 didSplit = true
-                AppLog.i(TAG, "Split clip ${clip.id} at source time ${splitSourceUs / 1000}ms")
             } else {
                 updatedClips.add(clip)
             }
@@ -172,8 +165,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         if (didSplit) {
             updateProjectInternal(current.copy(videoClips = updatedClips))
-        } else {
-            AppLog.w(TAG, "Cannot split: playhead (${playheadUs / 1000}ms) is on a clip boundary")
         }
     }
 
@@ -196,7 +187,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             if (it.id == clipId) it.copy(speed = speed.coerceIn(0.25f, 4.0f)) else it
         }
         updateProjectInternal(current.copy(videoClips = updated))
-        AppLog.i(TAG, "Updated speed for clip $clipId: ${speed}x")
     }
 
     fun setClipFilter(clipId: String, filterConfig: FilterConfig) {
@@ -205,7 +195,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             if (it.id == clipId) it.copy(filterConfig = filterConfig) else it
         }
         updateProjectInternal(current.copy(videoClips = updated))
-        AppLog.i(TAG, "Updated filter for clip $clipId: ${filterConfig.filterType}")
     }
 
     fun deleteClip(clipId: String) {
@@ -213,7 +202,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val updated = current.videoClips.filter { it.id != clipId }
         updateProjectInternal(current.copy(videoClips = updated))
         _selectedClipId.value = updated.firstOrNull()?.id
-        AppLog.i(TAG, "Deleted clip $clipId")
     }
 
     fun reorderClips(fromIndex: Int, toIndex: Int) {
@@ -223,7 +211,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val item = list.removeAt(fromIndex)
             list.add(toIndex, item)
             updateProjectInternal(current.copy(videoClips = list))
-            AppLog.i(TAG, "Reordered clips from $fromIndex to $toIndex")
         }
     }
 
@@ -231,7 +218,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val current = _project.value ?: return
         val updated = current.overlays + overlay
         updateProjectInternal(current.copy(overlays = updated))
-        AppLog.i(TAG, "Added overlay: ${overlay.text}")
     }
 
     fun removeOverlay(overlayId: String) {
@@ -254,6 +240,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val p = updatedProject.copy(lastModifiedTime = System.currentTimeMillis())
         _project.value = p
         playerManager.syncWithProject(p)
+        previewRenderer.setProject(p)
         viewModelScope.launch {
             dao.updateProject(ProjectEntity.fromDomain(p))
         }
@@ -267,6 +254,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         playerManager.pause()
+        previewRenderer.pause()
         _exportState.value = ExportState.Progress(0f, "Starting export...")
 
         val engine = ExportEngine(getApplication(), proj, config)
@@ -289,6 +277,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 }
             )
             activeExportEngine = null
+            previewRenderer.resume()
         }
     }
 
@@ -296,7 +285,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         activeExportEngine?.cancel()
         exportJob?.cancel()
         _exportState.value = ExportState.Idle
-        AppLog.i(TAG, "Export cancelled by user")
+        previewRenderer.resume()
     }
 
     fun dismissExportDialog() {
@@ -306,6 +295,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         playerManager.release()
+        previewRenderer.release()
     }
 
     companion object {
