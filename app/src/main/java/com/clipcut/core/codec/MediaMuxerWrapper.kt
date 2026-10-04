@@ -20,6 +20,9 @@ class MediaMuxerWrapper(
     private val pendingVideoSamples = mutableListOf<PendingSample>()
     private val pendingAudioSamples = mutableListOf<PendingSample>()
 
+    private var lastVideoPtsUs = -1L
+    private var lastAudioPtsUs = -1L
+
     private data class PendingSample(
         val buffer: ByteBuffer,
         val bufferInfo: MediaCodec.BufferInfo
@@ -59,39 +62,34 @@ class MediaMuxerWrapper(
             isStarted = true
             AppLog.i(TAG, "MediaMuxer started successfully")
 
-            // Drain queued samples sorted by monotonic PTS
+            // Drain queued video samples in monotonic PTS order
             pendingVideoSamples.sortBy { it.bufferInfo.presentationTimeUs }
             for (sample in pendingVideoSamples) {
-                if (sample.bufferInfo.presentationTimeUs <= lastVideoPtsUs) {
-                    sample.bufferInfo.presentationTimeUs = lastVideoPtsUs + 1L
+                val info = copyBufferInfo(sample.bufferInfo)
+                if (info.presentationTimeUs <= lastVideoPtsUs) {
+                    info.presentationTimeUs = lastVideoPtsUs + 1L
                 }
-                lastVideoPtsUs = sample.bufferInfo.presentationTimeUs
-                muxer.writeSampleData(videoTrackIndex, sample.buffer, sample.bufferInfo)
+                lastVideoPtsUs = info.presentationTimeUs
+                muxer.writeSampleData(videoTrackIndex, sample.buffer, info)
             }
             pendingVideoSamples.clear()
 
+            // Drain queued audio samples in monotonic PTS order
             pendingAudioSamples.sortBy { it.bufferInfo.presentationTimeUs }
             for (sample in pendingAudioSamples) {
-                if (sample.bufferInfo.presentationTimeUs <= lastAudioPtsUs) {
-                    sample.bufferInfo.presentationTimeUs = lastAudioPtsUs + 1L
+                val info = copyBufferInfo(sample.bufferInfo)
+                if (info.presentationTimeUs <= lastAudioPtsUs) {
+                    info.presentationTimeUs = lastAudioPtsUs + 1L
                 }
-                lastAudioPtsUs = sample.bufferInfo.presentationTimeUs
-                muxer.writeSampleData(audioTrackIndex, sample.buffer, sample.bufferInfo)
+                lastAudioPtsUs = info.presentationTimeUs
+                muxer.writeSampleData(audioTrackIndex, sample.buffer, info)
             }
             pendingAudioSamples.clear()
         }
     }
 
-    private var lastVideoPtsUs = -1L
-    private var lastAudioPtsUs = -1L
-
     fun writeVideoSample(buffer: ByteBuffer, bufferInfo: MediaCodec.BufferInfo) {
         synchronized(lock) {
-            if (bufferInfo.presentationTimeUs <= lastVideoPtsUs) {
-                bufferInfo.presentationTimeUs = lastVideoPtsUs + 1L
-            }
-            lastVideoPtsUs = bufferInfo.presentationTimeUs
-
             if (!isStarted) {
                 val copy = ByteBuffer.allocateDirect(bufferInfo.size)
                 buffer.position(bufferInfo.offset)
@@ -99,23 +97,22 @@ class MediaMuxerWrapper(
                 copy.put(buffer)
                 copy.flip()
 
-                val infoCopy = MediaCodec.BufferInfo().apply {
-                    set(0, bufferInfo.size, bufferInfo.presentationTimeUs, bufferInfo.flags)
-                }
+                val infoCopy = copyBufferInfo(bufferInfo)
                 pendingVideoSamples.add(PendingSample(copy, infoCopy))
                 return
             }
-            muxer.writeSampleData(videoTrackIndex, buffer, bufferInfo)
+
+            val info = copyBufferInfo(bufferInfo)
+            if (info.presentationTimeUs <= lastVideoPtsUs) {
+                info.presentationTimeUs = lastVideoPtsUs + 1L
+            }
+            lastVideoPtsUs = info.presentationTimeUs
+            muxer.writeSampleData(videoTrackIndex, buffer, info)
         }
     }
 
     fun writeAudioSample(buffer: ByteBuffer, bufferInfo: MediaCodec.BufferInfo) {
         synchronized(lock) {
-            if (bufferInfo.presentationTimeUs <= lastAudioPtsUs) {
-                bufferInfo.presentationTimeUs = lastAudioPtsUs + 1L
-            }
-            lastAudioPtsUs = bufferInfo.presentationTimeUs
-
             if (!isStarted) {
                 val copy = ByteBuffer.allocateDirect(bufferInfo.size)
                 buffer.position(bufferInfo.offset)
@@ -123,13 +120,23 @@ class MediaMuxerWrapper(
                 copy.put(buffer)
                 copy.flip()
 
-                val infoCopy = MediaCodec.BufferInfo().apply {
-                    set(0, bufferInfo.size, bufferInfo.presentationTimeUs, bufferInfo.flags)
-                }
+                val infoCopy = copyBufferInfo(bufferInfo)
                 pendingAudioSamples.add(PendingSample(copy, infoCopy))
                 return
             }
-            muxer.writeSampleData(audioTrackIndex, buffer, bufferInfo)
+
+            val info = copyBufferInfo(bufferInfo)
+            if (info.presentationTimeUs <= lastAudioPtsUs) {
+                info.presentationTimeUs = lastAudioPtsUs + 1L
+            }
+            lastAudioPtsUs = info.presentationTimeUs
+            muxer.writeSampleData(audioTrackIndex, buffer, info)
+        }
+    }
+
+    private fun copyBufferInfo(src: MediaCodec.BufferInfo): MediaCodec.BufferInfo {
+        return MediaCodec.BufferInfo().apply {
+            set(src.offset, src.size, src.presentationTimeUs, src.flags)
         }
     }
 

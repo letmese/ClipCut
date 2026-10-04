@@ -2,10 +2,13 @@ package com.clipcut.core.codec
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
+import android.opengl.GLUtils
+import android.opengl.Matrix
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -15,6 +18,7 @@ import com.clipcut.core.gl.OutputSurface
 import com.clipcut.core.gl.OverlayRenderer
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.ExportConfig
+import com.clipcut.core.model.MediaType
 import com.clipcut.core.model.Project
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -73,20 +77,16 @@ class ExportEngine(
         try {
             onProgress(0.01f, "Initializing encoder & GL pipeline...")
 
-            // 1. Initialize Muxer (Video + Audio tracks)
             val hasAudio = project.videoClips.any { it.volume > 0.001f } || project.audioTracks.isNotEmpty()
             val expectedTracks = if (hasAudio) 2 else 1
             muxerWrapper = MediaMuxerWrapper(outputFile.absolutePath, expectedTracks)
 
-            // 2. Initialize Video Encoder
             videoEncoder = VideoEncoder(config)
             videoEncoder.init()
             val inputSurface = videoEncoder.inputSurface ?: throw RuntimeException("InputSurface is null")
 
-            // 3. Make EGL Context current on encoder input surface
             inputSurface.makeCurrent()
 
-            // 4. Initialize OpenGL filters & overlay renderer
             val oesTexId = GlUtil.generateTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
             outputSurface = OutputSurface(oesTexId)
 
@@ -97,19 +97,50 @@ class ExportEngine(
             overlayRenderer.init()
 
             val texMatrix = FloatArray(16)
+            val mvpMatrix = FloatArray(16)
             var currentTimelineOffsetUs = 0L
             var totalFramesRendered = 0L
 
-            // 5. Decode & Render Each Video Clip
             for ((clipIndex, clip) in project.videoClips.withIndex()) {
-                if (isCancelled.get()) {
-                    throw InterruptedException("Export cancelled")
+                if (isCancelled.get()) throw InterruptedException("Export cancelled")
+
+                AppLog.i(TAG, "Processing clip ${clipIndex + 1}/${project.videoClips.size}: ${clip.id} (type=${clip.mediaType}, speed=${clip.speed}x, trim=${clip.trimStartUs / 1000}..${clip.trimEndUs / 1000}ms)")
+
+                // --- IMAGE clips: render a static bitmap for effectiveDurationUs ---
+                if (clip.mediaType == MediaType.IMAGE) {
+                    renderImageClip(
+                        clip = clip,
+                        timelineStartUs = currentTimelineOffsetUs,
+                        inputSurface = inputSurface,
+                        colorFilter = colorFilter,
+                        overlayRenderer = overlayRenderer,
+                        muxerWrapper = muxerWrapper,
+                        videoEncoder = videoEncoder,
+                        totalDurationUs = totalDurationUs,
+                        onProgress = onProgress
+                    )
+                    currentTimelineOffsetUs += clip.effectiveDurationUs
+                    continue
                 }
 
-                AppLog.i(TAG, "Processing clip ${clipIndex + 1}/${project.videoClips.size}: ${clip.id} (speed=${clip.speed}x, trim=${clip.trimStartUs / 1000}..${clip.trimEndUs / 1000}ms)")
-
+                // --- VIDEO clips: decode -> filter -> encode ---
                 val decoder = VideoDecoder(context, clip, outputSurface)
                 decoder.init()
+
+                // Compute rotation and effective output dimensions for this clip
+                val rotation = decoder.videoRotation
+                val rotated = rotation == 90 || rotation == 270
+                val srcW = decoder.videoWidth
+                val srcH = decoder.videoHeight
+
+                // Fit the rotated source into the output viewport (letterbox/pillarbox)
+                buildFitMvpMatrix(
+                    srcW = if (rotated) srcH else srcW,
+                    srcH = if (rotated) srcW else srcH,
+                    outW = config.customWidth,
+                    outH = config.customHeight,
+                    out = mvpMatrix
+                )
 
                 var lastPtsUs = -1L
                 try {
@@ -120,35 +151,29 @@ class ExportEngine(
                             break
                         }
 
-                        // Calculate presentation time scaled by speed
                         val clipLocalTimeUs = (ptsUs - clip.trimStartUs).coerceAtLeast(0L)
                         val scaledLocalTimeUs = (clipLocalTimeUs / clip.speed).toLong()
                         val outputPtsUs = currentTimelineOffsetUs + scaledLocalTimeUs
 
-                        // Avoid backwards or duplicate PTS
-                        if (outputPtsUs <= lastPtsUs) {
-                            continue
-                        }
+                        if (outputPtsUs <= lastPtsUs) continue
                         lastPtsUs = outputPtsUs
 
-                        // OpenGL Rendering
                         GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
                         GLES20.glClearColor(0f, 0f, 0f, 1f)
                         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
                         outputSurface.getTransformMatrix(texMatrix)
 
-                        // Apply filter & rotation
                         colorFilter.updateConfig(clip.filterConfig)
                         colorFilter.drawOes(
                             texId = oesTexId,
                             texMatrix = texMatrix,
-                            rotationDegrees = decoder.videoRotation,
+                            mvpMatrix = mvpMatrix,
+                            rotationDegrees = rotation,
                             width = config.customWidth,
                             height = config.customHeight
                         )
 
-                        // Apply overlays (text & stickers)
                         overlayRenderer.renderOverlays(
                             overlays = project.overlays,
                             currentPtsUs = outputPtsUs,
@@ -156,17 +181,14 @@ class ExportEngine(
                             viewportHeight = config.customHeight
                         )
 
-                        // Set presentation timestamp in nanoseconds and submit frame to encoder
                         inputSurface.setPresentationTime(outputPtsUs * 1000L)
                         inputSurface.swapBuffers()
                         totalFramesRendered++
 
-                        // Drain output from video encoder into muxer
                         videoEncoder.drainEncoder(muxerWrapper, false)
 
-                        // Progress callback (Video is 0% to 75% of export)
                         val videoProgress = (outputPtsUs.toFloat() / totalDurationUs.toFloat()).coerceIn(0f, 1f) * 0.75f
-                        onProgress(videoProgress, "Encoding video frames (${(videoProgress * 100).toInt()}%)...")
+                        onProgress(videoProgress, "Encoding video frames (${(videoProgress / 0.75f * 100).toInt()}%)...")
                     }
                 } finally {
                     decoder.release()
@@ -177,22 +199,19 @@ class ExportEngine(
 
             if (isCancelled.get()) throw InterruptedException("Export cancelled")
 
-            // 6. Signal end of input stream to video encoder & drain remaining buffers
             onProgress(0.75f, "Finalizing video track...")
             videoEncoder.drainEncoder(muxerWrapper, true)
 
-            // 7. Audio Processing & Muxing
             if (hasAudio && !isCancelled.get()) {
                 onProgress(0.78f, "Mixing and encoding audio tracks...")
                 val audioProcessor = AudioProcessor(context, project, config)
                 audioProcessor.processAudio(muxerWrapper, totalDurationUs) { audioSubProgress ->
                     val combinedProgress = 0.78f + (audioSubProgress * 0.18f)
-                    onProgress(combinedProgress, "Encoding audio (${(combinedProgress * 100).toInt()}%)...")
+                    onProgress(combinedProgress, "Encoding audio (${(audioSubProgress * 100).toInt()}%)...")
                 }
             }
 
-            // 8. Finalize Muxer
-            onProgress(0.98f, "Closing output MP4 container...")
+            onProgress(0.97f, "Closing output MP4 container...")
             muxerWrapper.stopAndRelease()
 
             val elapsedTimeSec = (System.currentTimeMillis() - startTimeMs) / 1000.0
@@ -201,7 +220,7 @@ class ExportEngine(
             AppLog.i(TAG, "Rendered $totalFramesRendered frames in ${elapsedTimeSec}s (${String.format(Locale.US, "%.1f", totalFramesRendered / elapsedTimeSec)} fps)")
             AppLog.i(TAG, "Output file size: ${String.format(Locale.US, "%.2f", fileSizeMb)} MB (${outputFile.absolutePath})")
 
-            onProgress(0.99f, "Saving video to phone gallery...")
+            onProgress(0.98f, "Saving video to phone gallery...")
             val publicUri = copyToPublicGallery(context, outputFile)
 
             onProgress(1.0f, "Export Complete!")
@@ -210,9 +229,7 @@ class ExportEngine(
         } catch (t: Throwable) {
             AppLog.e(TAG, "Export failed: ${t.message}", t)
             muxerWrapper?.stopAndRelease()
-            if (outputFile.exists()) {
-                outputFile.delete()
-            }
+            if (outputFile.exists()) outputFile.delete()
             Result.failure(t)
         } finally {
             colorFilter?.release()
@@ -220,6 +237,137 @@ class ExportEngine(
             outputSurface?.release()
             videoEncoder?.release()
         }
+    }
+
+    /**
+     * Renders a static image clip for its effective duration.
+     * Images don't have a decoder — we render the same GL texture repeatedly.
+     */
+    private fun renderImageClip(
+        clip: com.clipcut.core.model.TimelineItem,
+        timelineStartUs: Long,
+        inputSurface: com.clipcut.core.gl.InputSurface,
+        colorFilter: ColorAdjustFilter,
+        overlayRenderer: OverlayRenderer,
+        muxerWrapper: MediaMuxerWrapper,
+        videoEncoder: VideoEncoder,
+        totalDurationUs: Long,
+        onProgress: (Float, String) -> Unit
+    ) {
+        val bitmap = try {
+            context.contentResolver.openInputStream(Uri.parse(clip.uri))?.use { stream ->
+                BitmapFactory.decodeStream(stream)
+            }
+        } catch (e: Exception) {
+            AppLog.e(TAG, "Failed to load image clip: ${clip.uri}", e)
+            null
+        }
+
+        if (bitmap == null) {
+            AppLog.w(TAG, "Skipping image clip ${clip.id} — could not decode")
+            return
+        }
+
+        val bitmapW = bitmap.width
+        val bitmapH = bitmap.height
+        val texId = uploadBitmapToTexture(bitmap)
+        bitmap.recycle()
+
+        if (texId == 0) {
+            AppLog.w(TAG, "Skipping image clip ${clip.id} — texture upload failed")
+            return
+        }
+
+        try {
+            val durationUs = clip.effectiveDurationUs
+            val frameIntervalUs = (1_000_000L / config.frameRate.toFloat()).toLong()
+            var framePtsUs = 0L
+            val mvpMatrix = FloatArray(16)
+
+            buildFitMvpMatrix(
+                srcW = bitmapW,
+                srcH = bitmapH,
+                outW = config.customWidth,
+                outH = config.customHeight,
+                out = mvpMatrix
+            )
+
+            while (framePtsUs < durationUs && !isCancelled.get()) {
+                val outputPtsUs = timelineStartUs + framePtsUs
+
+                GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
+                GLES20.glClearColor(0f, 0f, 0f, 1f)
+                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+
+                colorFilter.updateConfig(clip.filterConfig)
+                colorFilter.draw(
+                    texId = texId,
+                    texMatrix = GlUtil.IDENTITY_MATRIX,
+                    mvpMatrix = mvpMatrix,
+                    width = config.customWidth,
+                    height = config.customHeight,
+                    textureTarget = GLES20.GL_TEXTURE_2D
+                )
+
+                overlayRenderer.renderOverlays(
+                    overlays = project.overlays,
+                    currentPtsUs = outputPtsUs,
+                    viewportWidth = config.customWidth,
+                    viewportHeight = config.customHeight
+                )
+
+                inputSurface.setPresentationTime(outputPtsUs * 1000L)
+                inputSurface.swapBuffers()
+
+                videoEncoder.drainEncoder(muxerWrapper, false)
+
+                framePtsUs += frameIntervalUs
+                val videoProgress = (outputPtsUs.toFloat() / totalDurationUs.toFloat()).coerceIn(0f, 1f) * 0.75f
+                onProgress(videoProgress, "Encoding image frames...")
+            }
+        } finally {
+            val arr = intArrayOf(texId)
+            GLES20.glDeleteTextures(1, arr, 0)
+        }
+    }
+
+    private fun uploadBitmapToTexture(bitmap: android.graphics.Bitmap): Int {
+        val textures = IntArray(1)
+        GLES20.glGenTextures(1, textures, 0)
+        val texId = textures[0]
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+        return texId
+    }
+
+    /**
+     * Builds an MVP matrix that scales a full-screen quad so the source
+     * (of size srcW x srcH) fits inside the output (outW x outH) with
+     * aspect ratio preserved. Letterboxes or pillarboxes as needed.
+     */
+    private fun buildFitMvpMatrix(
+        srcW: Int,
+        srcH: Int,
+        outW: Int,
+        outH: Int,
+        out: FloatArray
+    ) {
+        Matrix.setIdentityM(out, 0)
+        if (srcW <= 0 || srcH <= 0 || outW <= 0 || outH <= 0) return
+
+        val scaleX = outW.toFloat() / srcW.toFloat()
+        val scaleY = outH.toFloat() / srcH.toFloat()
+        val fit = minOf(scaleX, scaleY)
+
+        val ndcScaleX = (srcW * fit) / outW.toFloat()
+        val ndcScaleY = (srcH * fit) / outH.toFloat()
+
+        Matrix.scaleM(out, 0, ndcScaleX, ndcScaleY, 1f)
     }
 
     private fun copyToPublicGallery(context: Context, sourceFile: File): Uri? {

@@ -79,7 +79,7 @@ fun TimelineView(
                         onHorizontalDrag = { change, _ ->
                             change.consume()
                             if (totalDurationUs > 0) {
-                                val fraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                                val fraction = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
                                 onSeek((fraction * totalDurationUs).toLong())
                             }
                         }
@@ -121,7 +121,7 @@ fun TimelineView(
                 .pointerInput(totalDurationUs) {
                     detectTapGestures { offset ->
                         if (totalDurationUs > 0) {
-                            val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                            val fraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
                             onSeek((fraction * totalDurationUs).toLong())
                         }
                     }
@@ -130,7 +130,7 @@ fun TimelineView(
                     detectHorizontalDragGestures(
                         onDragStart = { offset ->
                             if (totalDurationUs > 0) {
-                                val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                                val fraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
                                 onSeek((fraction * totalDurationUs).toLong())
                             }
                         },
@@ -139,7 +139,7 @@ fun TimelineView(
                         onHorizontalDrag = { change, _ ->
                             change.consume()
                             if (totalDurationUs > 0) {
-                                val fraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                                val fraction = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
                                 onSeek((fraction * totalDurationUs).toLong())
                             }
                         }

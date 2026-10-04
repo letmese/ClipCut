@@ -67,6 +67,22 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun importMedia(uri: Uri, mediaType: MediaType) {
         val current = _project.value ?: return
         viewModelScope.launch {
+            if (mediaType == MediaType.IMAGE) {
+                val defaultImageDurationUs = 5_000_000L // 5 seconds default
+                val newClip = TimelineItem(
+                    uri = uri.toString(),
+                    mediaType = MediaType.IMAGE,
+                    sourceDurationUs = defaultImageDurationUs,
+                    trimStartUs = 0L,
+                    trimEndUs = defaultImageDurationUs
+                )
+                val updatedClips = current.videoClips + newClip
+                updateProjectInternal(current.copy(videoClips = updatedClips))
+                _selectedClipId.value = newClip.id
+                AppLog.i(TAG, "Imported image clip: ${uri.lastPathSegment} (5000ms)")
+                return@launch
+            }
+
             try {
                 val retriever = MediaMetadataRetriever()
                 retriever.setDataSource(getApplication(), uri)
@@ -75,7 +91,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 val durationUs = durationMs * 1000L
                 retriever.release()
 
-                if (mediaType == MediaType.VIDEO || mediaType == MediaType.IMAGE) {
+                if (mediaType == MediaType.VIDEO) {
                     val newClip = TimelineItem(
                         uri = uri.toString(),
                         mediaType = mediaType,
