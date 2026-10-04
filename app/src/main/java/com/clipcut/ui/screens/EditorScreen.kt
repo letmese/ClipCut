@@ -298,7 +298,8 @@ fun EditorScreen(
                 totalDurationUs = totalDurationUs,
                 onSelectClip = { id -> viewModel.selectClip(id) },
                 onSeek = { targetUs -> viewModel.playerManager.seekToUs(targetUs) },
-                onAddMediaClick = { videoPickerLauncher.launch("video/*") }
+                onAddMediaClick = { videoPickerLauncher.launch("video/*") },
+                onTrimClip = { clipId, startUs, endUs -> viewModel.trimClip(clipId, startUs, endUs) }
             )
 
             // Bottom Action Toolbar
@@ -308,6 +309,9 @@ fun EditorScreen(
                     .fillMaxWidth()
                     .navigationBarsPadding()
             ) {
+                val clips = project?.videoClips ?: emptyList()
+                val selectedIndex = clips.indexOfFirst { it.id == selectedClipId }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -326,6 +330,20 @@ fun EditorScreen(
                         label = "Split",
                         enabled = selectedClip != null && currentPositionUs > 30_000L && currentPositionUs < (totalDurationUs - 30_000L),
                         onClick = { viewModel.splitClipAtPlayhead() }
+                    )
+
+                    EditorActionButton(
+                        icon = Icons.Default.ArrowBack,
+                        label = "Move ◀",
+                        enabled = selectedIndex > 0,
+                        onClick = { viewModel.reorderClips(selectedIndex, selectedIndex - 1) }
+                    )
+
+                    EditorActionButton(
+                        icon = Icons.Default.ArrowForward,
+                        label = "Move ▶",
+                        enabled = selectedIndex >= 0 && selectedIndex < clips.lastIndex,
+                        onClick = { viewModel.reorderClips(selectedIndex, selectedIndex + 1) }
                     )
 
                     EditorActionButton(
@@ -381,7 +399,11 @@ fun EditorScreen(
     if (showOverlaySheet) {
         OverlaySheet(
             totalDurationUs = totalDurationUs,
+            initialPlayheadUs = currentPositionUs,
+            existingOverlays = project?.overlays ?: emptyList(),
             onAddOverlay = { overlay -> viewModel.addOverlay(overlay) },
+            onDeleteOverlay = { overlayId -> viewModel.removeOverlay(overlayId) },
+            onSeekPreview = { targetUs -> viewModel.playerManager.seekToUs(targetUs) },
             onDismiss = { showOverlaySheet = false }
         )
     }

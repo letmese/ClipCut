@@ -72,8 +72,16 @@ class MediaMuxerWrapper(
         }
     }
 
+    private var lastVideoPtsUs = -1L
+    private var lastAudioPtsUs = -1L
+
     fun writeVideoSample(buffer: ByteBuffer, bufferInfo: MediaCodec.BufferInfo) {
         synchronized(lock) {
+            if (bufferInfo.presentationTimeUs <= lastVideoPtsUs) {
+                bufferInfo.presentationTimeUs = lastVideoPtsUs + 1L
+            }
+            lastVideoPtsUs = bufferInfo.presentationTimeUs
+
             if (!isStarted) {
                 val copy = ByteBuffer.allocateDirect(bufferInfo.size)
                 buffer.position(bufferInfo.offset)
@@ -93,6 +101,11 @@ class MediaMuxerWrapper(
 
     fun writeAudioSample(buffer: ByteBuffer, bufferInfo: MediaCodec.BufferInfo) {
         synchronized(lock) {
+            if (bufferInfo.presentationTimeUs <= lastAudioPtsUs) {
+                bufferInfo.presentationTimeUs = lastAudioPtsUs + 1L
+            }
+            lastAudioPtsUs = bufferInfo.presentationTimeUs
+
             if (!isStarted) {
                 val copy = ByteBuffer.allocateDirect(bufferInfo.size)
                 buffer.position(bufferInfo.offset)

@@ -138,11 +138,12 @@ class ExportEngine(
 
                         outputSurface.getTransformMatrix(texMatrix)
 
-                        // Apply filter
+                        // Apply filter & rotation
                         colorFilter.updateConfig(clip.filterConfig)
                         colorFilter.drawOes(
                             texId = oesTexId,
                             texMatrix = texMatrix,
+                            rotationDegrees = decoder.videoRotation,
                             width = config.customWidth,
                             height = config.customHeight
                         )

@@ -5,6 +5,8 @@ import android.opengl.GLES20
 import com.clipcut.core.model.FilterConfig
 import com.clipcut.core.model.FilterType
 
+import android.opengl.Matrix
+
 class ColorAdjustFilter : GlFilter(
     vertexShaderSource = OES_VERTEX_SHADER,
     fragmentShaderSource = OES_FRAGMENT_SHADER
@@ -58,12 +60,26 @@ class ColorAdjustFilter : GlFilter(
         texId: Int,
         texMatrix: FloatArray,
         mvpMatrix: FloatArray = GlUtil.IDENTITY_MATRIX,
+        rotationDegrees: Int = 0,
         width: Int,
         height: Int
     ) {
+        val finalTexMatrix = if (rotationDegrees != 0) {
+            val rotMatrix = FloatArray(16)
+            Matrix.setIdentityM(rotMatrix, 0)
+            Matrix.translateM(rotMatrix, 0, 0.5f, 0.5f, 0f)
+            Matrix.rotateM(rotMatrix, 0, -rotationDegrees.toFloat(), 0f, 0f, 1f)
+            Matrix.translateM(rotMatrix, 0, -0.5f, -0.5f, 0f)
+            val result = FloatArray(16)
+            Matrix.multiplyMM(result, 0, texMatrix, 0, rotMatrix, 0)
+            result
+        } else {
+            texMatrix
+        }
+
         draw(
             texId = texId,
-            texMatrix = texMatrix,
+            texMatrix = finalTexMatrix,
             mvpMatrix = mvpMatrix,
             width = width,
             height = height,

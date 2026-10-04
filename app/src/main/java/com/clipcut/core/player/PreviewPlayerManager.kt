@@ -187,6 +187,11 @@ class PreviewPlayerManager(private val context: Context) {
             accumulatedUs += clipDurationUs
         }
 
+        val currentClip = proj.videoClips.getOrNull(targetWindowIndex)
+        if (currentClip != null && player.playbackParameters.speed != currentClip.speed) {
+            player.playbackParameters = PlaybackParameters(currentClip.speed)
+        }
+
         player.seekTo(targetWindowIndex, windowOffsetMs.coerceAtLeast(0L))
         musicPlayer?.seekTo(clampedTargetUs / 1000)
         _currentPositionUs.value = clampedTargetUs
@@ -216,6 +221,11 @@ class PreviewPlayerManager(private val context: Context) {
         val proj = currentProject ?: return
 
         val currentWindowIndex = player.currentMediaItemIndex
+        val currentClip = proj.videoClips.getOrNull(currentWindowIndex)
+        if (currentClip != null && player.playbackParameters.speed != currentClip.speed) {
+            player.playbackParameters = PlaybackParameters(currentClip.speed)
+        }
+
         val currentPositionInWindowMs = player.currentPosition
 
         var accumulatedUs = 0L

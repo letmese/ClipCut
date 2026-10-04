@@ -39,6 +39,7 @@ fun TimelineView(
     onSelectClip: (String) -> Unit,
     onSeek: (Long) -> Unit,
     onAddMediaClick: () -> Unit,
+    onTrimClip: (String, Long, Long) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -193,10 +194,14 @@ fun TimelineView(
                                         onSelectClip(clip.id)
                                         onSeek(clipStartUs)
                                     }
-                                    .padding(6.dp),
-                                contentAlignment = Alignment.CenterStart
                             ) {
-                                Column(verticalArrangement = Arrangement.Center) {
+                                // Content in center with horizontal padding if selected
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = if (isSelected) 20.dp else 6.dp, vertical = 6.dp),
+                                    verticalArrangement = Arrangement.Center
+                                ) {
                                     Text(
                                         text = "Clip ${index + 1}",
                                         color = if (isSelected) AccentPrimary else TextPrimary,
@@ -211,6 +216,53 @@ fun TimelineView(
                                         fontSize = 10.sp,
                                         maxLines = 1
                                     )
+                                }
+
+                                // Interactive Left & Right Trim Handles when selected
+                                if (isSelected) {
+                                    // Left Trim Handle
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.CenterStart)
+                                            .width(20.dp)
+                                            .fillMaxHeight()
+                                            .background(AccentPrimary, RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp))
+                                            .pointerInput(clip.id) {
+                                                detectHorizontalDragGestures { change, dragAmount ->
+                                                    change.consume()
+                                                    val deltaUs = (dragAmount * 80_000L).toLong()
+                                                    val newStartUs = (clip.trimStartUs + deltaUs).coerceIn(0L, clip.trimEndUs - 100_000L)
+                                                    if (newStartUs != clip.trimStartUs) {
+                                                        onTrimClip(clip.id, newStartUs, clip.trimEndUs)
+                                                    }
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("◀", color = TextPrimary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                    }
+
+                                    // Right Trim Handle
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.CenterEnd)
+                                            .width(20.dp)
+                                            .fillMaxHeight()
+                                            .background(AccentPrimary, RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp))
+                                            .pointerInput(clip.id) {
+                                                detectHorizontalDragGestures { change, dragAmount ->
+                                                    change.consume()
+                                                    val deltaUs = (dragAmount * 80_000L).toLong()
+                                                    val newEndUs = (clip.trimEndUs + deltaUs).coerceIn(clip.trimStartUs + 100_000L, clip.sourceDurationUs)
+                                                    if (newEndUs != clip.trimEndUs) {
+                                                        onTrimClip(clip.id, clip.trimStartUs, newEndUs)
+                                                    }
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("▶", color = TextPrimary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                    }
                                 }
                             }
                         }
