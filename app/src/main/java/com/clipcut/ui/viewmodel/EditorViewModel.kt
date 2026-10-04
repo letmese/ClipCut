@@ -197,6 +197,24 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         updateProjectInternal(current.copy(videoClips = updated))
     }
 
+    fun setClipTransition(clipId: String, type: TransitionType) {
+        val current = _project.value ?: return
+        val updated = current.videoClips.map {
+            if (it.id == clipId) it.copy(transitionType = type) else it
+        }
+        updateProjectInternal(current.copy(videoClips = updated))
+        AppLog.i(TAG, "Updated transition for clip $clipId: $type")
+    }
+
+    fun setClipVolume(clipId: String, volume: Float) {
+        val current = _project.value ?: return
+        val updated = current.videoClips.map {
+            if (it.id == clipId) it.copy(volume = volume.coerceIn(0f, 2f)) else it
+        }
+        updateProjectInternal(current.copy(videoClips = updated))
+        AppLog.i(TAG, "Updated volume for clip $clipId: $volume")
+    }
+
     fun deleteClip(clipId: String) {
         val current = _project.value ?: return
         val updated = current.videoClips.filter { it.id != clipId }

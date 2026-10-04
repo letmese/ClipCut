@@ -311,6 +311,7 @@ private fun RowScope.TimelineClip(
         var pendingTrimEndUs by remember(clip.id, clip.trimEndUs) {
             mutableStateOf(clip.trimEndUs)
         }
+        var isDraggingTrim by remember { mutableStateOf(false) }
 
         val pixelsPerSourceUs = remember(clipWidthPx, clip.trimmedDurationUs) {
             if (clip.trimmedDurationUs > 0L) {
@@ -355,12 +356,25 @@ private fun RowScope.TimelineClip(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = "${formatDuration(clip.effectiveDurationUs)} (${clip.speed}x)",
-                    color = TextSecondary,
-                    fontSize = 10.sp,
-                    maxLines = 1
-                )
+                if (isDraggingTrim) {
+                    val liveDurationUs = (pendingTrimEndUs - pendingTrimStartUs).coerceAtLeast(0L)
+                    val speed = clip.speed.coerceIn(0.25f, 4.0f)
+                    val effectiveDurationUs = (liveDurationUs / speed).toLong()
+                    Text(
+                        text = "→ ${formatDuration(effectiveDurationUs)}",
+                        color = AccentGold,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                } else {
+                    Text(
+                        text = "${formatDuration(clip.effectiveDurationUs)} (${clip.speed}x)",
+                        color = TextSecondary,
+                        fontSize = 10.sp,
+                        maxLines = 1
+                    )
+                }
             }
 
             if (isSelected) {
@@ -368,12 +382,14 @@ private fun RowScope.TimelineClip(
                     edge = TrimEdge.LEFT,
                     pixelsPerUs = pixelsPerSourceUs,
                     modifier = Modifier.align(Alignment.CenterStart),
+                    onDragStart = { isDraggingTrim = true },
                     onDragDeltaUs = { deltaUs ->
                         val newStart = (pendingTrimStartUs + deltaUs)
                             .coerceIn(0L, pendingTrimEndUs - MIN_CLIP_DURATION_US)
                         pendingTrimStartUs = newStart
                     },
                     onDragEnd = {
+                        isDraggingTrim = false
                         onTrimClip(clip.id, pendingTrimStartUs, pendingTrimEndUs)
                     }
                 )
@@ -382,6 +398,7 @@ private fun RowScope.TimelineClip(
                     edge = TrimEdge.RIGHT,
                     pixelsPerUs = pixelsPerSourceUs,
                     modifier = Modifier.align(Alignment.CenterEnd),
+                    onDragStart = { isDraggingTrim = true },
                     onDragDeltaUs = { deltaUs ->
                         val newEnd = (pendingTrimEndUs + deltaUs)
                             .coerceIn(
@@ -391,6 +408,7 @@ private fun RowScope.TimelineClip(
                         pendingTrimEndUs = newEnd
                     },
                     onDragEnd = {
+                        isDraggingTrim = false
                         onTrimClip(clip.id, pendingTrimStartUs, pendingTrimEndUs)
                     }
                 )
@@ -405,6 +423,7 @@ enum class TrimEdge { LEFT, RIGHT }
 private fun TrimHandle(
     edge: TrimEdge,
     pixelsPerUs: Float,
+    onDragStart: () -> Unit = {},
     onDragDeltaUs: (Long) -> Unit,
     onDragEnd: () -> Unit,
     modifier: Modifier = Modifier
@@ -421,6 +440,7 @@ private fun TrimHandle(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = true)
                     down.consume()
+                    onDragStart()
 
                     drag(down.id) { change ->
                         val deltaPx = change.positionChange().x

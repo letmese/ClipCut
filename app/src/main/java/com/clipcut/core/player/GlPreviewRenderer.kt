@@ -288,6 +288,44 @@ class GlPreviewRenderer(private val context: Context) {
             viewportHeight = currentHeight
         )
 
+        // Capture the current frame into the outgoing FBO so the next clip's
+        // transition has something to blend from.
+        outgoingFbo?.let { fbo ->
+            fbo.bind()
+            GLES20.glClearColor(0f, 0f, 0f, 1f)
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+            if (clip.mediaType == MediaType.IMAGE) {
+                // Re-render the image into the FBO
+                val fboMvp = FloatArray(16)
+                renderImagePreview(clip, fboMvp)
+            } else {
+                // The video frame is already on the SurfaceTexture; re-draw it
+                // with the color filter to capture into the FBO.
+                val fboTexMatrix = FloatArray(16)
+                val fboMvp = FloatArray(16)
+                outputSurface?.getTransformMatrix(fboTexMatrix)
+                val decoder = currentDecoder
+                if (decoder != null) {
+                    val rotated = decoder.videoRotation == 90 || decoder.videoRotation == 270
+                    val srcW = if (rotated) decoder.videoHeight else decoder.videoWidth
+                    val srcH = if (rotated) decoder.videoWidth else decoder.videoHeight
+                    buildFitMvpMatrix(srcW, srcH, currentWidth, currentHeight, fboMvp)
+                    colorFilter?.updateConfig(clip.filterConfig)
+                    colorFilter?.drawOes(
+                        texId = outputSurface!!.textureId,
+                        texMatrix = fboTexMatrix,
+                        mvpMatrix = fboMvp,
+                        rotationDegrees = decoder.videoRotation,
+                        width = currentWidth,
+                        height = currentHeight
+                    )
+                }
+            }
+            fbo.unbind()
+        }
+
+        // Restore the viewport
+        GLES20.glViewport(0, 0, currentWidth, currentHeight)
         eglCore?.swapBuffers(eglSurface!!)
     }
 
@@ -298,28 +336,38 @@ class GlPreviewRenderer(private val context: Context) {
         texMatrix: FloatArray,
         mvpMatrix: FloatArray
     ) {
-        // For preview simplicity, we approximate the transition by rendering
-        // the incoming clip with an overlay-style alpha fade on top of black.
-        // True A/B blend would require capturing the outgoing clip's frame into
-        // the FBO during the previous render pass, which is what export does.
         val progress = (clipLocalUs.toFloat() / incomingClip.transitionDurationUs.toFloat())
             .coerceIn(0f, 1f)
 
-        // Just render the incoming clip with the color filter; the transition
-        // is visually approximated by the composition without the outgoing frame.
+        // Render the incoming clip to a temporary texture via glCopyTexImage2D
+        // from the default framebuffer. Same technique as the export pipeline.
         renderVideoPreview(incomingClip, clipLocalUs, texMatrix, mvpMatrix)
 
-        // Dim to black based on progress for fade-to-black
-        if (incomingClip.transitionType == TransitionType.FADE) {
-            val blackAlpha = if (progress < 0.5f) 1f - progress * 2f else 0f
-            if (blackAlpha > 0.01f) {
-                GLES20.glEnable(GLES20.GL_BLEND)
-                GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-                GLES20.glClearColor(0f, 0f, 0f, blackAlpha)
-                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-                GLES20.glDisable(GLES20.GL_BLEND)
-            }
-        }
+        val incomingTexId = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTexId)
+        GLES20.glCopyTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
+            0, 0, currentWidth, currentHeight, 0
+        )
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+
+        // Clear and blend outgoing FBO + incoming texture through transition shader
+        GLES20.glViewport(0, 0, currentWidth, currentHeight)
+        GLES20.glClearColor(0f, 0f, 0f, 1f)
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+
+        transitionFilter?.setType(incomingClip.transitionType)
+        transitionFilter?.setProgress(progress)
+        transitionFilter?.drawTransition(
+            textureOutId = outgoingFbo?.textureId ?: 0,
+            textureInId = incomingTexId,
+            texMatrix = GlUtil.IDENTITY_MATRIX,
+            mvpMatrix = GlUtil.IDENTITY_MATRIX,
+            width = currentWidth,
+            height = currentHeight
+        )
+
+        GLES20.glDeleteTextures(1, intArrayOf(incomingTexId), 0)
     }
 
     private fun renderVideoPreview(

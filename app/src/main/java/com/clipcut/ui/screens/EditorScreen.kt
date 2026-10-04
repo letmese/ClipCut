@@ -25,8 +25,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.clipcut.core.model.MediaType
+import com.clipcut.core.model.TransitionType
 import com.clipcut.ui.theme.*
 import com.clipcut.ui.viewmodel.EditorViewModel
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,11 +54,19 @@ fun EditorScreen(
     var showAudioSheet by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showSpeedDialog by remember { mutableStateOf(false) }
+    var showTransitionDialog by remember { mutableStateOf(false) }
+    var showClipDialog by remember { mutableStateOf(false) }
 
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { viewModel.importMedia(it, MediaType.VIDEO) }
+    }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.importMedia(it, MediaType.IMAGE) }
     }
 
     val audioPickerLauncher = rememberLauncherForActivityResult(
@@ -69,7 +79,6 @@ fun EditorScreen(
         project?.videoClips?.find { it.id == selectedClipId }
     }
 
-    // Wire the GL preview renderer to the timeline clock
     LaunchedEffect(Unit) {
         viewModel.previewRenderer.positionProvider = {
             viewModel.playerManager.currentPositionUs.value
@@ -93,11 +102,7 @@ fun EditorScreen(
                 },
                 actions = {
                     IconButton(onClick = onOpenLogs) {
-                        Icon(
-                            Icons.Default.BugReport,
-                            contentDescription = "Logs",
-                            tint = AccentPrimary
-                        )
+                        Icon(Icons.Default.BugReport, contentDescription = "Logs", tint = AccentPrimary)
                     }
                     Button(
                         onClick = { showExportDialog = true },
@@ -120,9 +125,7 @@ fun EditorScreen(
         containerColor = DarkBackground
     ) { padding ->
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
+            modifier = Modifier.fillMaxSize().padding(padding)
         ) {
             // GL Preview
             Box(
@@ -147,9 +150,7 @@ fun EditorScreen(
                         project?.let { renderer.setProject(it) }
                     }
 
-                    AndroidExternalSurface(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
+                    AndroidExternalSurface(modifier = Modifier.fillMaxSize()) {
                         onSurface { surface, width, height ->
                             renderer.onSurfaceCreated(surface, width, height)
                             surface.onChanged { w, h -> renderer.onSurfaceChanged(w, h) }
@@ -186,16 +187,15 @@ fun EditorScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                         Text("Tap to Import Video", color = TextSecondary, fontSize = 14.sp)
+                        Spacer(Modifier.height(4.dp))
+                        Text("or use Add menu below", color = TextTertiary, fontSize = 12.sp)
                     }
                 }
             }
 
-            // Transport bar (unchanged)
+            // Transport bar
             if (project?.videoClips?.isNotEmpty() == true) {
-                Surface(
-                    color = DarkSurface,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                Surface(color = DarkSurface, modifier = Modifier.fillMaxWidth()) {
                     val isAtEnd = totalDurationUs > 0 && currentPositionUs >= (totalDurationUs - 50_000L)
                     Row(
                         modifier = Modifier
@@ -266,7 +266,7 @@ fun EditorScreen(
                 onTrimClip = { clipId, startUs, endUs -> viewModel.trimClip(clipId, startUs, endUs) }
             )
 
-            // Toolbar (unchanged)
+            // Toolbar
             Surface(
                 color = DarkSurface,
                 modifier = Modifier
@@ -283,7 +283,12 @@ fun EditorScreen(
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    EditorActionButton(Icons.Default.Add, "Add") { videoPickerLauncher.launch("video/*") }
+                    EditorActionButton(Icons.Default.Add, "Video") {
+                        videoPickerLauncher.launch("video/*")
+                    }
+                    EditorActionButton(Icons.Default.Image, "Image") {
+                        imagePickerLauncher.launch("image/*")
+                    }
                     EditorActionButton(
                         Icons.Default.ContentCut, "Split",
                         enabled = selectedClip != null && currentPositionUs > 30_000L && currentPositionUs < (totalDurationUs - 30_000L)
@@ -296,10 +301,30 @@ fun EditorScreen(
                         Icons.Default.ArrowForward, "Move ▶",
                         enabled = selectedIndex >= 0 && selectedIndex < clips.lastIndex
                     ) { viewModel.reorderClips(selectedIndex, selectedIndex + 1) }
-                    EditorActionButton(Icons.Default.Speed, "Speed", enabled = selectedClip != null) { showSpeedDialog = true }
-                    EditorActionButton(Icons.Default.Tune, "Filters", enabled = selectedClip != null) { showFilterSheet = true }
-                    EditorActionButton(Icons.Default.TextFields, "Text") { showOverlaySheet = true }
-                    EditorActionButton(Icons.Default.MusicNote, "Audio") { showAudioSheet = true }
+                    EditorActionButton(Icons.Default.Speed, "Speed", enabled = selectedClip != null) {
+                        showSpeedDialog = true
+                    }
+                    EditorActionButton(Icons.Default.Tune, "Filters", enabled = selectedClip != null) {
+                        showFilterSheet = true
+                    }
+                    EditorActionButton(Icons.Default.TextFields, "Text") {
+                        showOverlaySheet = true
+                    }
+                    EditorActionButton(Icons.Default.MusicNote, "Music") {
+                        showAudioSheet = true
+                    }
+                    EditorActionButton(
+                        Icons.Default.Transform, "Transition",
+                        enabled = selectedClip != null && selectedIndex > 0
+                    ) {
+                        showTransitionDialog = true
+                    }
+                    EditorActionButton(
+                        Icons.Default.VolumeUp, "Clip",
+                        enabled = selectedClip != null
+                    ) {
+                        showClipDialog = true
+                    }
                     EditorActionButton(
                         Icons.Default.Delete, "Delete",
                         tint = AccentPrimary,
@@ -310,7 +335,7 @@ fun EditorScreen(
         }
     }
 
-    // Sheets and dialogs — unchanged from v1.0.5
+    // Filter sheet
     if (showFilterSheet && selectedClip != null) {
         FilterSheet(
             initialConfig = selectedClip.filterConfig,
@@ -319,6 +344,7 @@ fun EditorScreen(
         )
     }
 
+    // Overlay sheet
     if (showOverlaySheet) {
         OverlaySheet(
             totalDurationUs = totalDurationUs,
@@ -331,6 +357,7 @@ fun EditorScreen(
         )
     }
 
+    // Audio sheet
     if (showAudioSheet) {
         AudioSheet(
             originalVideoVolume = project?.originalVideoVolume ?: 1f,
@@ -342,6 +369,7 @@ fun EditorScreen(
         )
     }
 
+    // Speed dialog
     if (showSpeedDialog && selectedClip != null) {
         val speeds = listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 4.0f)
         AlertDialog(
@@ -389,6 +417,117 @@ fun EditorScreen(
         )
     }
 
+    // Transition dialog
+    if (showTransitionDialog && selectedClip != null) {
+        AlertDialog(
+            onDismissRequest = { showTransitionDialog = false },
+            title = { Text("Transition (into this clip)", color = TextPrimary) },
+            text = {
+                Column {
+                    Text(
+                        text = "The transition plays at the start of this clip, blending from the previous clip.",
+                        color = TextTertiary,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    TransitionType.values().forEach { type ->
+                        val isSelected = selectedClip.transitionType == type
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.setClipTransition(selectedClip.id, type)
+                                    showTransitionDialog = false
+                                }
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = {
+                                    viewModel.setClipTransition(selectedClip.id, type)
+                                    showTransitionDialog = false
+                                },
+                                colors = RadioButtonDefaults.colors(selectedColor = AccentPrimary)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = type.displayName,
+                                color = if (isSelected) AccentPrimary else TextPrimary,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showTransitionDialog = false }) {
+                    Text("Close", color = TextSecondary)
+                }
+            },
+            containerColor = DarkSurfaceElevated
+        )
+    }
+
+    // Clip volume dialog
+    if (showClipDialog && selectedClip != null) {
+        var clipVolume by remember(selectedClip.id) { mutableStateOf(selectedClip.volume) }
+        AlertDialog(
+            onDismissRequest = {
+                viewModel.setClipVolume(selectedClip.id, clipVolume)
+                showClipDialog = false
+            },
+            title = { Text("Clip Volume", color = TextPrimary) },
+            text = {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Volume", color = TextSecondary, fontSize = 13.sp)
+                        Text("${(clipVolume * 100).toInt()}%", color = AccentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Slider(
+                        value = clipVolume,
+                        onValueChange = { clipVolume = it },
+                        valueRange = 0f..2f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = AccentPrimary,
+                            activeTrackColor = AccentPrimary,
+                            inactiveTrackColor = DarkSurfaceBorder
+                        )
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "0% mutes this clip. 100% is original. 200% doubles it.",
+                        color = TextTertiary,
+                        fontSize = 11.sp
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.setClipVolume(selectedClip.id, clipVolume)
+                        showClipDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary)
+                ) {
+                    Text("Apply")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClipDialog = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = DarkSurfaceElevated
+        )
+    }
+
+    // Export dialog
     if (showExportDialog || exportState !is com.clipcut.ui.viewmodel.ExportState.Idle) {
         ExportDialog(
             exportState = exportState,
