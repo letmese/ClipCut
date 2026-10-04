@@ -26,6 +26,16 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         AppLog.i(TAG, "MainActivity created")
 
+        // Handle share intent
+        if (intent?.action == android.content.Intent.ACTION_SEND && intent.type != null) {
+            val uri = if (android.os.Build.VERSION.SDK_INT >= 33)
+                intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri::class.java)
+            else @Suppress("DEPRECATION") intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM)
+            if (uri != null) {
+                AppLog.i(TAG, "Received shared media: $uri (type=${intent.type})")
+            }
+        }
+
         setContent {
             ClipCutTheme {
                 val navController = rememberNavController()

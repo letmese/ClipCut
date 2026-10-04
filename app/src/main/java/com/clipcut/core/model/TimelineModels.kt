@@ -2,37 +2,51 @@ package com.clipcut.core.model
 
 import java.util.UUID
 
-enum class MediaType {
-    VIDEO,
-    AUDIO,
-    IMAGE
-}
+enum class MediaType { VIDEO, AUDIO, IMAGE }
 
 enum class FilterType(val displayName: String) {
-    NONE("Original"),
-    BRIGHTNESS("Brightness"),
-    CONTRAST("Contrast"),
-    SATURATION("Saturation"),
-    TEMPERATURE("Warmth"),
-    VIGNETTE("Vignette"),
-    GRAYSCALE("B&W"),
-    SEPIA("Sepia")
+    NONE("Original"), BRIGHTNESS("Brightness"), CONTRAST("Contrast"),
+    SATURATION("Saturation"), TEMPERATURE("Warmth"),
+    VIGNETTE("Vignette"), GRAYSCALE("B&W"), SEPIA("Sepia")
 }
 
 data class FilterConfig(
     val filterType: FilterType = FilterType.NONE,
-    val brightness: Float = 0.0f,     // -1.0 to 1.0 (default 0.0)
-    val contrast: Float = 1.0f,       // 0.0 to 2.0 (default 1.0)
-    val saturation: Float = 1.0f,     // 0.0 to 2.0 (default 1.0)
-    val temperature: Float = 0.0f     // -1.0 to 1.0 (default 0.0, warm/cool)
+    val brightness: Float = 0.0f,
+    val contrast: Float = 1.0f,
+    val saturation: Float = 1.0f,
+    val temperature: Float = 0.0f
 )
 
 enum class TransitionType(val displayName: String) {
-    NONE("None"),
-    FADE("Fade to Black"),
-    SLIDE_LEFT("Slide Left"),
-    SLIDE_RIGHT("Slide Right"),
-    DISSOLVE("Dissolve")
+    NONE("None"), FADE("Fade to Black"), SLIDE_LEFT("Slide Left"),
+    SLIDE_RIGHT("Slide Right"), DISSOLVE("Dissolve")
+}
+
+enum class AspectRatio(val label: String, val wRatio: Float, val hRatio: Float) {
+    FREE("Free", 0f, 0f),
+    R_16_9("16:9", 16f, 9f),
+    R_9_16("9:16", 9f, 16f),
+    R_1_1("1:1", 1f, 1f),
+    R_4_5("4:5", 4f, 5f)
+}
+
+enum class FontFamilyOption(val label: String) {
+    DEFAULT("Default"),
+    SERIF("Serif"),
+    MONOSPACE("Monospace"),
+    SANS_SERIF_CONDENSED("Condensed")
+}
+
+data class CropRect(
+    val left: Float = 0f,     // 0..1
+    val top: Float = 0f,      // 0..1
+    val right: Float = 1f,    // 0..1
+    val bottom: Float = 1f    // 0..1
+) {
+    val width: Float get() = (right - left).coerceIn(0f, 1f)
+    val height: Float get() = (bottom - top).coerceIn(0f, 1f)
+    val isValid: Boolean get() = width > 0.01f && height > 0.01f
 }
 
 data class TimelineItem(
@@ -42,18 +56,20 @@ data class TimelineItem(
     val sourceDurationUs: Long = 0L,
     val trimStartUs: Long = 0L,
     val trimEndUs: Long = sourceDurationUs,
-    val speed: Float = 1.0f,               // 0.25f .. 4.0f
-    val volume: Float = 1.0f,              // 0.0f .. 2.0f
-    val rotationDegrees: Int = 0,          // 0, 90, 180, 270
+    val speed: Float = 1.0f,
+    val volume: Float = 1.0f,
+    val rotationDegrees: Int = 0,
+    val flipHorizontal: Boolean = false,
+    val flipVertical: Boolean = false,
+    val cropRect: CropRect = CropRect(),
+    val fadeInMs: Int = 0,
+    val fadeOutMs: Int = 0,
     val filterConfig: FilterConfig = FilterConfig(),
     val transitionType: TransitionType = TransitionType.NONE,
-    val transitionDurationUs: Long = 500_000L // 0.5s
+    val transitionDurationUs: Long = 500_000L
 ) {
-    val trimmedDurationUs: Long
-        get() = maxOf(0L, trimEndUs - trimStartUs)
-
-    val effectiveDurationUs: Long
-        get() = (trimmedDurationUs / speed.coerceIn(0.25f, 4.0f)).toLong()
+    val trimmedDurationUs: Long get() = maxOf(0L, trimEndUs - trimStartUs)
+    val effectiveDurationUs: Long get() = (trimmedDurationUs / speed.coerceIn(0.25f, 4.0f)).toLong()
 }
 
 data class AudioTrackItem(
@@ -64,24 +80,40 @@ data class AudioTrackItem(
     val timelineStartUs: Long = 0L,
     val trimStartUs: Long = 0L,
     val trimEndUs: Long = sourceDurationUs,
-    val volume: Float = 1.0f
+    val volume: Float = 1.0f,
+    val fadeInMs: Int = 0,
+    val fadeOutMs: Int = 0
 ) {
-    val effectiveDurationUs: Long
-        get() = maxOf(0L, trimEndUs - trimStartUs)
+    val effectiveDurationUs: Long get() = maxOf(0L, trimEndUs - trimStartUs)
 }
+
+data class OverlayKeyframe(
+    val id: String = UUID.randomUUID().toString(),
+    val timeOffsetUs: Long,          // offset from overlay.timelineStartUs
+    val normalizedX: Float,
+    val normalizedY: Float,
+    val scale: Float,
+    val rotation: Float
+)
 
 data class OverlayItem(
     val id: String = UUID.randomUUID().toString(),
     val text: String = "",
     val textColor: Long = 0xFFFFFFFFL,
     val textSizeSp: Float = 28f,
+    val textBold: Boolean = true,
+    val textItalic: Boolean = false,
+    val fontFamily: FontFamilyOption = FontFamilyOption.DEFAULT,
+    val backgroundColor: Long = 0x00000000L,
+    val backgroundPaddingPx: Int = 16,
     val imageUri: String? = null,
-    val normalizedX: Float = 0.5f,        // 0.0 to 1.0 (center)
+    val normalizedX: Float = 0.5f,
     val normalizedY: Float = 0.5f,
     val scale: Float = 1.0f,
     val rotation: Float = 0.0f,
     val timelineStartUs: Long = 0L,
-    val timelineEndUs: Long = 5_000_000L   // 5s default
+    val timelineEndUs: Long = 5_000_000L,
+    val keyframes: List<OverlayKeyframe> = emptyList()
 )
 
 enum class ExportResolution(val label: String, val width: Int, val height: Int, val defaultBitrate: Int) {
@@ -107,6 +139,19 @@ data class ExportConfig(
     val audioChannels: Int = 2
 )
 
+data class PiPTrackItem(
+    val id: String = UUID.randomUUID().toString(),
+    val uri: String,
+    val timelineStartUs: Long = 0L,
+    val timelineEndUs: Long = 5_000_000L,
+    val trimStartUs: Long = 0L,
+    val trimEndUs: Long = 0L,
+    val normalizedX: Float = 0.75f,
+    val normalizedY: Float = 0.25f,
+    val scale: Float = 0.3f,
+    val volume: Float = 1.0f
+)
+
 data class Project(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "Untitled Video",
@@ -115,9 +160,9 @@ data class Project(
     val videoClips: List<TimelineItem> = emptyList(),
     val audioTracks: List<AudioTrackItem> = emptyList(),
     val overlays: List<OverlayItem> = emptyList(),
+    val pipTracks: List<PiPTrackItem> = emptyList(),
     val originalVideoVolume: Float = 1.0f,
     val backgroundMusicVolume: Float = 1.0f
 ) {
-    val totalDurationUs: Long
-        get() = videoClips.sumOf { it.effectiveDurationUs }
+    val totalDurationUs: Long get() = videoClips.sumOf { it.effectiveDurationUs }
 }

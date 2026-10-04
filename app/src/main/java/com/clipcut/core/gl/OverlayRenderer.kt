@@ -7,6 +7,7 @@ import android.opengl.GLES20
 import android.opengl.GLUtils
 import android.opengl.Matrix
 import com.clipcut.core.log.AppLog
+import com.clipcut.core.model.FontFamilyOption
 import com.clipcut.core.model.OverlayItem
 
 class OverlayRenderer(private val context: Context) {
@@ -48,14 +49,49 @@ class OverlayRenderer(private val context: Context) {
             // Reuse the class-level scratch matrix instead of allocating per overlay
             Matrix.setIdentityM(scratchMvpMatrix, 0)
 
-            val posX = (item.normalizedX * 2.0f) - 1.0f
-            val posY = 1.0f - (item.normalizedY * 2.0f)
+            var normX = item.normalizedX
+            var normY = item.normalizedY
+            var sc = item.scale
+            var rot = item.rotation
+
+            if (item.keyframes.isNotEmpty()) {
+                val relUs = currentPtsUs - item.timelineStartUs
+                val sorted = item.keyframes.sortedBy { it.timeOffsetUs }
+                if (relUs <= sorted.first().timeOffsetUs) {
+                    normX = sorted.first().normalizedX
+                    normY = sorted.first().normalizedY
+                    sc = sorted.first().scale
+                    rot = sorted.first().rotation
+                } else if (relUs >= sorted.last().timeOffsetUs) {
+                    normX = sorted.last().normalizedX
+                    normY = sorted.last().normalizedY
+                    sc = sorted.last().scale
+                    rot = sorted.last().rotation
+                } else {
+                    for (k in 0 until sorted.size - 1) {
+                        val k1 = sorted[k]
+                        val k2 = sorted[k + 1]
+                        if (relUs in k1.timeOffsetUs..k2.timeOffsetUs) {
+                            val span = (k2.timeOffsetUs - k1.timeOffsetUs).toFloat().coerceAtLeast(1f)
+                            val t = (relUs - k1.timeOffsetUs) / span
+                            normX = k1.normalizedX + t * (k2.normalizedX - k1.normalizedX)
+                            normY = k1.normalizedY + t * (k2.normalizedY - k1.normalizedY)
+                            sc = k1.scale + t * (k2.scale - k1.scale)
+                            rot = k1.rotation + t * (k2.rotation - k1.rotation)
+                            break
+                        }
+                    }
+                }
+            }
+
+            val posX = (normX * 2.0f) - 1.0f
+            val posY = 1.0f - (normY * 2.0f)
 
             Matrix.translateM(scratchMvpMatrix, 0, posX, posY, 0f)
-            Matrix.rotateM(scratchMvpMatrix, 0, item.rotation, 0f, 0f, 1f)
+            Matrix.rotateM(scratchMvpMatrix, 0, rot, 0f, 0f, 1f)
 
-            val scaleX = (texture.width.toFloat() / viewportWidth.toFloat()) * item.scale
-            val scaleY = (texture.height.toFloat() / viewportHeight.toFloat()) * item.scale
+            val scaleX = (texture.width.toFloat() / viewportWidth.toFloat()) * sc
+            val scaleY = (texture.height.toFloat() / viewportHeight.toFloat()) * sc
             Matrix.scaleM(scratchMvpMatrix, 0, scaleX, scaleY, 1f)
 
             quadFilter.draw(
@@ -71,7 +107,9 @@ class OverlayRenderer(private val context: Context) {
     }
 
     private fun getOrCreateTexture(item: OverlayItem): CachedTexture? {
-        val sig = "${item.text}_${item.textColor}_${item.textSizeSp}_${item.imageUri}"
+        val sig = "${item.text}_${item.textColor}_${item.textSizeSp}_${item.imageUri}_" +
+                  "${item.textBold}_${item.textItalic}_${item.fontFamily}_" +
+                  "${item.backgroundColor}_${item.backgroundPaddingPx}"
         val existing = textureCache[item.id]
         if (existing != null && existing.signature == sig) {
             return existing
@@ -100,22 +138,50 @@ class OverlayRenderer(private val context: Context) {
     }
 
     private fun createTextBitmap(item: OverlayItem): Bitmap {
+        val style = when {
+            item.textBold && item.textItalic -> Typeface.BOLD_ITALIC
+            item.textBold -> Typeface.BOLD
+            item.textItalic -> Typeface.ITALIC
+            else -> Typeface.NORMAL
+        }
+        val family = when (item.fontFamily) {
+            FontFamilyOption.DEFAULT -> Typeface.DEFAULT
+            FontFamilyOption.SERIF -> Typeface.SERIF
+            FontFamilyOption.MONOSPACE -> Typeface.MONOSPACE
+            FontFamilyOption.SANS_SERIF_CONDENSED -> Typeface.SANS_SERIF
+        }
+
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = item.textColor.toInt()
             textSize = item.textSizeSp * 2.5f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            typeface = Typeface.create(family, style)
             setShadowLayer(6f, 2f, 2f, Color.argb(180, 0, 0, 0))
         }
 
         val bounds = Rect()
         paint.getTextBounds(item.text, 0, item.text.length, bounds)
 
-        val padding = 32
-        val width = maxOf(64, bounds.width() + padding * 2)
-        val height = maxOf(64, bounds.height() + padding * 2)
+        val pad = 32
+        val bgPad = item.backgroundPaddingPx
+        val width = maxOf(64, bounds.width() + pad * 2 + bgPad * 2)
+        val height = maxOf(64, bounds.height() + pad * 2 + bgPad * 2)
 
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
+
+        // Background box if non-transparent
+        if ((item.backgroundColor ushr 24) != 0L) {
+            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = item.backgroundColor.toInt()
+            }
+            val rect = RectF(
+                (pad - bgPad).toFloat(),
+                (pad - bgPad).toFloat(),
+                (width - pad + bgPad).toFloat(),
+                (height - pad + bgPad).toFloat()
+            )
+            canvas.drawRoundRect(rect, 12f, 12f, bgPaint)
+        }
 
         val x = (width - bounds.width()) / 2f - bounds.left
         val y = (height - bounds.height()) / 2f - bounds.top

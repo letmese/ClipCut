@@ -180,6 +180,7 @@ class ExportEngine(
                         if (inTransition) {
                             // 1. Render incoming frame to the default framebuffer first.
                             colorFilter.updateConfig(clip.filterConfig)
+                            colorFilter.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
                             colorFilter.drawOes(
                                 texId = oesTexId,
                                 texMatrix = texMatrix,
@@ -217,6 +218,7 @@ class ExportEngine(
                         } else {
                             // Normal render
                             colorFilter.updateConfig(clip.filterConfig)
+                            colorFilter.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
                             colorFilter.drawOes(
                                 texId = oesTexId,
                                 texMatrix = texMatrix,
@@ -358,6 +360,7 @@ class ExportEngine(
                 if (inTransition) {
                     // 1. Render incoming image frame to default framebuffer
                     colorFilter.updateConfig(clip.filterConfig)
+                    colorFilter.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
                     colorFilter.draw(texId, GlUtil.IDENTITY_MATRIX, mvpMatrix, config.customWidth, config.customHeight, GLES20.GL_TEXTURE_2D)
 
                     // 2. Capture into incomingTransitionTexId
@@ -386,6 +389,7 @@ class ExportEngine(
                     )
                 } else {
                     colorFilter.updateConfig(clip.filterConfig)
+                    colorFilter.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
                     colorFilter.draw(texId, GlUtil.IDENTITY_MATRIX, mvpMatrix, config.customWidth, config.customHeight, GLES20.GL_TEXTURE_2D)
                 }
 

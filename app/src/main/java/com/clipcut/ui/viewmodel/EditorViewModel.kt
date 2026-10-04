@@ -43,6 +43,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val _exportState = MutableStateFlow<ExportState>(ExportState.Idle)
     val exportState: StateFlow<ExportState> = _exportState.asStateFlow()
 
+    // Undo / redo stacks
+    private val undoStack = ArrayDeque<Project>()
+    private val redoStack = ArrayDeque<Project>()
+    private val MAX_HISTORY = 30
+
+    private val _canUndo = MutableStateFlow(false)
+    val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
+    private val _canRedo = MutableStateFlow(false)
+    val canRedo: StateFlow<Boolean> = _canRedo.asStateFlow()
+
     private var activeExportEngine: ExportEngine? = null
     private var exportJob: Job? = null
 
@@ -52,71 +62,90 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             if (entity != null) {
                 val proj = entity.toDomain()
                 _project.value = proj
+                undoStack.clear(); redoStack.clear()
+                updateUndoRedoFlags()
                 _selectedClipId.value = proj.videoClips.firstOrNull()?.id
                 playerManager.syncWithProject(proj)
                 previewRenderer.setProject(proj)
-                AppLog.i(TAG, "Loaded project: ${proj.name} (${proj.videoClips.size} clips)")
             } else {
                 AppLog.e(TAG, "Project not found with id $projectId")
             }
         }
     }
 
-    fun selectClip(id: String?) {
-        _selectedClipId.value = id
+    fun selectClip(id: String?) { _selectedClipId.value = id }
+
+    // -------------------- UNDO / REDO --------------------
+
+    private fun pushHistory(project: Project) {
+        undoStack.addLast(project)
+        while (undoStack.size > MAX_HISTORY) undoStack.removeFirst()
+        redoStack.clear()
+        updateUndoRedoFlags()
     }
+
+    private fun updateUndoRedoFlags() {
+        _canUndo.value = undoStack.isNotEmpty()
+        _canRedo.value = redoStack.isNotEmpty()
+    }
+
+    fun undo() {
+        val current = _project.value ?: return
+        val prev = undoStack.removeLastOrNull() ?: return
+        redoStack.addLast(current)
+        commitInternal(prev)
+        updateUndoRedoFlags()
+        AppLog.i(TAG, "Undo (stack: ${undoStack.size}, redo: ${redoStack.size})")
+    }
+
+    fun redo() {
+        val current = _project.value ?: return
+        val next = redoStack.removeLastOrNull() ?: return
+        undoStack.addLast(current)
+        commitInternal(next)
+        updateUndoRedoFlags()
+        AppLog.i(TAG, "Redo (stack: ${undoStack.size}, redo: ${redoStack.size})")
+    }
+
+    // -------------------- MEDIA --------------------
 
     fun importMedia(uri: Uri, mediaType: MediaType) {
         val current = _project.value ?: return
         viewModelScope.launch {
             if (mediaType == MediaType.IMAGE) {
-                val defaultImageDurationUs = 5_000_000L
+                val dur = 5_000_000L
                 val newClip = TimelineItem(
-                    uri = uri.toString(),
-                    mediaType = MediaType.IMAGE,
-                    sourceDurationUs = defaultImageDurationUs,
-                    trimStartUs = 0L,
-                    trimEndUs = defaultImageDurationUs
+                    uri = uri.toString(), mediaType = MediaType.IMAGE,
+                    sourceDurationUs = dur, trimStartUs = 0L, trimEndUs = dur
                 )
-                val updatedClips = current.videoClips + newClip
-                updateProjectInternal(current.copy(videoClips = updatedClips))
+                applyEdit(current.copy(videoClips = current.videoClips + newClip))
                 _selectedClipId.value = newClip.id
-                AppLog.i(TAG, "Imported image clip: ${uri.lastPathSegment} (5000ms)")
                 return@launch
             }
-
             try {
                 val retriever = MediaMetadataRetriever()
                 retriever.setDataSource(getApplication(), uri)
-                val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                val durationMs = durationStr?.toLongOrNull() ?: 5000L
-                val durationUs = durationMs * 1000L
+                val durationMs = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_DURATION
+                )?.toLongOrNull() ?: 5000L
                 retriever.release()
+                val durationUs = durationMs * 1000L
 
                 if (mediaType == MediaType.VIDEO) {
                     val newClip = TimelineItem(
-                        uri = uri.toString(),
-                        mediaType = mediaType,
-                        sourceDurationUs = durationUs,
-                        trimStartUs = 0L,
-                        trimEndUs = durationUs
+                        uri = uri.toString(), mediaType = mediaType,
+                        sourceDurationUs = durationUs, trimStartUs = 0L, trimEndUs = durationUs
                     )
-                    val updatedClips = current.videoClips + newClip
-                    updateProjectInternal(current.copy(videoClips = updatedClips))
+                    applyEdit(current.copy(videoClips = current.videoClips + newClip))
                     _selectedClipId.value = newClip.id
-                    AppLog.i(TAG, "Imported video clip: ${uri.lastPathSegment} (${durationMs}ms)")
                 } else if (mediaType == MediaType.AUDIO) {
                     val newTrack = AudioTrackItem(
                         uri = uri.toString(),
                         name = uri.lastPathSegment ?: "Audio Track",
                         sourceDurationUs = durationUs,
-                        timelineStartUs = 0L,
-                        trimStartUs = 0L,
-                        trimEndUs = durationUs
+                        timelineStartUs = 0L, trimStartUs = 0L, trimEndUs = durationUs
                     )
-                    val updatedTracks = current.audioTracks + newTrack
-                    updateProjectInternal(current.copy(audioTracks = updatedTracks))
-                    AppLog.i(TAG, "Imported audio track: ${newTrack.name} (${durationMs}ms)")
+                    applyEdit(current.copy(audioTracks = current.audioTracks + newTrack))
                 }
             } catch (e: Exception) {
                 AppLog.e(TAG, "Failed to import media from $uri", e)
@@ -124,155 +153,184 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // -------------------- EDIT OPS --------------------
+
     fun splitClipAtPlayhead() {
         val current = _project.value ?: return
         val playheadUs = playerManager.currentPositionUs.value
         val totalDurUs = current.totalDurationUs
+        if (current.videoClips.isEmpty()) return
+        if (playheadUs <= 50_000L || playheadUs >= totalDurUs - 50_000L) return
 
-        if (current.videoClips.isEmpty()) {
-            AppLog.w(TAG, "Cannot split: No clips in project")
-            return
-        }
-
-        if (playheadUs <= 50_000L || playheadUs >= totalDurUs - 50_000L) {
-            AppLog.w(TAG, "Cannot split at edge")
-            return
-        }
-
-        var accumulatedUs = 0L
-        val updatedClips = mutableListOf<TimelineItem>()
+        var acc = 0L
+        val updated = mutableListOf<TimelineItem>()
         var didSplit = false
-
         for (clip in current.videoClips) {
-            val clipDurationUs = clip.effectiveDurationUs
-            val clipEndUs = accumulatedUs + clipDurationUs
-            if (!didSplit && playheadUs > accumulatedUs + 30_000L && playheadUs < clipEndUs - 30_000L) {
-                val relativeTimelineOffsetUs = playheadUs - accumulatedUs
-                val relativeSourceUs = (relativeTimelineOffsetUs * clip.speed).toLong()
-                val splitSourceUs = clip.trimStartUs + relativeSourceUs
-
-                val clip1 = clip.copy(id = java.util.UUID.randomUUID().toString(), trimEndUs = splitSourceUs)
-                val clip2 = clip.copy(id = java.util.UUID.randomUUID().toString(), trimStartUs = splitSourceUs)
-                updatedClips.add(clip1)
-                updatedClips.add(clip2)
-                _selectedClipId.value = clip2.id
+            val dur = clip.effectiveDurationUs
+            val end = acc + dur
+            if (!didSplit && playheadUs > acc + 30_000L && playheadUs < end - 30_000L) {
+                val relTimeline = playheadUs - acc
+                val relSource = (relTimeline * clip.speed).toLong()
+                val splitSource = clip.trimStartUs + relSource
+                updated.add(clip.copy(id = java.util.UUID.randomUUID().toString(), trimEndUs = splitSource))
+                val c2 = clip.copy(id = java.util.UUID.randomUUID().toString(), trimStartUs = splitSource)
+                updated.add(c2)
+                _selectedClipId.value = c2.id
                 didSplit = true
-            } else {
-                updatedClips.add(clip)
-            }
-            accumulatedUs += clipDurationUs
+            } else updated.add(clip)
+            acc += dur
         }
+        if (didSplit) applyEdit(current.copy(videoClips = updated))
+    }
 
-        if (didSplit) {
-            updateProjectInternal(current.copy(videoClips = updatedClips))
+    fun trimClip(clipId: String, s: Long, e: Long) {
+        val c = _project.value ?: return
+        val updated = c.videoClips.map {
+            if (it.id == clipId) it.copy(
+                trimStartUs = s.coerceIn(0L, it.sourceDurationUs),
+                trimEndUs = e.coerceIn(s, it.sourceDurationUs)
+            ) else it
         }
+        applyEdit(c.copy(videoClips = updated))
     }
 
-    fun trimClip(clipId: String, newTrimStartUs: Long, newTrimEndUs: Long) {
-        val current = _project.value ?: return
-        val updated = current.videoClips.map {
-            if (it.id == clipId) {
-                it.copy(
-                    trimStartUs = newTrimStartUs.coerceIn(0L, it.sourceDurationUs),
-                    trimEndUs = newTrimEndUs.coerceIn(newTrimStartUs, it.sourceDurationUs)
-                )
-            } else it
-        }
-        updateProjectInternal(current.copy(videoClips = updated))
+    fun setClipSpeed(clipId: String, speed: Float) = updateClip(clipId) {
+        it.copy(speed = speed.coerceIn(0.25f, 4.0f))
     }
 
-    fun setClipSpeed(clipId: String, speed: Float) {
-        val current = _project.value ?: return
-        val updated = current.videoClips.map {
-            if (it.id == clipId) it.copy(speed = speed.coerceIn(0.25f, 4.0f)) else it
-        }
-        updateProjectInternal(current.copy(videoClips = updated))
+    fun setClipFilter(clipId: String, filter: FilterConfig) = updateClip(clipId) {
+        it.copy(filterConfig = filter)
     }
 
-    fun setClipFilter(clipId: String, filterConfig: FilterConfig) {
-        val current = _project.value ?: return
-        val updated = current.videoClips.map {
-            if (it.id == clipId) it.copy(filterConfig = filterConfig) else it
-        }
-        updateProjectInternal(current.copy(videoClips = updated))
+    fun setClipTransition(clipId: String, type: TransitionType) = updateClip(clipId) {
+        it.copy(transitionType = type)
     }
 
-    fun setClipTransition(clipId: String, type: TransitionType) {
-        val current = _project.value ?: return
-        val updated = current.videoClips.map {
-            if (it.id == clipId) it.copy(transitionType = type) else it
-        }
-        updateProjectInternal(current.copy(videoClips = updated))
-        AppLog.i(TAG, "Updated transition for clip $clipId: $type")
+    fun setClipVolume(clipId: String, vol: Float) = updateClip(clipId) {
+        it.copy(volume = vol.coerceIn(0f, 2f))
     }
 
-    fun setClipVolume(clipId: String, volume: Float) {
-        val current = _project.value ?: return
-        val updated = current.videoClips.map {
-            if (it.id == clipId) it.copy(volume = volume.coerceIn(0f, 2f)) else it
-        }
-        updateProjectInternal(current.copy(videoClips = updated))
-        AppLog.i(TAG, "Updated volume for clip $clipId: $volume")
+    fun setClipRotation(clipId: String, deg: Int) = updateClip(clipId) {
+        it.copy(rotationDegrees = ((deg % 360) + 360) % 360)
     }
 
-    fun deleteClip(clipId: String) {
-        val current = _project.value ?: return
-        val filtered = current.videoClips.filter { it.id != clipId }
-        val updated = filtered.mapIndexed { index, clip ->
-            if (index == 0 && clip.transitionType != TransitionType.NONE) {
-                clip.copy(transitionType = TransitionType.NONE)
-            } else clip
-        }
-        updateProjectInternal(current.copy(videoClips = updated))
-        _selectedClipId.value = updated.firstOrNull()?.id
+    fun setClipFlipH(clipId: String, flip: Boolean) = updateClip(clipId) {
+        it.copy(flipHorizontal = flip)
     }
 
-    fun reorderClips(fromIndex: Int, toIndex: Int) {
-        val current = _project.value ?: return
-        val list = current.videoClips.toMutableList()
-        if (fromIndex in list.indices && toIndex in list.indices) {
-            val item = list.removeAt(fromIndex)
-            list.add(toIndex, item)
-            val updated = list.mapIndexed { index, clip ->
-                if (index == 0 && clip.transitionType != TransitionType.NONE) {
-                    clip.copy(transitionType = TransitionType.NONE)
-                } else clip
-            }
-            updateProjectInternal(current.copy(videoClips = updated))
-        }
+    fun setClipFlipV(clipId: String, flip: Boolean) = updateClip(clipId) {
+        it.copy(flipVertical = flip)
     }
 
-    fun addOverlay(overlay: OverlayItem) {
-        val current = _project.value ?: return
-        val updated = current.overlays + overlay
-        updateProjectInternal(current.copy(overlays = updated))
+    fun setClipCrop(clipId: String, crop: CropRect) = updateClip(clipId) {
+        it.copy(cropRect = crop)
     }
 
-    fun removeOverlay(overlayId: String) {
-        val current = _project.value ?: return
-        val updated = current.overlays.filter { it.id != overlayId }
-        updateProjectInternal(current.copy(overlays = updated))
-    }
-
-    fun setVolumes(originalVideo: Float, backgroundMusic: Float) {
-        val current = _project.value ?: return
-        updateProjectInternal(
-            current.copy(
-                originalVideoVolume = originalVideo.coerceIn(0f, 2f),
-                backgroundMusicVolume = backgroundMusic.coerceIn(0f, 2f)
-            )
+    fun setClipFade(clipId: String, fadeInMs: Int, fadeOutMs: Int) = updateClip(clipId) {
+        it.copy(
+            fadeInMs = fadeInMs.coerceIn(0, 10_000),
+            fadeOutMs = fadeOutMs.coerceIn(0, 10_000)
         )
     }
 
-    private fun updateProjectInternal(updatedProject: Project) {
-        val p = updatedProject.copy(lastModifiedTime = System.currentTimeMillis())
+    private fun updateClip(clipId: String, block: (TimelineItem) -> TimelineItem) {
+        val c = _project.value ?: return
+        val updated = c.videoClips.map { if (it.id == clipId) block(it) else it }
+        applyEdit(c.copy(videoClips = updated))
+    }
+
+    fun deleteClip(clipId: String) {
+        val c = _project.value ?: return
+        val filtered = c.videoClips.filter { it.id != clipId }
+        val normalized = filtered.mapIndexed { i, clip ->
+            if (i == 0 && clip.transitionType != TransitionType.NONE)
+                clip.copy(transitionType = TransitionType.NONE) else clip
+        }
+        applyEdit(c.copy(videoClips = normalized))
+        _selectedClipId.value = normalized.firstOrNull()?.id
+    }
+
+    fun reorderClips(from: Int, to: Int) {
+        val c = _project.value ?: return
+        val list = c.videoClips.toMutableList()
+        if (from in list.indices && to in list.indices) {
+            val item = list.removeAt(from)
+            list.add(to, item)
+            val normalized = list.mapIndexed { i, clip ->
+                if (i == 0 && clip.transitionType != TransitionType.NONE)
+                    clip.copy(transitionType = TransitionType.NONE) else clip
+            }
+            applyEdit(c.copy(videoClips = normalized))
+        }
+    }
+
+    // -------------------- OVERLAYS --------------------
+
+    fun addOverlay(o: OverlayItem) {
+        val c = _project.value ?: return
+        applyEdit(c.copy(overlays = c.overlays + o))
+    }
+
+    fun removeOverlay(id: String) {
+        val c = _project.value ?: return
+        applyEdit(c.copy(overlays = c.overlays.filter { it.id != id }))
+    }
+
+    fun updateOverlay(id: String, block: (OverlayItem) -> OverlayItem) {
+        val c = _project.value ?: return
+        applyEdit(c.copy(overlays = c.overlays.map { if (it.id == id) block(it) else it }))
+    }
+
+    fun addKeyframe(overlayId: String, kf: OverlayKeyframe) {
+        updateOverlay(overlayId) { it.copy(keyframes = (it.keyframes + kf).sortedBy { k -> k.timeOffsetUs }) }
+    }
+
+    fun removeKeyframe(overlayId: String, kfId: String) {
+        updateOverlay(overlayId) { it.copy(keyframes = it.keyframes.filter { k -> k.id != kfId }) }
+    }
+
+    // -------------------- PIP --------------------
+
+    fun addPipTrack(pip: PiPTrackItem) {
+        val c = _project.value ?: return
+        applyEdit(c.copy(pipTracks = c.pipTracks + pip))
+    }
+
+    fun removePipTrack(id: String) {
+        val c = _project.value ?: return
+        applyEdit(c.copy(pipTracks = c.pipTracks.filter { it.id != id }))
+    }
+
+    fun updatePipTrack(id: String, block: (PiPTrackItem) -> PiPTrackItem) {
+        val c = _project.value ?: return
+        applyEdit(c.copy(pipTracks = c.pipTracks.map { if (it.id == id) block(it) else it }))
+    }
+
+    fun setVolumes(orig: Float, music: Float) {
+        val c = _project.value ?: return
+        applyEdit(c.copy(
+            originalVideoVolume = orig.coerceIn(0f, 2f),
+            backgroundMusicVolume = music.coerceIn(0f, 2f)
+        ))
+    }
+
+    // -------------------- APPLY --------------------
+
+    private fun applyEdit(newProject: Project) {
+        val current = _project.value
+        if (current != null && current != newProject) pushHistory(current)
+        commitInternal(newProject)
+    }
+
+    private fun commitInternal(newProject: Project) {
+        val p = newProject.copy(lastModifiedTime = System.currentTimeMillis())
         _project.value = p
         playerManager.syncWithProject(p)
         previewRenderer.setProject(p)
-        viewModelScope.launch {
-            dao.updateProject(ProjectEntity.fromDomain(p))
-        }
+        viewModelScope.launch { dao.updateProject(ProjectEntity.fromDomain(p)) }
     }
+
+    // -------------------- EXPORT --------------------
 
     fun startExport(config: ExportConfig) {
         val proj = _project.value ?: return
@@ -280,7 +338,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             _exportState.value = ExportState.Error("Please add at least one video clip before exporting.")
             return
         }
-
         playerManager.pause()
         previewRenderer.pause()
         _exportState.value = ExportState.Progress(0f, "Starting export...")
@@ -293,15 +350,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 _exportState.value = ExportState.Progress(progress, status)
             }
             result.fold(
-                onSuccess = { exportResult ->
+                onSuccess = { r ->
                     _exportState.value = ExportState.Success(
-                        file = exportResult.file,
-                        publicUri = exportResult.publicUri,
-                        galleryPath = exportResult.galleryPath
+                        file = r.file, publicUri = r.publicUri, galleryPath = r.galleryPath
                     )
                 },
-                onFailure = { error ->
-                    _exportState.value = ExportState.Error(error.message ?: "Unknown export error")
+                onFailure = { e ->
+                    _exportState.value = ExportState.Error(e.message ?: "Unknown export error")
                 }
             )
             activeExportEngine = null
@@ -316,9 +371,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         previewRenderer.resume()
     }
 
-    fun dismissExportDialog() {
-        _exportState.value = ExportState.Idle
-    }
+    fun dismissExportDialog() { _exportState.value = ExportState.Idle }
 
     override fun onCleared() {
         super.onCleared()
@@ -326,7 +379,5 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         previewRenderer.release()
     }
 
-    companion object {
-        private const val TAG = "EditorViewModel"
-    }
+    companion object { private const val TAG = "EditorViewModel" }
 }

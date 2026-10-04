@@ -26,6 +26,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.clipcut.core.model.MediaType
 import com.clipcut.core.model.TransitionType
+import com.clipcut.core.model.AspectRatio
+import com.clipcut.core.model.CropRect
+import com.clipcut.core.model.TimelineItem
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.filled.MoreVert
 import com.clipcut.ui.theme.*
 import com.clipcut.ui.viewmodel.EditorViewModel
 import java.util.Locale
@@ -56,6 +64,8 @@ fun EditorScreen(
     var showSpeedDialog by remember { mutableStateOf(false) }
     var showTransitionDialog by remember { mutableStateOf(false) }
     var showClipDialog by remember { mutableStateOf(false) }
+    var showCropDialog by remember { mutableStateOf(false) }
+    var showFadeDialog by remember { mutableStateOf(false) }
 
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -266,70 +276,125 @@ fun EditorScreen(
                 onTrimClip = { clipId, startUs, endUs -> viewModel.trimClip(clipId, startUs, endUs) }
             )
 
-            // Toolbar
+            // Toolbar (regrouped)
             Surface(
                 color = DarkSurface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
+                modifier = Modifier.fillMaxWidth().navigationBarsPadding()
             ) {
                 val clips = project?.videoClips ?: emptyList()
                 val selectedIndex = clips.indexOfFirst { it.id == selectedClipId }
+                var showAddMenu by remember { mutableStateOf(false) }
+                var showMoreMenu by remember { mutableStateOf(false) }
 
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
                         .padding(horizontal = 8.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    EditorActionButton(Icons.Default.Add, "Video") {
-                        videoPickerLauncher.launch("video/*")
+                    // Group 1: Undo / Redo
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        EditorActionButton(
+                            Icons.Default.Undo, "Undo",
+                            enabled = viewModel.canUndo.collectAsState().value
+                        ) { viewModel.undo() }
+                        EditorActionButton(
+                            Icons.Default.Redo, "Redo",
+                            enabled = viewModel.canRedo.collectAsState().value
+                        ) { viewModel.redo() }
                     }
-                    EditorActionButton(Icons.Default.Image, "Image") {
-                        imagePickerLauncher.launch("image/*")
+
+                    // Group 2: Add
+                    EditorActionButton(Icons.Default.Add, "Add") { showAddMenu = true }
+
+                    // Group 3: Edit
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        EditorActionButton(
+                            Icons.Default.ContentCut, "Split",
+                            enabled = selectedClip != null && currentPositionUs > 30_000L &&
+                                    currentPositionUs < totalDurationUs - 30_000L
+                        ) { viewModel.splitClipAtPlayhead() }
+                        EditorActionButton(
+                            Icons.Default.Tune, "Edit",
+                            enabled = selectedClip != null
+                        ) { showClipDialog = true }
+                        EditorActionButton(
+                            Icons.Default.TextFields, "Text"
+                        ) { showOverlaySheet = true }
+                        EditorActionButton(
+                            Icons.Default.MusicNote, "Audio"
+                        ) { showAudioSheet = true }
                     }
-                    EditorActionButton(
-                        Icons.Default.ContentCut, "Split",
-                        enabled = selectedClip != null && currentPositionUs > 30_000L && currentPositionUs < (totalDurationUs - 30_000L)
-                    ) { viewModel.splitClipAtPlayhead() }
-                    EditorActionButton(
-                        Icons.Default.ArrowBack, "Move ◀",
-                        enabled = selectedIndex > 0
-                    ) { viewModel.reorderClips(selectedIndex, selectedIndex - 1) }
-                    EditorActionButton(
-                        Icons.Default.ArrowForward, "Move ▶",
-                        enabled = selectedIndex >= 0 && selectedIndex < clips.lastIndex
-                    ) { viewModel.reorderClips(selectedIndex, selectedIndex + 1) }
-                    EditorActionButton(Icons.Default.Speed, "Speed", enabled = selectedClip != null) {
-                        showSpeedDialog = true
-                    }
-                    EditorActionButton(Icons.Default.Tune, "Filters", enabled = selectedClip != null) {
-                        showFilterSheet = true
-                    }
-                    EditorActionButton(Icons.Default.TextFields, "Text") {
-                        showOverlaySheet = true
-                    }
-                    EditorActionButton(Icons.Default.MusicNote, "Music") {
-                        showAudioSheet = true
-                    }
-                    EditorActionButton(
-                        Icons.Default.Transform, "Transition",
-                        enabled = selectedClip != null && selectedIndex > 0
+
+                    // Group 4: More
+                    EditorActionButton(Icons.Default.MoreVert, "More") { showMoreMenu = true }
+
+                    // Add dropdown
+                    DropdownMenu(
+                        expanded = showAddMenu,
+                        onDismissRequest = { showAddMenu = false }
                     ) {
-                        showTransitionDialog = true
+                        DropdownMenuItem(
+                            text = { Text("Import Video") },
+                            onClick = { showAddMenu = false; videoPickerLauncher.launch("video/*") }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Import Image") },
+                            onClick = { showAddMenu = false; imagePickerLauncher.launch("image/*") }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Import Audio") },
+                            onClick = { showAddMenu = false; audioPickerLauncher.launch("audio/*") }
+                        )
                     }
-                    EditorActionButton(
-                        Icons.Default.VolumeUp, "Clip",
-                        enabled = selectedClip != null
+
+                    // More dropdown
+                    DropdownMenu(
+                        expanded = showMoreMenu,
+                        onDismissRequest = { showMoreMenu = false }
                     ) {
-                        showClipDialog = true
+                        DropdownMenuItem(
+                            text = { Text("Speed") },
+                            enabled = selectedClip != null,
+                            onClick = { showMoreMenu = false; showSpeedDialog = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Filters") },
+                            enabled = selectedClip != null,
+                            onClick = { showMoreMenu = false; showFilterSheet = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Transition") },
+                            enabled = selectedClip != null && selectedIndex > 0,
+                            onClick = { showMoreMenu = false; showTransitionDialog = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Crop / Aspect") },
+                            enabled = selectedClip != null,
+                            onClick = { showMoreMenu = false; showCropDialog = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Fade In / Out") },
+                            enabled = selectedClip != null,
+                            onClick = { showMoreMenu = false; showFadeDialog = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Move ◀") },
+                            enabled = selectedIndex > 0,
+                            onClick = { showMoreMenu = false; viewModel.reorderClips(selectedIndex, selectedIndex - 1) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Move ▶") },
+                            enabled = selectedIndex in 0..<clips.lastIndex,
+                            onClick = { showMoreMenu = false; viewModel.reorderClips(selectedIndex, selectedIndex + 1) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete Clip", color = AccentPrimary) },
+                            enabled = selectedClip != null,
+                            onClick = { showMoreMenu = false; selectedClipId?.let { viewModel.deleteClip(it) } }
+                        )
                     }
-                    EditorActionButton(
-                        Icons.Default.Delete, "Delete",
-                        tint = AccentPrimary,
-                        enabled = selectedClip != null
-                    ) { selectedClipId?.let { viewModel.deleteClip(it) } }
                 }
             }
         }
@@ -527,6 +592,29 @@ fun EditorScreen(
         )
     }
 
+    // Crop dialog
+    if (showCropDialog && selectedClip != null) {
+        CropDialog(
+            clip = selectedClip,
+            onApply = { rot, fh, fv, crop, _ ->
+                viewModel.setClipRotation(selectedClip.id, rot)
+                viewModel.setClipFlipH(selectedClip.id, fh)
+                viewModel.setClipFlipV(selectedClip.id, fv)
+                viewModel.setClipCrop(selectedClip.id, crop)
+            },
+            onDismiss = { showCropDialog = false }
+        )
+    }
+
+    // Fade dialog
+    if (showFadeDialog && selectedClip != null) {
+        FadeDialog(
+            clip = selectedClip,
+            onApply = { fi, fo -> viewModel.setClipFade(selectedClip.id, fi, fo) },
+            onDismiss = { showFadeDialog = false }
+        )
+    }
+
     // Export dialog
     if (showExportDialog || exportState !is com.clipcut.ui.viewmodel.ExportState.Idle) {
         ExportDialog(
@@ -544,6 +632,123 @@ fun EditorScreen(
             }
         )
     }
+}
+
+@Composable
+private fun CropDialog(
+    clip: TimelineItem,
+    onApply: (Int, Boolean, Boolean, CropRect, String?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var rotation by remember(clip.id) { mutableStateOf(clip.rotationDegrees) }
+    var flipH by remember(clip.id) { mutableStateOf(clip.flipHorizontal) }
+    var flipV by remember(clip.id) { mutableStateOf(clip.flipVertical) }
+    var crop by remember(clip.id) { mutableStateOf(clip.cropRect) }
+    var aspect by remember(clip.id) { mutableStateOf(AspectRatio.FREE) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Crop & Transform", color = TextPrimary) },
+        text = {
+            Column {
+                Text("Aspect Ratio", color = TextSecondary, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(AspectRatio.values().toList()) { ar ->
+                        val sel = aspect == ar
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (sel) AccentPrimary else DarkSurface)
+                                .clickable {
+                                    aspect = ar
+                                    if (ar != AspectRatio.FREE) {
+                                        val targetH = ar.hRatio / ar.wRatio
+                                        crop = CropRect(left = 0f, top = (1f - targetH) / 2f, right = 1f, bottom = 1f - (1f - targetH) / 2f)
+                                    } else crop = CropRect()
+                                }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(ar.label, color = if (sel) TextPrimary else TextSecondary, fontSize = 11.sp)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text("Rotation: $rotation°", color = TextSecondary, fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(0, 90, 180, 270).forEach { deg ->
+                        OutlinedButton(onClick = { rotation = deg }) { Text("$deg°", fontSize = 11.sp) }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = flipH, onCheckedChange = { flipH = it })
+                    Text("Flip Horizontal", color = TextPrimary)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = flipV, onCheckedChange = { flipV = it })
+                    Text("Flip Vertical", color = TextPrimary)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onApply(rotation, flipH, flipV, crop, null); onDismiss() },
+                colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary)
+            ) { Text("Apply") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextSecondary) } },
+        containerColor = DarkSurfaceElevated
+    )
+}
+
+@Composable
+private fun FadeDialog(
+    clip: TimelineItem,
+    onApply: (Int, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var fadeIn by remember(clip.id) { mutableStateOf(clip.fadeInMs) }
+    var fadeOut by remember(clip.id) { mutableStateOf(clip.fadeOutMs) }
+    val maxMs = (clip.effectiveDurationUs / 1000L / 2).toInt()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Audio Fade", color = TextPrimary) },
+        text = {
+            Column {
+                Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) {
+                    Text("Fade In", color = TextSecondary); Text("${fadeIn}ms", color = AccentPrimary)
+                }
+                Slider(
+                    value = fadeIn.toFloat(),
+                    onValueChange = { fadeIn = it.toInt() },
+                    valueRange = 0f..maxMs.toFloat().coerceAtLeast(100f),
+                    colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary)
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) {
+                    Text("Fade Out", color = TextSecondary); Text("${fadeOut}ms", color = AccentPrimary)
+                }
+                Slider(
+                    value = fadeOut.toFloat(),
+                    onValueChange = { fadeOut = it.toInt() },
+                    valueRange = 0f..maxMs.toFloat().coerceAtLeast(100f),
+                    colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onApply(fadeIn, fadeOut); onDismiss() },
+                colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary)
+            ) { Text("Apply") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextSecondary) } },
+        containerColor = DarkSurfaceElevated
+    )
 }
 
 @Composable

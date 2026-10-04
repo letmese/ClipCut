@@ -446,6 +446,7 @@ class GlPreviewRenderer(private val context: Context) {
 
         val cf = colorFilter ?: return
         cf.updateConfig(clip.filterConfig)
+        cf.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
         cf.drawOes(
             texId = os.textureId,
             texMatrix = texMatrix,
@@ -488,6 +489,7 @@ class GlPreviewRenderer(private val context: Context) {
 
         val cf = colorFilter ?: return
         cf.updateConfig(clip.filterConfig)
+        cf.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
         cf.draw(
             texId = texId,
             texMatrix = GlUtil.IDENTITY_MATRIX,
