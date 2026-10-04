@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.AudioTrackItem
+import com.clipcut.core.model.BeatMarker
 import com.clipcut.core.model.OverlayItem
 import com.clipcut.core.model.PiPTrackItem
 import com.clipcut.core.model.TimelineItem
@@ -18,7 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 class ClipCutDatabase private constructor(context: Context) :
-    SQLiteOpenHelper(context, "clipcut.db", null, 3) {
+    SQLiteOpenHelper(context, "clipcut.db", null, 4) {
 
     private val gson = Gson()
     private val _projectsFlow = MutableStateFlow<List<ProjectEntity>>(emptyList())
@@ -37,11 +38,14 @@ class ClipCutDatabase private constructor(context: Context) :
                 audioTracks TEXT NOT NULL,
                 overlays TEXT NOT NULL,
                 pipTracks TEXT NOT NULL DEFAULT '[]',
+                beatMarkers TEXT NOT NULL DEFAULT '[]',
                 originalVideoVolume REAL NOT NULL,
-                backgroundMusicVolume REAL NOT NULL
+                backgroundMusicVolume REAL NOT NULL,
+                audioDuckingEnabled INTEGER NOT NULL DEFAULT 0,
+                audioDuckLevel REAL NOT NULL DEFAULT 0.3
             )
         """.trimIndent())
-        AppLog.i("ClipCutDatabase", "SQLite projects table created (v3)")
+        AppLog.i("ClipCutDatabase", "SQLite projects table created (v4)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -62,6 +66,16 @@ class ClipCutDatabase private constructor(context: Context) :
                 AppLog.e("ClipCutDatabase", "ALTER TABLE aspectRatio failed", e)
             }
         }
+        if (oldVersion < 4) {
+            try {
+                db.execSQL("ALTER TABLE projects ADD COLUMN beatMarkers TEXT NOT NULL DEFAULT '[]'")
+                db.execSQL("ALTER TABLE projects ADD COLUMN audioDuckingEnabled INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE projects ADD COLUMN audioDuckLevel REAL NOT NULL DEFAULT 0.3")
+                AppLog.i("ClipCutDatabase", "Added beatMarkers and audio ducking columns to projects table")
+            } catch (e: Exception) {
+                AppLog.e("ClipCutDatabase", "ALTER TABLE v4 columns failed", e)
+            }
+        }
     }
 
     private fun refreshFlow() {
@@ -74,6 +88,7 @@ class ClipCutDatabase private constructor(context: Context) :
         val audioType = object : TypeToken<List<AudioTrackItem>>() {}.type
         val overlayType = object : TypeToken<List<OverlayItem>>() {}.type
         val pipType = object : TypeToken<List<PiPTrackItem>>() {}.type
+        val beatType = object : TypeToken<List<BeatMarker>>() {}.type
 
         val id = cursor.getString(cursor.getColumnIndexOrThrow("id"))
         val name = cursor.getString(cursor.getColumnIndexOrThrow("name"))
@@ -86,8 +101,14 @@ class ClipCutDatabase private constructor(context: Context) :
         val pipJson = if (pipIdx >= 0) cursor.getString(pipIdx) else "[]"
         val arIdx = cursor.getColumnIndex("aspectRatio")
         val arStr = if (arIdx >= 0) cursor.getString(arIdx) else "16:9"
+        val bmIdx = cursor.getColumnIndex("beatMarkers")
+        val bmJson = if (bmIdx >= 0) cursor.getString(bmIdx) else "[]"
         val origVol = cursor.getFloat(cursor.getColumnIndexOrThrow("originalVideoVolume"))
         val bgVol = cursor.getFloat(cursor.getColumnIndexOrThrow("backgroundMusicVolume"))
+        val duckIdx = cursor.getColumnIndex("audioDuckingEnabled")
+        val duckEnabled = if (duckIdx >= 0) cursor.getInt(duckIdx) == 1 else false
+        val duckLvlIdx = cursor.getColumnIndex("audioDuckLevel")
+        val duckLevel = if (duckLvlIdx >= 0) cursor.getFloat(duckLvlIdx) else 0.3f
 
         return ProjectEntity(
             id = id, name = name, createdTime = created, lastModifiedTime = modified,
@@ -96,8 +117,11 @@ class ClipCutDatabase private constructor(context: Context) :
             audioTracks = gson.fromJson(aJson, audioType) ?: emptyList(),
             overlays = gson.fromJson(oJson, overlayType) ?: emptyList(),
             pipTracks = gson.fromJson(pipJson, pipType) ?: emptyList(),
+            beatMarkers = gson.fromJson(bmJson, beatType) ?: emptyList(),
             originalVideoVolume = origVol,
-            backgroundMusicVolume = bgVol
+            backgroundMusicVolume = bgVol,
+            audioDuckingEnabled = duckEnabled,
+            audioDuckLevel = duckLevel
         )
     }
 
@@ -131,8 +155,11 @@ class ClipCutDatabase private constructor(context: Context) :
                     put("audioTracks", gson.toJson(project.audioTracks))
                     put("overlays", gson.toJson(project.overlays))
                     put("pipTracks", gson.toJson(project.pipTracks))
+                    put("beatMarkers", gson.toJson(project.beatMarkers))
                     put("originalVideoVolume", project.originalVideoVolume)
                     put("backgroundMusicVolume", project.backgroundMusicVolume)
+                    put("audioDuckingEnabled", if (project.audioDuckingEnabled) 1 else 0)
+                    put("audioDuckLevel", project.audioDuckLevel)
                 }
                 writableDatabase.insertWithOnConflict(
                     "projects", null, v, SQLiteDatabase.CONFLICT_REPLACE

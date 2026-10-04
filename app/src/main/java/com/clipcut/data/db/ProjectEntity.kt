@@ -12,8 +12,11 @@ data class ProjectEntity(
     val audioTracks: List<AudioTrackItem>,
     val overlays: List<OverlayItem>,
     val pipTracks: List<PiPTrackItem> = emptyList(),
-    val originalVideoVolume: Float,
-    val backgroundMusicVolume: Float
+    val beatMarkers: List<BeatMarker> = emptyList(),
+    val originalVideoVolume: Float = 1.0f,
+    val backgroundMusicVolume: Float = 1.0f,
+    val audioDuckingEnabled: Boolean = false,
+    val audioDuckLevel: Float = 0.3f
 ) {
     fun toDomain(): Project = Project(
         id = id, name = name,
@@ -21,8 +24,11 @@ data class ProjectEntity(
         aspectRatio = AspectRatio.fromLabel(aspectRatio),
         videoClips = videoClips, audioTracks = audioTracks, overlays = overlays,
         pipTracks = pipTracks,
+        beatMarkers = beatMarkers,
         originalVideoVolume = originalVideoVolume,
-        backgroundMusicVolume = backgroundMusicVolume
+        backgroundMusicVolume = backgroundMusicVolume,
+        audioDuckingEnabled = audioDuckingEnabled,
+        audioDuckLevel = audioDuckLevel
     )
 
     companion object {
@@ -32,8 +38,11 @@ data class ProjectEntity(
             aspectRatio = project.aspectRatio.label,
             videoClips = project.videoClips, audioTracks = project.audioTracks,
             overlays = project.overlays, pipTracks = project.pipTracks,
+            beatMarkers = project.beatMarkers,
             originalVideoVolume = project.originalVideoVolume,
-            backgroundMusicVolume = project.backgroundMusicVolume
+            backgroundMusicVolume = project.backgroundMusicVolume,
+            audioDuckingEnabled = project.audioDuckingEnabled,
+            audioDuckLevel = project.audioDuckLevel
         )
     }
 }

@@ -91,14 +91,32 @@ class OverlayRenderer(private val context: Context) {
                 }
             }
 
-            val posX = (normX * 2.0f) - 1.0f
-            val posY = 1.0f - (normY * 2.0f)
+            var animScale = 1.0f
+            var animOffsetX = 0f
+            var animOffsetY = 0f
+            if (item.animation != com.clipcut.core.model.TextAnimation.NONE && item.animationDurationMs > 0) {
+                val elapsedUs = currentPtsUs - item.timelineStartUs
+                val animDurationUs = item.animationDurationMs * 1000L
+                val progress = (elapsedUs.toFloat() / animDurationUs.toFloat()).coerceIn(0f, 1f)
+                when (item.animation) {
+                    com.clipcut.core.model.TextAnimation.SCALE_IN -> animScale = progress
+                    com.clipcut.core.model.TextAnimation.BOUNCE -> {
+                        animScale = if (progress < 0.7f) (progress / 0.7f) * 1.15f else 1.15f - ((progress - 0.7f) / 0.3f) * 0.15f
+                    }
+                    com.clipcut.core.model.TextAnimation.SLIDE_UP -> animOffsetY = (1f - progress) * -0.3f
+                    com.clipcut.core.model.TextAnimation.SLIDE_LEFT -> animOffsetX = (1f - progress) * 0.3f
+                    else -> {}
+                }
+            }
+
+            val posX = (normX * 2.0f) - 1.0f + animOffsetX
+            val posY = 1.0f - (normY * 2.0f) + animOffsetY
 
             Matrix.translateM(scratchMvpMatrix, 0, posX, posY, 0f)
             Matrix.rotateM(scratchMvpMatrix, 0, rot, 0f, 0f, 1f)
 
-            val scaleX = (texture.width.toFloat() / viewportWidth.toFloat()) * sc
-            val scaleY = (texture.height.toFloat() / viewportHeight.toFloat()) * sc
+            val scaleX = (texture.width.toFloat() / viewportWidth.toFloat()) * sc * animScale
+            val scaleY = (texture.height.toFloat() / viewportHeight.toFloat()) * sc * animScale
             Matrix.scaleM(scratchMvpMatrix, 0, scaleX, scaleY, 1f)
 
             quadFilter.draw(

@@ -85,17 +85,13 @@ enum class AspectRatio(
 }
 
 enum class FontFamilyOption(val label: String) {
-    DEFAULT("Default"),
-    SERIF("Serif"),
-    MONOSPACE("Monospace"),
-    SANS_SERIF_CONDENSED("Condensed")
+    DEFAULT("Default"), SERIF("Serif"),
+    MONOSPACE("Monospace"), SANS_SERIF_CONDENSED("Condensed")
 }
 
 data class CropRect(
-    val left: Float = 0f,     // 0..1
-    val top: Float = 0f,      // 0..1
-    val right: Float = 1f,    // 0..1
-    val bottom: Float = 1f    // 0..1
+    val left: Float = 0f, val top: Float = 0f,
+    val right: Float = 1f, val bottom: Float = 1f
 ) {
     val width: Float get() = (right - left).coerceIn(0f, 1f)
     val height: Float get() = (bottom - top).coerceIn(0f, 1f)
@@ -110,6 +106,7 @@ data class TimelineItem(
     val trimStartUs: Long = 0L,
     val trimEndUs: Long = sourceDurationUs,
     val speed: Float = 1.0f,
+    val speedRamp: SpeedRamp = SpeedRamp(),
     val volume: Float = 1.0f,
     val rotationDegrees: Int = 0,
     val flipHorizontal: Boolean = false,
@@ -117,7 +114,15 @@ data class TimelineItem(
     val cropRect: CropRect = CropRect(),
     val fadeInMs: Int = 0,
     val fadeOutMs: Int = 0,
+    val isReversed: Boolean = false,
+    val freezeAtUs: Long? = null,
     val filterConfig: FilterConfig = FilterConfig(),
+    val lutConfig: LutConfig? = null,
+    val chromaKeyColor: FloatArray? = null,
+    val chromaKeyThreshold: Float = 0.4f,
+    val chromaKeySmoothness: Float = 0.1f,
+    val maskConfig: MaskConfig = MaskConfig(),
+    val blendMode: BlendMode = BlendMode.NORMAL,
     val transitionType: TransitionType = TransitionType.NONE,
     val transitionDurationUs: Long = 500_000L
 ) {
@@ -142,7 +147,7 @@ data class AudioTrackItem(
 
 data class OverlayKeyframe(
     val id: String = UUID.randomUUID().toString(),
-    val timeOffsetUs: Long,          // offset from overlay.timelineStartUs
+    val timeOffsetUs: Long,
     val normalizedX: Float,
     val normalizedY: Float,
     val scale: Float,
@@ -166,7 +171,9 @@ data class OverlayItem(
     val rotation: Float = 0.0f,
     val timelineStartUs: Long = 0L,
     val timelineEndUs: Long = 5_000_000L,
-    val keyframes: List<OverlayKeyframe> = emptyList()
+    val keyframes: List<OverlayKeyframe> = emptyList(),
+    val animation: TextAnimation = TextAnimation.NONE,
+    val animationDurationMs: Int = 500
 )
 
 enum class ExportResolution(val label: String, val width: Int, val height: Int, val defaultBitrate: Int) {
@@ -215,8 +222,11 @@ data class Project(
     val audioTracks: List<AudioTrackItem> = emptyList(),
     val overlays: List<OverlayItem> = emptyList(),
     val pipTracks: List<PiPTrackItem> = emptyList(),
+    val beatMarkers: List<BeatMarker> = emptyList(),
     val originalVideoVolume: Float = 1.0f,
-    val backgroundMusicVolume: Float = 1.0f
+    val backgroundMusicVolume: Float = 1.0f,
+    val audioDuckingEnabled: Boolean = false,
+    val audioDuckLevel: Float = 0.3f
 ) {
     val totalDurationUs: Long get() = videoClips.sumOf { it.effectiveDurationUs }
 }

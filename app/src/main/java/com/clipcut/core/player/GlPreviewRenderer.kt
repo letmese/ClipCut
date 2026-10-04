@@ -11,6 +11,7 @@ import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
+import com.clipcut.core.codec.SpeedRampProcessor
 import com.clipcut.core.codec.VideoDecoder
 import com.clipcut.core.gl.ColorAdjustFilter
 import com.clipcut.core.gl.EglCore
@@ -406,33 +407,31 @@ class GlPreviewRenderer(private val context: Context) {
 
         val decoder = currentDecoder ?: return
 
-        val sourceUs = clip.trimStartUs + (clipLocalUs * clip.speed).toLong()
+        // Convert timeline-local time to source time (handles speed ramps)
+        val sourceUs = if (clip.speedRamp.isActive) {
+            clip.trimStartUs + SpeedRampProcessor.timelineToSource(clipLocalUs, clip.speedRamp, clip.speed)
+        } else {
+            clip.trimStartUs + (clipLocalUs * clip.speed).toLong()
+        }
 
-        if (lastDecodedSourceUs < 0L || sourceUs != lastRequestedSourceUs) {
-            lastRequestedSourceUs = sourceUs
+        // Backward seek detection
+        if (lastDecodedSourceUs >= 0L && sourceUs < lastDecodedSourceUs - 33_000L) {
+            decoder.seekTo(sourceUs)
+            lastDecodedSourceUs = -1L
+        }
 
-            // Detect backward seek: if target is behind last decoded position by more than ~1 frame
-            if (lastDecodedSourceUs >= 0L && sourceUs < lastDecodedSourceUs - 33_000L) {
-                AppLog.d(TAG, "Backward seek detected (${lastDecodedSourceUs}us -> ${sourceUs}us); seeking decoder")
-                decoder.seekTo(sourceUs)
-                lastDecodedSourceUs = -1L
+        // FIXED: decode forward whenever the target has advanced OR when we have no frame yet
+        if (lastDecodedSourceUs < 0L || sourceUs >= lastDecodedSourceUs) {
+            var lastPtsUs = lastDecodedSourceUs
+            var attempts = 0
+            while (attempts < 240) {
+                val ptsUs = decoder.decodeNextFrame()
+                if (ptsUs < 0) break
+                lastPtsUs = ptsUs
+                if (ptsUs >= sourceUs) break
+                attempts++
             }
-
-            // Only decode forward if we haven't already reached or passed sourceUs (with half-frame tolerance to prevent judder)
-            if (lastDecodedSourceUs < 0L || sourceUs > lastDecodedSourceUs - 16_000L) {
-                var lastPtsUs = lastDecodedSourceUs
-                var attempts = 0
-                while (attempts < 60) {
-                    val ptsUs = decoder.decodeNextFrame()
-                    if (ptsUs < 0) break
-                    lastPtsUs = ptsUs
-                    if (ptsUs >= sourceUs) break
-                    attempts++
-                }
-                if (lastPtsUs >= 0L) {
-                    lastDecodedSourceUs = lastPtsUs
-                }
-            }
+            if (lastPtsUs >= 0L) lastDecodedSourceUs = lastPtsUs
         }
 
         if (lastDecodedSourceUs < 0L) return

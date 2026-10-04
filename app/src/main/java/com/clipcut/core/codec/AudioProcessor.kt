@@ -61,9 +61,15 @@ class AudioProcessor(
         val totalSamples = ((totalDurationUs / 1_000_000.0) * sr * ch).toInt()
         val mixedPcm = ShortArray(totalSamples)
 
+        // Build speech mask for ducking
+        val speechMask = if (project.audioDuckingEnabled) {
+            BooleanArray(totalSamples / ch)
+        } else null
+
         val origVol = project.originalVideoVolume
         var clipStart = 0L
         val clipCount = project.videoClips.size.coerceAtLeast(1)
+        var maskOffset = 0
 
         for ((i, clip) in project.videoClips.withIndex()) {
             val clipVol = clip.volume * origVol
@@ -73,18 +79,31 @@ class AudioProcessor(
                 } catch (e: Exception) {
                     AppLog.w(TAG, "Failed clip audio ${clip.id}", e)
                 }
+                if (speechMask != null) {
+                    val clipSamples = ((clip.effectiveDurationUs / 1_000_000.0) * sr).toInt()
+                    for (s in 0 until clipSamples) {
+                        val idx = maskOffset + s
+                        if (idx < speechMask.size) speechMask[idx] = true
+                    }
+                }
             }
             clipStart += clip.effectiveDurationUs
+            if (speechMask != null) {
+                val clipSamples = ((clip.effectiveDurationUs / 1_000_000.0) * sr).toInt()
+                maskOffset += clipSamples
+            }
             onProgress(((i + 1).toFloat() / clipCount) * 0.6f)
         }
 
         val bgVol = project.backgroundMusicVolume
+        val duckLevel = if (project.audioDuckingEnabled) project.audioDuckLevel else 1.0f
         val trackCount = project.audioTracks.size.coerceAtLeast(1)
+
         for ((i, track) in project.audioTracks.withIndex()) {
             val trackVol = track.volume * bgVol
             if (trackVol > 0.001f) {
                 try {
-                    mixTrackAudioWithFade(track, trackVol, mixedPcm, sr, ch)
+                    mixTrackAudioWithDucking(track, trackVol, mixedPcm, sr, ch, speechMask, duckLevel)
                 } catch (e: Exception) {
                     AppLog.w(TAG, "Failed bg track ${track.name}", e)
                 }
@@ -113,8 +132,6 @@ class AudioProcessor(
         val shortBuffer = ByteBuffer.wrap(stretched).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
         val startIdx = ((timelineStartUs / 1_000_000.0) * targetSampleRate * targetChannels).toInt()
         val totalSamples = shortBuffer.remaining()
-
-        // Compute fade sample counts (in samples of the stretched/timeline buffer)
         val fadeInSamples = ((clip.fadeInMs / 1000.0) * targetSampleRate).toInt() * targetChannels
         val fadeOutSamples = ((clip.fadeOutMs / 1000.0) * targetSampleRate).toInt() * targetChannels
 
@@ -122,25 +139,23 @@ class AudioProcessor(
         while (shortBuffer.hasRemaining() && (startIdx + i) < targetPcm.size) {
             val raw = shortBuffer.get()
             var gain = volume
-            if (fadeInSamples > 0 && i < fadeInSamples) {
-                gain *= (i.toFloat() / fadeInSamples)
-            }
+            if (fadeInSamples > 0 && i < fadeInSamples) gain *= (i.toFloat() / fadeInSamples)
             val remaining = totalSamples - i
-            if (fadeOutSamples > 0 && remaining < fadeOutSamples) {
-                gain *= (remaining.toFloat() / fadeOutSamples)
-            }
-            val mixed = (targetPcm[startIdx + i] + (raw * gain)).toInt().coerceIn(-32768, 32767).toShort()
-            targetPcm[startIdx + i] = mixed
+            if (fadeOutSamples > 0 && remaining < fadeOutSamples) gain *= (remaining.toFloat() / fadeOutSamples)
+            targetPcm[startIdx + i] = (targetPcm[startIdx + i] + (raw * gain))
+                .toInt().coerceIn(-32768, 32767).toShort()
             i++
         }
     }
 
-    private fun mixTrackAudioWithFade(
+    private fun mixTrackAudioWithDucking(
         track: com.clipcut.core.model.AudioTrackItem,
         volume: Float,
         targetPcm: ShortArray,
         targetSampleRate: Int,
-        targetChannels: Int
+        targetChannels: Int,
+        speechMask: BooleanArray?,
+        duckLevel: Float
     ) {
         val raw = decodeClipAudioToPcm(track.uri, track.trimStartUs, track.trimEndUs) ?: return
         val sb = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
@@ -156,6 +171,10 @@ class AudioProcessor(
             if (fadeIn > 0 && i < fadeIn) g *= (i.toFloat() / fadeIn)
             val rem = total - i
             if (fadeOut > 0 && rem < fadeOut) g *= (rem.toFloat() / fadeOut)
+            if (speechMask != null) {
+                val sampleIdx = (startIdx + i) / targetChannels
+                if (sampleIdx < speechMask.size && speechMask[sampleIdx]) g *= duckLevel
+            }
             targetPcm[startIdx + i] = (targetPcm[startIdx + i] + (s * g))
                 .toInt().coerceIn(-32768, 32767).toShort()
             i++
@@ -172,11 +191,14 @@ class AudioProcessor(
         val out = ByteArrayOutputStream(pcm.size)
         val inBuf = ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN)
         val chunk = 4096
+        val tempBytes = ByteArray(chunk)
         try {
             while (inBuf.hasRemaining()) {
                 val n = minOf(chunk, inBuf.remaining())
+                inBuf.get(tempBytes, 0, n)
                 val c = ByteBuffer.allocateDirect(n).order(ByteOrder.LITTLE_ENDIAN)
-                inBuf.get(c.array(), 0, n); c.position(0).limit(n)
+                c.put(tempBytes, 0, n)
+                c.flip()
                 sonic.queueInput(c)
                 while (true) {
                     val o = sonic.getOutput()

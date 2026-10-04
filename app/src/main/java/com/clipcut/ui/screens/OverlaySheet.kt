@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.clipcut.core.model.OverlayItem
+import com.clipcut.core.model.TextAnimation
 import com.clipcut.ui.theme.*
 import java.util.Locale
 
@@ -37,6 +38,7 @@ fun OverlaySheet(
     var text by remember { mutableStateOf("") }
     var selectedColor by remember { mutableStateOf(0xFFFFFFFFL) }
     var textSizeSp by remember { mutableStateOf(28f) }
+    var selectedAnimation by remember { mutableStateOf(TextAnimation.NONE) }
 
     val totalSec = maxOf(0.5f, totalDurationUs / 1_000_000f)
     var startSec by remember {
@@ -183,6 +185,13 @@ fun OverlaySheet(
 
             Spacer(Modifier.height(16.dp))
 
+            TextAnimationPicker(
+                selected = selectedAnimation,
+                onSelect = { selectedAnimation = it }
+            )
+
+            Spacer(Modifier.height(16.dp))
+
             Button(
                 onClick = {
                     if (text.isNotBlank()) {
@@ -194,7 +203,9 @@ fun OverlaySheet(
                                 textColor = selectedColor,
                                 textSizeSp = textSizeSp,
                                 timelineStartUs = startUs,
-                                timelineEndUs = endUs
+                                timelineEndUs = endUs,
+                                animation = selectedAnimation,
+                                animationDurationMs = 500
                             )
                         )
                         text = ""

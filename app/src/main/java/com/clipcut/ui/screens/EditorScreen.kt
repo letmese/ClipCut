@@ -73,6 +73,12 @@ fun EditorScreen(
     var showCropDialog by remember { mutableStateOf(false) }
     var showFadeDialog by remember { mutableStateOf(false) }
     var showAspectRatioDialog by remember { mutableStateOf(false) }
+    var showSpeedRampDialog by remember { mutableStateOf(false) }
+    var showLutDialog by remember { mutableStateOf(false) }
+    var showChromaDialog by remember { mutableStateOf(false) }
+    var showMaskDialog by remember { mutableStateOf(false) }
+    var showBlendDialog by remember { mutableStateOf(false) }
+    var showBeatSheet by remember { mutableStateOf(false) }
 
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -417,6 +423,35 @@ fun EditorScreen(
                                 onClick = { showMoreMenu = false; showSpeedDialog = true }
                             )
                             DropdownMenuItem(
+                                text = { Text("Speed Ramp") },
+                                enabled = selectedClip != null,
+                                onClick = { showMoreMenu = false; showSpeedRampDialog = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("LUT") },
+                                enabled = selectedClip != null,
+                                onClick = { showMoreMenu = false; showLutDialog = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Chroma Key") },
+                                enabled = selectedClip != null,
+                                onClick = { showMoreMenu = false; showChromaDialog = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Mask") },
+                                enabled = selectedClip != null,
+                                onClick = { showMoreMenu = false; showMaskDialog = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Blend Mode") },
+                                enabled = selectedClip != null,
+                                onClick = { showMoreMenu = false; showBlendDialog = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Beat Markers") },
+                                onClick = { showMoreMenu = false; showBeatSheet = true }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Filters") },
                                 enabled = selectedClip != null,
                                 onClick = { showMoreMenu = false; showFilterSheet = true }
@@ -698,6 +733,60 @@ fun EditorScreen(
                 viewModel.dismissExportDialog()
                 onOpenLogs()
             }
+        )
+    }
+
+    if (showSpeedRampDialog && selectedClip != null) {
+        SpeedRampDialog(
+            initialRamp = selectedClip.speedRamp,
+            clipDurationUs = selectedClip.effectiveDurationUs,
+            onApply = { viewModel.setClipSpeedRamp(selectedClip.id, it) },
+            onDismiss = { showSpeedRampDialog = false }
+        )
+    }
+
+    if (showLutDialog && selectedClip != null) {
+        LutPickerDialog(
+            currentLut = selectedClip.lutConfig,
+            onApply = { viewModel.setClipLut(selectedClip.id, it) },
+            onDismiss = { showLutDialog = false }
+        )
+    }
+
+    if (showChromaDialog && selectedClip != null) {
+        ChromaKeyDialog(
+            initialColor = selectedClip.chromaKeyColor ?: floatArrayOf(0f, 1f, 0f),
+            initialThreshold = selectedClip.chromaKeyThreshold,
+            initialSmoothness = selectedClip.chromaKeySmoothness,
+            onApply = { c, t, s -> viewModel.setClipChromaKey(selectedClip.id, c, t, s) },
+            onDismiss = { showChromaDialog = false }
+        )
+    }
+
+    if (showMaskDialog && selectedClip != null) {
+        MaskDialog(
+            initial = selectedClip.maskConfig,
+            onApply = { viewModel.setClipMask(selectedClip.id, it) },
+            onDismiss = { showMaskDialog = false }
+        )
+    }
+
+    if (showBlendDialog && selectedClip != null) {
+        BlendModeDialog(
+            initial = selectedClip.blendMode,
+            onApply = { viewModel.setClipBlendMode(selectedClip.id, it) },
+            onDismiss = { showBlendDialog = false }
+        )
+    }
+
+    if (showBeatSheet) {
+        BeatMarkerSheet(
+            totalDurationUs = totalDurationUs,
+            existingMarkers = project?.beatMarkers ?: emptyList(),
+            onAddMarker = { viewModel.addBeatMarker(it) },
+            onRemoveMarker = { viewModel.removeBeatMarker(it) },
+            onClearAll = { viewModel.clearBeatMarkers() },
+            onDismiss = { showBeatSheet = false }
         )
     }
 }

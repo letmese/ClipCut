@@ -300,6 +300,54 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
+    fun setClipSpeedRamp(clipId: String, ramp: SpeedRamp) = updateClip(clipId) {
+        it.copy(speedRamp = ramp)
+    }
+
+    fun setClipLut(clipId: String, lut: LutConfig?) = updateClip(clipId) {
+        it.copy(lutConfig = lut)
+    }
+
+    fun setClipChromaKey(clipId: String, color: FloatArray?, threshold: Float, smoothness: Float) = updateClip(clipId) {
+        it.copy(chromaKeyColor = color, chromaKeyThreshold = threshold, chromaKeySmoothness = smoothness)
+    }
+
+    fun setClipMask(clipId: String, mask: MaskConfig) = updateClip(clipId) {
+        it.copy(maskConfig = mask)
+    }
+
+    fun setClipBlendMode(clipId: String, mode: BlendMode) = updateClip(clipId) {
+        it.copy(blendMode = mode)
+    }
+
+    fun setClipReversed(clipId: String, reversed: Boolean) = updateClip(clipId) {
+        it.copy(isReversed = reversed)
+    }
+
+    fun setClipFreeze(clipId: String, freezeAtUs: Long?) = updateClip(clipId) {
+        it.copy(freezeAtUs = freezeAtUs)
+    }
+
+    fun addBeatMarker(timeUs: Long) {
+        val c = _project.value ?: return
+        applyEdit(c.copy(beatMarkers = (c.beatMarkers + BeatMarker(timeUs = timeUs)).sortedBy { it.timeUs }))
+    }
+
+    fun removeBeatMarker(id: String) {
+        val c = _project.value ?: return
+        applyEdit(c.copy(beatMarkers = c.beatMarkers.filter { it.id != id }))
+    }
+
+    fun clearBeatMarkers() {
+        val c = _project.value ?: return
+        applyEdit(c.copy(beatMarkers = emptyList()))
+    }
+
+    fun setAudioDucking(enabled: Boolean, level: Float) {
+        val c = _project.value ?: return
+        applyEdit(c.copy(audioDuckingEnabled = enabled, audioDuckLevel = level.coerceIn(0.1f, 1.0f)))
+    }
+
     private fun updateClip(clipId: String, block: (TimelineItem) -> TimelineItem) {
         val c = _project.value ?: return
         val updated = c.videoClips.map { if (it.id == clipId) block(it) else it }
