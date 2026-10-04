@@ -1,23 +1,18 @@
 package com.clipcut.core.gl
 
-import android.opengl.GLES11Ext
 import android.opengl.GLES20
-import android.opengl.Matrix
 
 class ChromaKeyFilter(
     var keyColor: FloatArray = floatArrayOf(0f, 1f, 0f),
     var threshold: Float = 0.15f,
     var smoothness: Float = 0.05f
 ) : GlFilter(
-    vertexShaderSource = OES_VERTEX_SHADER,
+    vertexShaderSource = DEFAULT_VERTEX_SHADER,
     fragmentShaderSource = CHROMA_FRAGMENT_SHADER
 ) {
     private var uKeyColorHandle = 0
     private var uThresholdHandle = 0
     private var uSmoothnessHandle = 0
-
-    private val rotationMatrix = FloatArray(16)
-    private val finalTexMatrix = FloatArray(16)
 
     override fun onInitCustomUniforms() {
         uKeyColorHandle = GLES20.glGetUniformLocation(programHandle, "uKeyColor")
@@ -31,44 +26,11 @@ class ChromaKeyFilter(
         GLES20.glUniform1f(uSmoothnessHandle, smoothness)
     }
 
-    fun drawOes(
-        texId: Int,
-        texMatrix: FloatArray,
-        mvpMatrix: FloatArray = GlUtil.IDENTITY_MATRIX,
-        rotationDegrees: Int = 0,
-        width: Int,
-        height: Int
-    ) {
-        val matrixToUse = if (rotationDegrees != 0) {
-            Matrix.setIdentityM(rotationMatrix, 0)
-            Matrix.translateM(rotationMatrix, 0, 0.5f, 0.5f, 0f)
-            Matrix.rotateM(rotationMatrix, 0, -rotationDegrees.toFloat(), 0f, 0f, 1f)
-            Matrix.translateM(rotationMatrix, 0, -0.5f, -0.5f, 0f)
-            Matrix.multiplyMM(finalTexMatrix, 0, rotationMatrix, 0, texMatrix, 0)
-            finalTexMatrix
-        } else texMatrix
-
-        draw(texId, matrixToUse, mvpMatrix, width, height, GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
-    }
-
     companion object {
-        private const val OES_VERTEX_SHADER = """
-            uniform mat4 uMVPMatrix;
-            uniform mat4 uTexMatrix;
-            attribute vec4 aPosition;
-            attribute vec4 aTextureCoord;
-            varying vec2 vTextureCoord;
-            void main() {
-                gl_Position = uMVPMatrix * aPosition;
-                vTextureCoord = (uTexMatrix * aTextureCoord).xy;
-            }
-        """
-
         private const val CHROMA_FRAGMENT_SHADER = """
-            #extension GL_OES_EGL_image_external : require
             precision mediump float;
             varying vec2 vTextureCoord;
-            uniform samplerExternalOES sTexture;
+            uniform sampler2D sTexture;
             uniform vec3 uKeyColor;
             uniform float uThreshold;
             uniform float uSmoothness;
@@ -90,8 +52,6 @@ class ChromaKeyFilter(
 
                 float chromaDist = distance(pixelChroma, keyChroma);
 
-                // Threshold is now in chroma units. Typical green key sits around
-                // 0.1-0.2 away from neutral skin tones in CbCr space.
                 float alpha = smoothstep(uThreshold, uThreshold + uSmoothness, chromaDist);
 
                 gl_FragColor = vec4(color.rgb, color.a * alpha);

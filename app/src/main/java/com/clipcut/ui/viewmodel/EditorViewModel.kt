@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.clipcut.core.codec.ExportEngine
+import com.clipcut.core.codec.SpeedRampProcessor
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.*
 import com.clipcut.core.player.GlPreviewRenderer
@@ -237,7 +238,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val end = acc + dur
             if (!didSplit && playheadUs > acc + 30_000L && playheadUs < end - 30_000L) {
                 val relTimeline = playheadUs - acc
-                val relSource = (relTimeline * clip.speed).toLong()
+                val relSource = if (clip.speedRamp.isActive) {
+                    SpeedRampProcessor.timelineToSource(relTimeline, clip.speedRamp, clip.speed)
+                } else {
+                    (relTimeline * clip.speed).toLong()
+                }
                 val splitSource = clip.trimStartUs + relSource
                 updated.add(clip.copy(id = java.util.UUID.randomUUID().toString(), trimEndUs = splitSource))
                 val c2 = clip.copy(id = java.util.UUID.randomUUID().toString(), trimStartUs = splitSource)

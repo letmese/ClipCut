@@ -82,19 +82,19 @@ fun EditorScreen(
     var showReverseDialog by remember { mutableStateOf(false) }
 
     val videoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { viewModel.importMedia(it, MediaType.VIDEO) }
     }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { viewModel.importMedia(it, MediaType.IMAGE) }
     }
 
     val audioPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { viewModel.importMedia(it, MediaType.AUDIO) }
     }
@@ -248,7 +248,7 @@ fun EditorScreen(
                 } else {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.clickable { videoPickerLauncher.launch("video/*") }
+                        modifier = Modifier.clickable { videoPickerLauncher.launch(arrayOf("video/*")) }
                     ) {
                         Icon(
                             imageVector = Icons.Default.VideoLibrary,
@@ -334,7 +334,7 @@ fun EditorScreen(
                 totalDurationUs = totalDurationUs,
                 onSelectClip = { id -> viewModel.selectClip(id) },
                 onSeek = { targetUs -> viewModel.playerManager.seekToUs(targetUs) },
-                onAddMediaClick = { videoPickerLauncher.launch("video/*") },
+                onAddMediaClick = { videoPickerLauncher.launch(arrayOf("video/*")) },
                 onTrimClip = { clipId, startUs, endUs -> viewModel.trimClip(clipId, startUs, endUs) }
             )
 
@@ -376,15 +376,15 @@ fun EditorScreen(
                         ) {
                             DropdownMenuItem(
                                 text = { Text("Import Video") },
-                                onClick = { showAddMenu = false; videoPickerLauncher.launch("video/*") }
+                                onClick = { showAddMenu = false; videoPickerLauncher.launch(arrayOf("video/*")) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Import Image") },
-                                onClick = { showAddMenu = false; imagePickerLauncher.launch("image/*") }
+                                onClick = { showAddMenu = false; imagePickerLauncher.launch(arrayOf("image/*")) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Import Audio") },
-                                onClick = { showAddMenu = false; audioPickerLauncher.launch("audio/*") }
+                                onClick = { showAddMenu = false; audioPickerLauncher.launch(arrayOf("audio/*")) }
                             )
                         }
                     }
@@ -529,7 +529,7 @@ fun EditorScreen(
             backgroundMusicVolume = project?.backgroundMusicVolume ?: 1f,
             hasMusicTrack = project?.audioTracks?.isNotEmpty() == true,
             onVolumesChanged = { orig, music -> viewModel.setVolumes(orig, music) },
-            onPickMusicClick = { audioPickerLauncher.launch("audio/*") },
+            onPickMusicClick = { audioPickerLauncher.launch(arrayOf("audio/*")) },
             onDismiss = { showAudioSheet = false }
         )
     }

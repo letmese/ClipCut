@@ -65,6 +65,7 @@ class BlendFilter : GlFilter(
         if (programHandle == 0) init()
 
         GLES20.glUseProgram(programHandle)
+        GLES20.glViewport(0, 0, width, height)
         GLES20.glUniformMatrix4fv(muMVPMatrixHandle, 1, false, mvpMatrix, 0)
         GLES20.glUniformMatrix4fv(muTexMatrixHandle, 1, false, texMatrix, 0)
         GLES20.glUniform1i(uModeHandle, mode)

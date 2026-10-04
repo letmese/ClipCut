@@ -23,7 +23,6 @@ class AudioProcessor(
     private val exportConfig: ExportConfig
 ) {
     private var audioEncoder: MediaCodec? = null
-    private var audioTrackIndex = -1
     private val bufferInfo = MediaCodec.BufferInfo()
 
     fun processAudio(
@@ -308,7 +307,7 @@ class AudioProcessor(
             val outIdx = enc.dequeueOutputBuffer(bufferInfo, 10_000)
             when {
                 outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED ->
-                    audioTrackIndex = muxer.addAudioTrack(enc.outputFormat)
+                    muxer.addAudioTrack(enc.outputFormat)
                 outIdx >= 0 -> {
                     val outBuf = enc.getOutputBuffer(outIdx)
                     if (outBuf != null && bufferInfo.size > 0) {

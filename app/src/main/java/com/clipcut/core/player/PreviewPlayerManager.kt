@@ -163,7 +163,18 @@ class PreviewPlayerManager(private val context: Context) {
 
         val videoPlayer = exoPlayer
         if (videoPlayer != null && videoPlayer.isPlaying) {
-            musicPlayers.values.forEach { it.play() }
+            val curUs = _currentPositionUs.value
+            for (track in project.audioTracks) {
+                val mp = musicPlayers[track.id] ?: continue
+                val trackEndUs = track.timelineStartUs + track.effectiveDurationUs
+                if (curUs in track.timelineStartUs until trackEndUs) {
+                    val offsetUs = (curUs - track.timelineStartUs) + track.trimStartUs
+                    mp.seekTo(offsetUs / 1000)
+                    mp.play()
+                } else {
+                    mp.pause()
+                }
+            }
         }
     }
 
@@ -190,7 +201,21 @@ class PreviewPlayerManager(private val context: Context) {
             seekToUs(0L)
         }
         player.play()
-        musicPlayers.values.forEach { it.play() }
+        val curUs = _currentPositionUs.value
+        val proj = currentProject
+        if (proj != null) {
+            for (track in proj.audioTracks) {
+                val mp = musicPlayers[track.id] ?: continue
+                val trackEndUs = track.timelineStartUs + track.effectiveDurationUs
+                if (curUs in track.timelineStartUs until trackEndUs) {
+                    val offsetUs = (curUs - track.timelineStartUs) + track.trimStartUs
+                    mp.seekTo(offsetUs / 1000)
+                    mp.play()
+                } else {
+                    mp.pause()
+                }
+            }
+        }
     }
 
     fun pause() {
@@ -287,7 +312,26 @@ class PreviewPlayerManager(private val context: Context) {
             accumulatedUs += localUs
         }
 
-        _currentPositionUs.value = accumulatedUs.coerceIn(0L, _totalDurationUs.value)
+        val curUs = accumulatedUs.coerceIn(0L, _totalDurationUs.value)
+        _currentPositionUs.value = curUs
+
+        val isVideoPlaying = player.isPlaying
+        for (track in proj.audioTracks) {
+            val mp = musicPlayers[track.id] ?: continue
+            val trackEndUs = track.timelineStartUs + track.effectiveDurationUs
+            val inRange = curUs in track.timelineStartUs until trackEndUs
+            if (isVideoPlaying && inRange) {
+                if (!mp.isPlaying) {
+                    val offsetUs = (curUs - track.timelineStartUs) + track.trimStartUs
+                    mp.seekTo(offsetUs / 1000)
+                    mp.play()
+                }
+            } else {
+                if (mp.isPlaying) {
+                    mp.pause()
+                }
+            }
+        }
     }
 
     fun release() {
