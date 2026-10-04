@@ -22,6 +22,7 @@ import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.ExportConfig
 import com.clipcut.core.model.MediaType
 import com.clipcut.core.model.Project
+import com.clipcut.core.model.TimelineItem
 import com.clipcut.core.model.TransitionType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -71,6 +72,7 @@ class ExportEngine(
         var colorFilter: ColorAdjustFilter? = null
         var overlayRenderer: OverlayRenderer? = null
         var transitionFilter: TransitionFilter? = null
+        var outgoingFbo: FramebufferTexture? = null
 
         val startTimeMs = System.currentTimeMillis()
 
@@ -93,6 +95,7 @@ class ExportEngine(
             colorFilter = ColorAdjustFilter().also { it.init() }
             overlayRenderer = OverlayRenderer(context).also { it.init() }
             transitionFilter = TransitionFilter().also { it.init() }
+            outgoingFbo = FramebufferTexture(config.customWidth, config.customHeight).also { it.init() }
 
             val texMatrix = FloatArray(16)
             val mvpMatrix = FloatArray(16)
@@ -104,9 +107,7 @@ class ExportEngine(
 
                 AppLog.i(TAG, "Processing clip ${clipIndex + 1}/${project.videoClips.size}: ${clip.id} (transition=${clip.transitionType})")
 
-                // Determine if this clip starts with a transition
-                val hasTransition = clip.transitionType != TransitionType.NONE && clipIndex > 0
-
+                // IMAGE clips: no transition capture
                 if (clip.mediaType == MediaType.IMAGE) {
                     renderImageClip(
                         clip, currentTimelineOffsetUs, inputSurface, colorFilter,
@@ -117,7 +118,7 @@ class ExportEngine(
                     continue
                 }
 
-                // --- VIDEO clip ---
+                // VIDEO clip
                 val decoder = VideoDecoder(context, clip, outputSurface)
                 decoder.init()
 
@@ -134,8 +135,10 @@ class ExportEngine(
                     out = mvpMatrix
                 )
 
+                val transitionActive = clip.transitionType != TransitionType.NONE && clipIndex > 0
+                val transitionDurationUs = if (transitionActive) clip.transitionDurationUs else 0L
+                var transitionFrameIndex = 0L
                 var lastPtsUs = -1L
-                val transitionDurationUs = clip.transitionDurationUs
 
                 try {
                     while (!isCancelled.get()) {
@@ -149,27 +152,69 @@ class ExportEngine(
                         if (outputPtsUs <= lastPtsUs) continue
                         lastPtsUs = outputPtsUs
 
+                        // Render the incoming frame to the encoder surface
                         GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
                         GLES20.glClearColor(0f, 0f, 0f, 1f)
                         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
                         outputSurface.getTransformMatrix(texMatrix)
 
-                        // If within transition window and we have a transition type, we'd blend.
-                        // For simplicity in this pass, we render the current frame with the filter.
-                        // A full transition implementation would require the outgoing clip's last
-                        // frame to be captured into an FBO. That is included below in a simplified
-                        // form: we don't capture, and instead we cross-fade at clip boundaries
-                        // by rendering the transition only when the previous frame is available.
-                        colorFilter.updateConfig(clip.filterConfig)
-                        colorFilter.drawOes(
-                            texId = oesTexId,
-                            texMatrix = texMatrix,
-                            mvpMatrix = mvpMatrix,
-                            rotationDegrees = rotation,
-                            width = config.customWidth,
-                            height = config.customHeight
-                        )
+                        // During transition window: capture incoming frame to FBO,
+                        // then draw outgoing + incoming through transition shader.
+                        val inTransition = transitionActive && scaledLocalTimeUs < transitionDurationUs
+
+                        if (inTransition) {
+                            // 1. Render incoming frame to the default framebuffer first.
+                            colorFilter.updateConfig(clip.filterConfig)
+                            colorFilter.drawOes(
+                                texId = oesTexId,
+                                texMatrix = texMatrix,
+                                mvpMatrix = mvpMatrix,
+                                rotationDegrees = rotation,
+                                width = config.customWidth,
+                                height = config.customHeight
+                            )
+
+                            // 2. Capture the incoming frame into a temporary texture
+                            //    using glCopyTexImage2D from the current framebuffer.
+                            val incomingTexId = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
+                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTexId)
+                            GLES20.glCopyTexImage2D(
+                                GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
+                                0, 0, config.customWidth, config.customHeight, 0
+                            )
+                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+
+                            // 3. Draw the transition using outgoing FBO + incoming texture
+                            GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
+                            GLES20.glClearColor(0f, 0f, 0f, 1f)
+                            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+
+                            transitionFilter!!.setType(clip.transitionType)
+                            val progress = (scaledLocalTimeUs.toFloat() / transitionDurationUs.toFloat()).coerceIn(0f, 1f)
+                            transitionFilter!!.setProgress(progress)
+                            transitionFilter!!.drawTransition(
+                                textureOutId = outgoingFbo!!.textureId,
+                                textureInId = incomingTexId,
+                                texMatrix = GlUtil.IDENTITY_MATRIX,
+                                mvpMatrix = GlUtil.IDENTITY_MATRIX,
+                                width = config.customWidth,
+                                height = config.customHeight
+                            )
+
+                            GLES20.glDeleteTextures(1, intArrayOf(incomingTexId), 0)
+                        } else {
+                            // Normal render
+                            colorFilter.updateConfig(clip.filterConfig)
+                            colorFilter.drawOes(
+                                texId = oesTexId,
+                                texMatrix = texMatrix,
+                                mvpMatrix = mvpMatrix,
+                                rotationDegrees = rotation,
+                                width = config.customWidth,
+                                height = config.customHeight
+                            )
+                        }
 
                         overlayRenderer.renderOverlays(
                             overlays = project.overlays,
@@ -178,9 +223,28 @@ class ExportEngine(
                             viewportHeight = config.customHeight
                         )
 
+                        // Capture the current frame into the outgoing FBO so the
+                        // next clip's transition has something to blend from.
+                        outgoingFbo!!.bind()
+                        GLES20.glClearColor(0f, 0f, 0f, 1f)
+                        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+                        colorFilter.drawOes(
+                            texId = oesTexId,
+                            texMatrix = texMatrix,
+                            mvpMatrix = mvpMatrix,
+                            rotationDegrees = rotation,
+                            width = config.customWidth,
+                            height = config.customHeight
+                        )
+                        outgoingFbo!!.unbind()
+
+                        // Restore default viewport
+                        GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
+
                         inputSurface.setPresentationTime(outputPtsUs * 1000L)
                         inputSurface.swapBuffers()
                         totalFramesRendered++
+                        transitionFrameIndex++
 
                         videoEncoder.drainEncoder(muxerWrapper, false)
 
@@ -226,6 +290,7 @@ class ExportEngine(
             if (outputFile.exists()) outputFile.delete()
             Result.failure(t)
         } finally {
+            outgoingFbo?.release()
             transitionFilter?.release()
             colorFilter?.release()
             overlayRenderer?.release()
@@ -235,7 +300,7 @@ class ExportEngine(
     }
 
     private fun renderImageClip(
-        clip: com.clipcut.core.model.TimelineItem,
+        clip: TimelineItem,
         timelineStartUs: Long,
         inputSurface: com.clipcut.core.gl.InputSurface,
         colorFilter: ColorAdjustFilter,

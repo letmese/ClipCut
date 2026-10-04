@@ -14,23 +14,18 @@ import android.view.Surface
 import com.clipcut.core.codec.VideoDecoder
 import com.clipcut.core.gl.ColorAdjustFilter
 import com.clipcut.core.gl.EglCore
+import com.clipcut.core.gl.FramebufferTexture
 import com.clipcut.core.gl.GlUtil
-import com.clipcut.core.gl.InputSurface
 import com.clipcut.core.gl.OutputSurface
 import com.clipcut.core.gl.OverlayRenderer
+import com.clipcut.core.gl.TransitionFilter
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.MediaType
 import com.clipcut.core.model.Project
 import com.clipcut.core.model.TimelineItem
+import com.clipcut.core.model.TransitionType
 import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * A GL-based video preview renderer. Runs a decode-render loop on a dedicated
- * thread, rendering to a Surface (typically from AndroidExternalSurface).
- *
- * Audio playback is handled separately by PreviewPlayerManager. This renderer
- * polls the audio clock to stay in sync.
- */
 class GlPreviewRenderer(private val context: Context) {
 
     private var renderThread: HandlerThread? = null
@@ -42,6 +37,8 @@ class GlPreviewRenderer(private val context: Context) {
 
     private var colorFilter: ColorAdjustFilter? = null
     private var overlayRenderer: OverlayRenderer? = null
+    private var transitionFilter: TransitionFilter? = null
+    private var outgoingFbo: FramebufferTexture? = null
 
     private var currentProject: Project? = null
     private var currentSurface: Surface? = null
@@ -51,23 +48,15 @@ class GlPreviewRenderer(private val context: Context) {
     private val isRunning = AtomicBoolean(false)
     private val isPaused = AtomicBoolean(true)
     private var pendingSeekUs = -1L
-    private var currentClipIndex = 0
+    private var currentClipIndex = -1
     private var currentDecoder: VideoDecoder? = null
+    private var lastDecodedSourceUs = -1L
 
-    // Image texture cache for IMAGE clips
-    private var imageTexId = 0
-    private var imageW = 0
-    private var imageH = 0
+    // Multi-image texture cache, keyed by clip ID
+    private val imageTextureCache = mutableMapOf<String, Triple<Int, Int, Int>>() // clipId -> (texId, w, h)
 
-    /**
-     * Clock callback: returns the current timeline position in microseconds.
-     * Set by EditorViewModel to point at PreviewPlayerManager.currentPositionUs.
-     */
     var positionProvider: (() -> Long)? = null
 
-    /**
-     * Called on the render thread when the preview surface is ready.
-     */
     fun onSurfaceCreated(surface: Surface, width: Int, height: Int) {
         AppLog.i(TAG, "onSurfaceCreated: ${width}x${height}")
         currentSurface = surface
@@ -84,11 +73,10 @@ class GlPreviewRenderer(private val context: Context) {
                 val oesTexId = GlUtil.generateTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
                 outputSurface = OutputSurface(oesTexId)
 
-                colorFilter = ColorAdjustFilter()
-                colorFilter!!.init()
-
-                overlayRenderer = OverlayRenderer(context)
-                overlayRenderer!!.init()
+                colorFilter = ColorAdjustFilter().also { it.init() }
+                overlayRenderer = OverlayRenderer(context).also { it.init() }
+                transitionFilter = TransitionFilter().also { it.init() }
+                outgoingFbo = FramebufferTexture(currentWidth, currentHeight).also { it.init() }
 
                 isRunning.set(true)
                 renderHandler?.post(renderLoop)
@@ -99,8 +87,15 @@ class GlPreviewRenderer(private val context: Context) {
     }
 
     fun onSurfaceChanged(width: Int, height: Int) {
-        currentWidth = width
-        currentHeight = height
+        if (width != currentWidth || height != currentHeight) {
+            currentWidth = width
+            currentHeight = height
+            renderHandler?.post {
+                // Recreate the outgoing FBO at the new size
+                outgoingFbo?.release()
+                outgoingFbo = FramebufferTexture(width, height).also { it.init() }
+            }
+        }
     }
 
     fun onSurfaceDestroyed() {
@@ -112,9 +107,12 @@ class GlPreviewRenderer(private val context: Context) {
             try {
                 currentDecoder?.release()
                 currentDecoder = null
+                lastDecodedSourceUs = -1L
 
                 colorFilter?.release()
                 overlayRenderer?.release()
+                transitionFilter?.release()
+                outgoingFbo?.release()
                 outputSurface?.release()
 
                 eglSurface?.let { eglCore?.destroySurface(it) }
@@ -122,9 +120,14 @@ class GlPreviewRenderer(private val context: Context) {
 
                 colorFilter = null
                 overlayRenderer = null
+                transitionFilter = null
+                outgoingFbo = null
                 outputSurface = null
                 eglSurface = null
                 eglCore = null
+
+                // Image textures are also gone with the EGL context
+                imageTextureCache.clear()
             } catch (t: Throwable) {
                 AppLog.e(TAG, "Error releasing GL resources", t)
             } finally {
@@ -137,8 +140,21 @@ class GlPreviewRenderer(private val context: Context) {
 
     fun setProject(project: Project) {
         currentProject = project
-        // Reset the clip index so the next frame starts at the beginning
-        currentClipIndex = 0
+        // Force a decoder reset on the next frame so we pick up edits
+        renderHandler?.post {
+            currentDecoder?.release()
+            currentDecoder = null
+            currentClipIndex = -1
+            lastDecodedSourceUs = -1L
+
+            // Evict cached image textures for clips that no longer exist
+            val liveIds = project.videoClips.map { it.id }.toSet()
+            val staleIds = imageTextureCache.keys.filter { it !in liveIds }
+            for (id in staleIds) {
+                val cached = imageTextureCache.remove(id) ?: continue
+                GLES20.glDeleteTextures(1, intArrayOf(cached.first), 0)
+            }
+        }
     }
 
     fun pause() {
@@ -173,10 +189,16 @@ class GlPreviewRenderer(private val context: Context) {
         override fun run() {
             if (!isRunning.get()) return
 
+            // When paused, throttle to ~5fps to keep the surface alive with
+            // minimal CPU. Seeking still works because pendingSeekUs is honored.
+            if (isPaused.get() && pendingSeekUs < 0L) {
+                renderHandler?.postDelayed(this, 200)
+                return
+            }
+
             try {
                 val project = currentProject
                 if (project == null || project.videoClips.isEmpty()) {
-                    // Nothing to render; clear to black
                     GLES20.glViewport(0, 0, currentWidth, currentHeight)
                     GLES20.glClearColor(0f, 0f, 0f, 1f)
                     GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
@@ -200,13 +222,11 @@ class GlPreviewRenderer(private val context: Context) {
                 AppLog.e(TAG, "Render loop error", t)
             }
 
-            // ~30fps preview
             renderHandler?.postDelayed(this, 33)
         }
     }
 
     private fun renderFrameAt(project: Project, timelineUs: Long) {
-        // Find which clip the timeline position falls in
         var accumulatedUs = 0L
         var clipIndex = 0
         var clipLocalUs = 0L
@@ -222,14 +242,14 @@ class GlPreviewRenderer(private val context: Context) {
 
         val clip = project.videoClips[clipIndex]
 
-        // If we switched clips, release the old decoder
-        if (clipIndex != currentClipIndex || currentDecoder == null) {
+        // Detect clip change and reset the decoder
+        if (clipIndex != currentClipIndex) {
             currentDecoder?.release()
             currentDecoder = null
+            lastDecodedSourceUs = -1L
             currentClipIndex = clipIndex
         }
 
-        // Ensure the viewport is correct
         GLES20.glViewport(0, 0, currentWidth, currentHeight)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
@@ -237,10 +257,28 @@ class GlPreviewRenderer(private val context: Context) {
         val texMatrix = FloatArray(16)
         val mvpMatrix = FloatArray(16)
 
-        if (clip.mediaType == MediaType.IMAGE) {
-            renderImagePreview(clip, mvpMatrix)
+        // Check if we're inside a transition window
+        val transitionActive = clip.transitionType != TransitionType.NONE &&
+                clipIndex > 0 &&
+                clipLocalUs < clip.transitionDurationUs
+
+        if (transitionActive) {
+            // Render incoming frame into the default framebuffer via transition.
+            // The outgoing frame is captured from the previous render pass; if we
+            // don't have one yet, just render the incoming clip directly.
+            renderTransitionPreview(
+                project = project,
+                incomingClip = clip,
+                clipLocalUs = clipLocalUs,
+                texMatrix = texMatrix,
+                mvpMatrix = mvpMatrix
+            )
         } else {
-            renderVideoPreview(clip, clipLocalUs, texMatrix, mvpMatrix)
+            if (clip.mediaType == MediaType.IMAGE) {
+                renderImagePreview(clip, mvpMatrix)
+            } else {
+                renderVideoPreview(clip, clipLocalUs, texMatrix, mvpMatrix)
+            }
         }
 
         overlayRenderer?.renderOverlays(
@@ -251,6 +289,37 @@ class GlPreviewRenderer(private val context: Context) {
         )
 
         eglCore?.swapBuffers(eglSurface!!)
+    }
+
+    private fun renderTransitionPreview(
+        project: Project,
+        incomingClip: TimelineItem,
+        clipLocalUs: Long,
+        texMatrix: FloatArray,
+        mvpMatrix: FloatArray
+    ) {
+        // For preview simplicity, we approximate the transition by rendering
+        // the incoming clip with an overlay-style alpha fade on top of black.
+        // True A/B blend would require capturing the outgoing clip's frame into
+        // the FBO during the previous render pass, which is what export does.
+        val progress = (clipLocalUs.toFloat() / incomingClip.transitionDurationUs.toFloat())
+            .coerceIn(0f, 1f)
+
+        // Just render the incoming clip with the color filter; the transition
+        // is visually approximated by the composition without the outgoing frame.
+        renderVideoPreview(incomingClip, clipLocalUs, texMatrix, mvpMatrix)
+
+        // Dim to black based on progress for fade-to-black
+        if (incomingClip.transitionType == TransitionType.FADE) {
+            val blackAlpha = if (progress < 0.5f) 1f - progress * 2f else 0f
+            if (blackAlpha > 0.01f) {
+                GLES20.glEnable(GLES20.GL_BLEND)
+                GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+                GLES20.glClearColor(0f, 0f, 0f, blackAlpha)
+                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+                GLES20.glDisable(GLES20.GL_BLEND)
+            }
+        }
     }
 
     private fun renderVideoPreview(
@@ -265,6 +334,7 @@ class GlPreviewRenderer(private val context: Context) {
             currentDecoder = VideoDecoder(context, clip, os)
             try {
                 currentDecoder!!.init()
+                lastDecodedSourceUs = -1L
             } catch (t: Throwable) {
                 AppLog.e(TAG, "Failed to init decoder for preview", t)
                 currentDecoder = null
@@ -274,29 +344,44 @@ class GlPreviewRenderer(private val context: Context) {
 
         val decoder = currentDecoder ?: return
 
-        // Compute the source-time position we want to display
         val sourceUs = clip.trimStartUs + (clipLocalUs * clip.speed).toLong()
 
-        // Decode forward until we reach the target time
-        var lastPtsUs = -1L
-        var attempts = 0
-        while (attempts < 120) {
-            val ptsUs = decoder.decodeNextFrame()
-            if (ptsUs < 0) break
-            if (ptsUs >= sourceUs) {
-                lastPtsUs = ptsUs
-                break
+        // Detect backward seek: if the target is behind the last decoded
+        // position by more than a frame interval, reset the decoder.
+        if (sourceUs < lastDecodedSourceUs - 100_000L) {
+            AppLog.d(TAG, "Backward seek detected (${lastDecodedSourceUs}us -> ${sourceUs}us); resetting decoder")
+            decoder.release()
+            currentDecoder = VideoDecoder(context, clip, os)
+            try {
+                currentDecoder!!.init()
+            } catch (t: Throwable) {
+                AppLog.e(TAG, "Failed to re-init decoder after seek", t)
+                currentDecoder = null
+                return
             }
+            lastDecodedSourceUs = -1L
+        }
+
+        val activeDecoder = currentDecoder ?: return
+
+        // Decode forward until we reach the target
+        var lastPtsUs = lastDecodedSourceUs
+        var attempts = 0
+        while (attempts < 240) {
+            val ptsUs = activeDecoder.decodeNextFrame()
+            if (ptsUs < 0) break
             lastPtsUs = ptsUs
+            if (ptsUs >= sourceUs) break
             attempts++
         }
 
         if (lastPtsUs < 0) return
+        lastDecodedSourceUs = lastPtsUs
 
-        val rotation = decoder.videoRotation
+        val rotation = activeDecoder.videoRotation
         val rotated = rotation == 90 || rotation == 270
-        val srcW = if (rotated) decoder.videoHeight else decoder.videoWidth
-        val srcH = if (rotated) decoder.videoWidth else decoder.videoHeight
+        val srcW = if (rotated) activeDecoder.videoHeight else activeDecoder.videoWidth
+        val srcH = if (rotated) activeDecoder.videoWidth else activeDecoder.videoHeight
 
         buildFitMvpMatrix(srcW, srcH, currentWidth, currentHeight, mvpMatrix)
         os.getTransformMatrix(texMatrix)
@@ -314,29 +399,39 @@ class GlPreviewRenderer(private val context: Context) {
     }
 
     private fun renderImagePreview(clip: TimelineItem, mvpMatrix: FloatArray) {
-        if (imageTexId == 0) {
-            try {
+        val cached = imageTextureCache[clip.id]
+        val texId: Int
+        val w: Int
+        val h: Int
+
+        if (cached != null) {
+            texId = cached.first
+            w = cached.second
+            h = cached.third
+        } else {
+            val bmp = try {
                 context.contentResolver.openInputStream(android.net.Uri.parse(clip.uri))?.use { stream ->
-                    val bmp = BitmapFactory.decodeStream(stream)
-                    if (bmp != null) {
-                        imageW = bmp.width
-                        imageH = bmp.height
-                        imageTexId = uploadBitmapToTexture(bmp)
-                        bmp.recycle()
-                    }
+                    BitmapFactory.decodeStream(stream)
                 }
             } catch (t: Throwable) {
-                AppLog.e(TAG, "Failed to load image for preview", t)
-            }
-        }
-        if (imageTexId == 0) return
+                AppLog.e(TAG, "Failed to load image for preview: ${clip.uri}", t)
+                null
+            } ?: return
 
-        buildFitMvpMatrix(imageW, imageH, currentWidth, currentHeight, mvpMatrix)
+            w = bmp.width
+            h = bmp.height
+            texId = uploadBitmapToTexture(bmp)
+            bmp.recycle()
+            if (texId == 0) return
+            imageTextureCache[clip.id] = Triple(texId, w, h)
+        }
+
+        buildFitMvpMatrix(w, h, currentWidth, currentHeight, mvpMatrix)
 
         val cf = colorFilter ?: return
         cf.updateConfig(clip.filterConfig)
         cf.draw(
-            texId = imageTexId,
+            texId = texId,
             texMatrix = GlUtil.IDENTITY_MATRIX,
             mvpMatrix = mvpMatrix,
             width = currentWidth,
@@ -362,15 +457,10 @@ class GlPreviewRenderer(private val context: Context) {
     private fun buildFitMvpMatrix(srcW: Int, srcH: Int, outW: Int, outH: Int, out: FloatArray) {
         Matrix.setIdentityM(out, 0)
         if (srcW <= 0 || srcH <= 0 || outW <= 0 || outH <= 0) return
-
         val scaleX = outW.toFloat() / srcW.toFloat()
         val scaleY = outH.toFloat() / srcH.toFloat()
         val fit = minOf(scaleX, scaleY)
-
-        val ndcScaleX = (srcW * fit) / outW.toFloat()
-        val ndcScaleY = (srcH * fit) / outH.toFloat()
-
-        Matrix.scaleM(out, 0, ndcScaleX, ndcScaleY, 1f)
+        Matrix.scaleM(out, 0, (srcW * fit) / outW.toFloat(), (srcH * fit) / outH.toFloat(), 1f)
     }
 
     companion object {

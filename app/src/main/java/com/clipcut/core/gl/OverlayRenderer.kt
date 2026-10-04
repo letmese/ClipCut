@@ -14,6 +14,9 @@ class OverlayRenderer(private val context: Context) {
     private val quadFilter = object : GlFilter() {}
     private val textureCache = mutableMapOf<String, CachedTexture>()
 
+    // Reused scratch matrix — one per renderer instance, not per frame
+    private val scratchMvpMatrix = FloatArray(16)
+
     private data class CachedTexture(
         val texId: Int,
         val width: Int,
@@ -36,32 +39,28 @@ class OverlayRenderer(private val context: Context) {
         }
         if (activeOverlays.isEmpty()) return
 
-        // Enable alpha blending for overlays
         GLES20.glEnable(GLES20.GL_BLEND)
         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
 
         for (item in activeOverlays) {
             val texture = getOrCreateTexture(item) ?: continue
 
-            // Build MVP matrix for overlay positioning
-            val mvpMatrix = FloatArray(16)
-            Matrix.setIdentityM(mvpMatrix, 0)
+            // Reuse the class-level scratch matrix instead of allocating per overlay
+            Matrix.setIdentityM(scratchMvpMatrix, 0)
 
-            // Convert normalized coordinates (0..1) to NDC (-1..1)
             val posX = (item.normalizedX * 2.0f) - 1.0f
-            val posY = 1.0f - (item.normalizedY * 2.0f) // Invert Y for GL coords
+            val posY = 1.0f - (item.normalizedY * 2.0f)
 
-            Matrix.translateM(mvpMatrix, 0, posX, posY, 0f)
-            Matrix.rotateM(mvpMatrix, 0, item.rotation, 0f, 0f, 1f)
+            Matrix.translateM(scratchMvpMatrix, 0, posX, posY, 0f)
+            Matrix.rotateM(scratchMvpMatrix, 0, item.rotation, 0f, 0f, 1f)
 
-            // Aspect ratio scaling
             val scaleX = (texture.width.toFloat() / viewportWidth.toFloat()) * item.scale
             val scaleY = (texture.height.toFloat() / viewportHeight.toFloat()) * item.scale
-            Matrix.scaleM(mvpMatrix, 0, scaleX, scaleY, 1f)
+            Matrix.scaleM(scratchMvpMatrix, 0, scaleX, scaleY, 1f)
 
             quadFilter.draw(
                 texId = texture.texId,
-                mvpMatrix = mvpMatrix,
+                mvpMatrix = scratchMvpMatrix,
                 width = viewportWidth,
                 height = viewportHeight,
                 textureTarget = GLES20.GL_TEXTURE_2D
@@ -78,7 +77,6 @@ class OverlayRenderer(private val context: Context) {
             return existing
         }
 
-        // Recreate texture
         existing?.let {
             val arr = intArrayOf(it.texId)
             GLES20.glDeleteTextures(1, arr, 0)
@@ -104,7 +102,7 @@ class OverlayRenderer(private val context: Context) {
     private fun createTextBitmap(item: OverlayItem): Bitmap {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = item.textColor.toInt()
-            textSize = item.textSizeSp * 2.5f // High-DPI rasterization
+            textSize = item.textSizeSp * 2.5f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             setShadowLayer(6f, 2f, 2f, Color.argb(180, 0, 0, 0))
         }

@@ -7,7 +7,6 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.clipcut.core.log.AppLog
-import com.clipcut.core.model.AudioTrackItem
 import com.clipcut.core.model.Project
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
