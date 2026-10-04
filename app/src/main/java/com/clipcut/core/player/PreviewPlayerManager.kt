@@ -1,0 +1,212 @@
+package com.clipcut.core.player
+
+import android.content.Context
+import android.net.Uri
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import com.clipcut.core.log.AppLog
+import com.clipcut.core.model.Project
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+class PreviewPlayerManager(private val context: Context) {
+
+    private var exoPlayer: ExoPlayer? = null
+    private var musicPlayer: ExoPlayer? = null
+
+    private val _isPlaying = MutableStateFlow(false)
+    val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
+
+    private val _currentPositionUs = MutableStateFlow(0L)
+    val currentPositionUs: StateFlow<Long> = _currentPositionUs.asStateFlow()
+
+    private val _totalDurationUs = MutableStateFlow(0L)
+    val totalDurationUs: StateFlow<Long> = _totalDurationUs.asStateFlow()
+
+    private val _isBuffering = MutableStateFlow(false)
+    val isBuffering: StateFlow<Boolean> = _isBuffering.asStateFlow()
+
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var positionJob: Job? = null
+    private var currentProject: Project? = null
+
+    fun initialize(): ExoPlayer {
+        if (exoPlayer == null) {
+            val player = ExoPlayer.Builder(context).build().apply {
+                repeatMode = Player.REPEAT_MODE_OFF
+                addListener(object : Player.Listener {
+                    override fun onIsPlayingChanged(playing: Boolean) {
+                        _isPlaying.value = playing
+                        if (playing) {
+                            startPositionUpdates()
+                            musicPlayer?.play()
+                        } else {
+                            stopPositionUpdates()
+                            musicPlayer?.pause()
+                        }
+                    }
+
+                    override fun onPlaybackStateChanged(state: Int) {
+                        _isBuffering.value = (state == Player.STATE_BUFFERING)
+                        if (state == Player.STATE_ENDED) {
+                            _isPlaying.value = false
+                            _currentPositionUs.value = _totalDurationUs.value
+                        }
+                    }
+
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        AppLog.e(TAG, "ExoPlayer error: ${error.errorCodeName} - ${error.message}", error)
+                    }
+                })
+            }
+            exoPlayer = player
+
+            val mPlayer = ExoPlayer.Builder(context).build()
+            musicPlayer = mPlayer
+            AppLog.i(TAG, "ExoPlayer preview initialized")
+        }
+        return exoPlayer!!
+    }
+
+    fun syncWithProject(project: Project) {
+        currentProject = project
+        val player = exoPlayer ?: initialize()
+
+        _totalDurationUs.value = project.totalDurationUs
+        player.volume = project.originalVideoVolume
+
+        if (project.videoClips.isEmpty()) {
+            player.clearMediaItems()
+            musicPlayer?.clearMediaItems()
+            _totalDurationUs.value = 0L
+            return
+        }
+
+        // Build media items with clipping configuration
+        val mediaItems = project.videoClips.map { clip ->
+            val clippingConfig = MediaItem.ClippingConfiguration.Builder()
+                .setStartPositionMs(clip.trimStartUs / 1000)
+                .setEndPositionMs(clip.trimEndUs / 1000)
+                .build()
+
+            MediaItem.Builder()
+                .setUri(Uri.parse(clip.uri))
+                .setClippingConfiguration(clippingConfig)
+                .build()
+        }
+
+        val wasPlaying = player.isPlaying
+        player.setMediaItems(mediaItems)
+        player.prepare()
+
+        // Background music player sync
+        if (project.audioTracks.isNotEmpty()) {
+            val musicItem = project.audioTracks.first()
+            val mPlayer = musicPlayer ?: ExoPlayer.Builder(context).build().also { musicPlayer = it }
+            mPlayer.volume = project.backgroundMusicVolume * musicItem.volume
+            mPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(musicItem.uri)))
+            mPlayer.prepare()
+        } else {
+            musicPlayer?.clearMediaItems()
+        }
+
+        if (wasPlaying) {
+            player.play()
+        }
+        AppLog.d(TAG, "Synced player with project (${project.videoClips.size} clips, dur=${project.totalDurationUs / 1000}ms)")
+    }
+
+    fun play() {
+        exoPlayer?.play()
+        musicPlayer?.play()
+    }
+
+    fun pause() {
+        exoPlayer?.pause()
+        musicPlayer?.pause()
+    }
+
+    fun togglePlayPause() {
+        if (_isPlaying.value) pause() else play()
+    }
+
+    fun seekToUs(targetTimelineUs: Long) {
+        val proj = currentProject ?: return
+        val player = exoPlayer ?: return
+
+        var accumulatedUs = 0L
+        var targetWindowIndex = 0
+        var windowOffsetMs = 0L
+
+        for ((index, clip) in proj.videoClips.withIndex()) {
+            val clipDurationUs = clip.effectiveDurationUs
+            if (targetTimelineUs <= accumulatedUs + clipDurationUs || index == proj.videoClips.lastIndex) {
+                targetWindowIndex = index
+                val localUs = targetTimelineUs - accumulatedUs
+                windowOffsetMs = (localUs * clip.speed / 1000).toLong()
+                break
+            }
+            accumulatedUs += clipDurationUs
+        }
+
+        player.seekTo(targetWindowIndex, windowOffsetMs)
+        musicPlayer?.seekTo(targetTimelineUs / 1000)
+        _currentPositionUs.value = targetTimelineUs
+    }
+
+    private fun startPositionUpdates() {
+        positionJob?.cancel()
+        positionJob = scope.launch {
+            while (isActive) {
+                updateCurrentTimelinePosition()
+                delay(33) // ~30 fps position ticker
+            }
+        }
+    }
+
+    private fun stopPositionUpdates() {
+        positionJob?.cancel()
+        positionJob = null
+    }
+
+    private fun updateCurrentTimelinePosition() {
+        val player = exoPlayer ?: return
+        val proj = currentProject ?: return
+
+        val currentWindowIndex = player.currentMediaItemIndex
+        val currentPositionInWindowMs = player.currentPosition
+
+        var accumulatedUs = 0L
+        for (i in 0 until currentWindowIndex) {
+            if (i < proj.videoClips.size) {
+                accumulatedUs += proj.videoClips[i].effectiveDurationUs
+            }
+        }
+
+        if (currentWindowIndex < proj.videoClips.size) {
+            val clip = proj.videoClips[currentWindowIndex]
+            val localUs = (currentPositionInWindowMs * 1000.0 / clip.speed).toLong()
+            accumulatedUs += localUs
+        }
+
+        _currentPositionUs.value = accumulatedUs.coerceIn(0L, _totalDurationUs.value)
+    }
+
+    fun release() {
+        stopPositionUpdates()
+        scope.cancel()
+        exoPlayer?.release()
+        exoPlayer = null
+        musicPlayer?.release()
+        musicPlayer = null
+        AppLog.d(TAG, "PreviewPlayerManager released")
+    }
+
+    companion object {
+        private const val TAG = "PreviewPlayerManager"
+    }
+}
