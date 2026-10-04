@@ -1,8 +1,14 @@
 package com.clipcut.core.codec
 
+import android.content.ContentValues
 import android.content.Context
+import android.media.MediaScannerConnection
+import android.net.Uri
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import com.clipcut.core.gl.ColorAdjustFilter
 import com.clipcut.core.gl.GlUtil
 import com.clipcut.core.gl.OutputSurface
@@ -13,10 +19,17 @@ import com.clipcut.core.model.Project
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
+
+data class ExportResult(
+    val file: File,
+    val publicUri: Uri? = null,
+    val galleryPath: String = "Movies/ClipCut"
+)
 
 class ExportEngine(
     private val context: Context,
@@ -32,7 +45,7 @@ class ExportEngine(
 
     suspend fun export(
         onProgress: (progress: Float, status: String) -> Unit
-    ): Result<File> = withContext(Dispatchers.IO) {
+    ): Result<ExportResult> = withContext(Dispatchers.IO) {
         val totalDurationUs = project.totalDurationUs
         if (totalDurationUs <= 0 || project.videoClips.isEmpty()) {
             val err = "Project has no video clips or zero duration"
@@ -187,8 +200,11 @@ class ExportEngine(
             AppLog.i(TAG, "Rendered $totalFramesRendered frames in ${elapsedTimeSec}s (${String.format(Locale.US, "%.1f", totalFramesRendered / elapsedTimeSec)} fps)")
             AppLog.i(TAG, "Output file size: ${String.format(Locale.US, "%.2f", fileSizeMb)} MB (${outputFile.absolutePath})")
 
+            onProgress(0.99f, "Saving video to phone gallery...")
+            val publicUri = copyToPublicGallery(context, outputFile)
+
             onProgress(1.0f, "Export Complete!")
-            Result.success(outputFile)
+            Result.success(ExportResult(outputFile, publicUri))
 
         } catch (t: Throwable) {
             AppLog.e(TAG, "Export failed: ${t.message}", t)
@@ -202,6 +218,67 @@ class ExportEngine(
             overlayRenderer?.release()
             outputSurface?.release()
             videoEncoder?.release()
+        }
+    }
+
+    private fun copyToPublicGallery(context: Context, sourceFile: File): Uri? {
+        return try {
+            val contentValues = ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, sourceFile.name)
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                put(MediaStore.Video.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/ClipCut")
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+            }
+
+            val resolver = context.contentResolver
+            val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            } else {
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            }
+
+            val itemUri = resolver.insert(collection, contentValues)
+            if (itemUri != null) {
+                resolver.openOutputStream(itemUri)?.use { outStream ->
+                    FileInputStream(sourceFile).use { inStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    contentValues.clear()
+                    contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
+                    resolver.update(itemUri, contentValues, null, null)
+                }
+
+                AppLog.i(TAG, "Copied video to Gallery: $itemUri (Movies/ClipCut/${sourceFile.name})")
+
+                try {
+                    val publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+                    val publicFilePath = File(publicDir, "ClipCut/${sourceFile.name}").absolutePath
+                    MediaScannerConnection.scanFile(
+                        context,
+                        arrayOf(publicFilePath, sourceFile.absolutePath),
+                        arrayOf("video/mp4")
+                    ) { path, uri ->
+                        AppLog.d(TAG, "MediaScanner indexed: $path -> $uri")
+                    }
+                } catch (e: Exception) {
+                    AppLog.w(TAG, "MediaScannerConnection warning: ${e.message}")
+                }
+
+                itemUri
+            } else {
+                AppLog.w(TAG, "MediaStore insert returned null, video remains in app storage")
+                null
+            }
+        } catch (e: Exception) {
+            AppLog.e(TAG, "Failed to copy video to public MediaStore gallery", e)
+            null
         }
     }
 

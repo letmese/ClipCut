@@ -45,27 +45,65 @@ fun TimelineView(
         modifier = modifier
             .fillMaxWidth()
             .background(DarkSurfaceElevated)
-            .padding(vertical = 8.dp)
+            .padding(vertical = 4.dp)
     ) {
-        // Time Indicator Bar
-        Row(
+        // Scrubber / Ruler Bar with Time indicators & Drag Scrubbing
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .height(28.dp)
+                .background(DarkSurface)
+                .pointerInput(totalDurationUs) {
+                    detectTapGestures { offset ->
+                        if (totalDurationUs > 0) {
+                            val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                            val targetUs = (fraction * totalDurationUs).toLong()
+                            onSeek(targetUs)
+                        }
+                    }
+                }
+                .pointerInput(totalDurationUs) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            if (totalDurationUs > 0) {
+                                val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                                onSeek((fraction * totalDurationUs).toLong())
+                            }
+                        },
+                        onHorizontalDrag = { change, _ ->
+                            change.consume()
+                            if (totalDurationUs > 0) {
+                                val fraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                                onSeek((fraction * totalDurationUs).toLong())
+                            }
+                        }
+                    )
+                }
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.CenterStart
         ) {
-            Text(
-                text = formatDuration(currentPositionUs),
-                color = AccentPrimary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = formatDuration(totalDurationUs),
-                color = TextSecondary,
-                fontSize = 13.sp
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "▶ ${formatDuration(currentPositionUs)}",
+                    color = AccentPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Scrub ◄►",
+                    color = TextTertiary,
+                    fontSize = 10.sp
+                )
+                Text(
+                    text = formatDuration(totalDurationUs),
+                    color = TextSecondary,
+                    fontSize = 12.sp
+                )
+            }
         }
 
         // Timeline Track Area
@@ -82,6 +120,23 @@ fun TimelineView(
                             onSeek(targetUs)
                         }
                     }
+                }
+                .pointerInput(totalDurationUs) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            if (totalDurationUs > 0) {
+                                val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                                onSeek((fraction * totalDurationUs).toLong())
+                            }
+                        },
+                        onHorizontalDrag = { change, _ ->
+                            change.consume()
+                            if (totalDurationUs > 0) {
+                                val fraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                                onSeek((fraction * totalDurationUs).toLong())
+                            }
+                        }
+                    )
                 }
         ) {
             Column(
@@ -116,9 +171,12 @@ fun TimelineView(
                             }
                         }
                     } else {
+                        var runningOffsetUs = 0L
                         videoClips.forEachIndexed { index, clip ->
                             val isSelected = clip.id == selectedClipId
                             val weight = (clip.effectiveDurationUs.toFloat() / maxOf(1L, totalDurationUs).toFloat()).coerceAtLeast(0.08f)
+                            val clipStartUs = runningOffsetUs
+                            runningOffsetUs += clip.effectiveDurationUs
 
                             Box(
                                 modifier = Modifier
@@ -131,7 +189,10 @@ fun TimelineView(
                                         color = if (isSelected) AccentPrimary else TimelineClipBorder,
                                         shape = RoundedCornerShape(8.dp)
                                     )
-                                    .clickable { onSelectClip(clip.id) }
+                                    .clickable {
+                                        onSelectClip(clip.id)
+                                        onSeek(clipStartUs)
+                                    }
                                     .padding(6.dp),
                                 contentAlignment = Alignment.CenterStart
                             ) {
@@ -228,8 +289,8 @@ fun TimelineView(
                     val playheadX = maxWidth * progressFraction
                     Box(
                         modifier = Modifier
-                            .offset(x = playheadX - 1.dp)
-                            .width(2.5.dp)
+                            .offset(x = (playheadX - 1.5.dp).coerceAtLeast(0.dp))
+                            .width(3.dp)
                             .fillMaxHeight()
                             .background(TimelinePlayhead)
                     )

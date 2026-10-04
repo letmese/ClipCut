@@ -1,6 +1,7 @@
 package com.clipcut.ui.screens
 
 import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -226,7 +228,8 @@ fun ExportDialog(
                         Text(
                             text = exportState.file.name,
                             fontSize = 12.sp,
-                            color = TextSecondary
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
@@ -234,25 +237,78 @@ fun ExportDialog(
                             fontSize = 11.sp,
                             color = TextTertiary
                         )
-                        Spacer(Modifier.height(20.dp))
+                        Spacer(Modifier.height(12.dp))
 
+                        // Public Gallery confirmation badge
+                        Surface(
+                            color = DarkSurface,
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, AudioTrackColor.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = AudioTrackColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "Saved to Device Gallery",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = AudioTrackColor
+                                    )
+                                    Text(
+                                        text = "${exportState.galleryPath}/${exportState.file.name}",
+                                        fontSize = 10.sp,
+                                        color = TextSecondary
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+
+                        // Open in Video Player Button
                         Button(
                             onClick = {
-                                shareExportedFile(context, exportState.file)
+                                openVideoFile(context, exportState.file, exportState.publicUri)
                             },
                             modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = AudioTrackColor),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary),
                             shape = RoundedCornerShape(10.dp)
                         ) {
-                            Icon(Icons.Default.Share, contentDescription = null, tint = TextPrimary)
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = TextPrimary)
                             Spacer(Modifier.width(8.dp))
-                            Text("Share Video", fontWeight = FontWeight.Bold)
+                            Text("Open in Video Player", fontWeight = FontWeight.Bold)
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+
+                        // Share Button
+                        OutlinedButton(
+                            onClick = {
+                                shareExportedFile(context, exportState.file, exportState.publicUri)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Share Video")
                         }
 
                         Spacer(Modifier.height(8.dp))
 
                         TextButton(onClick = onDismiss) {
-                            Text("Close", color = TextSecondary)
+                            Text("Done", color = TextSecondary)
                         }
                     }
 
@@ -299,9 +355,23 @@ fun ExportDialog(
     }
 }
 
-private fun shareExportedFile(context: android.content.Context, file: File) {
+private fun openVideoFile(context: android.content.Context, file: File, publicUri: Uri?) {
     try {
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val uri = publicUri ?: FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "video/mp4")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        com.clipcut.core.log.AppLog.e("ExportDialog", "Failed to open video file", e)
+    }
+}
+
+private fun shareExportedFile(context: android.content.Context, file: File, publicUri: Uri?) {
+    try {
+        val uri = publicUri ?: FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "video/mp4"
             putExtra(Intent.EXTRA_STREAM, uri)

@@ -7,6 +7,7 @@ import kotlin.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -125,7 +126,15 @@ fun EditorScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .background(DarkBackground),
+                    .background(DarkBackground)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        if (project?.videoClips?.isNotEmpty() == true) {
+                            viewModel.playerManager.togglePlayPause()
+                        }
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 if (project?.videoClips?.isNotEmpty() == true) {
@@ -154,19 +163,22 @@ fun EditorScreen(
                         }
                     }
 
-                    // Play/Pause Center Button Overlay
-                    IconButton(
-                        onClick = { viewModel.playerManager.togglePlayPause() },
-                        modifier = Modifier
-                            .size(56.dp)
-                            .background(DarkSurface.copy(alpha = 0.6f), CircleShape)
-                    ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = TextPrimary,
-                            modifier = Modifier.size(32.dp)
-                        )
+                    // Play/Pause Center Indicator (semi-transparent when playing)
+                    if (!isPlaying) {
+                        val isAtEnd = totalDurationUs > 0 && currentPositionUs >= (totalDurationUs - 50_000L)
+                        IconButton(
+                            onClick = { viewModel.playerManager.togglePlayPause() },
+                            modifier = Modifier
+                                .size(56.dp)
+                                .background(DarkSurface.copy(alpha = 0.75f), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = if (isAtEnd) Icons.Default.Replay else Icons.Default.PlayArrow,
+                                contentDescription = if (isAtEnd) "Replay" else "Play",
+                                tint = TextPrimary,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
                     }
                 } else {
                     Column(
@@ -181,6 +193,97 @@ fun EditorScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                         Text("Tap to Import Video", color = TextSecondary, fontSize = 14.sp)
+                    }
+                }
+            }
+
+            // Dedicated Playback Transport Controls Bar
+            if (project?.videoClips?.isNotEmpty() == true) {
+                Surface(
+                    color = DarkSurface,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val isAtEnd = totalDurationUs > 0 && currentPositionUs >= (totalDurationUs - 50_000L)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Rewind to start
+                        IconButton(
+                            onClick = { viewModel.playerManager.seekToUs(0L) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.SkipPrevious,
+                                contentDescription = "Start",
+                                tint = TextPrimary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        // Step backward 1 sec
+                        IconButton(
+                            onClick = { viewModel.playerManager.seekByUs(-1_000_000L) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.FastRewind,
+                                contentDescription = "-1s",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Big Play / Pause / Replay Button
+                        Button(
+                            onClick = { viewModel.playerManager.togglePlayPause() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isAtEnd) AudioTrackColor else AccentPrimary
+                            ),
+                            shape = CircleShape,
+                            contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier.size(44.dp)
+                        ) {
+                            Icon(
+                                imageVector = when {
+                                    isPlaying -> Icons.Default.Pause
+                                    isAtEnd -> Icons.Default.Replay
+                                    else -> Icons.Default.PlayArrow
+                                },
+                                contentDescription = if (isPlaying) "Pause" else if (isAtEnd) "Replay" else "Play",
+                                tint = TextPrimary,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+
+                        // Step forward 1 sec
+                        IconButton(
+                            onClick = { viewModel.playerManager.seekByUs(1_000_000L) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.FastForward,
+                                contentDescription = "+1s",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Jump to end
+                        IconButton(
+                            onClick = { viewModel.playerManager.seekToUs(totalDurationUs) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.SkipNext,
+                                contentDescription = "End",
+                                tint = TextPrimary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -221,7 +324,7 @@ fun EditorScreen(
                     EditorActionButton(
                         icon = Icons.Default.ContentCut,
                         label = "Split",
-                        enabled = selectedClip != null,
+                        enabled = selectedClip != null && currentPositionUs > 30_000L && currentPositionUs < (totalDurationUs - 30_000L),
                         onClick = { viewModel.splitClipAtPlayhead() }
                     )
 

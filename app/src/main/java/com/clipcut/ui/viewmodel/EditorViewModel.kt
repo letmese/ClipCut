@@ -22,7 +22,7 @@ import java.io.File
 sealed class ExportState {
     object Idle : ExportState()
     data class Progress(val progress: Float, val status: String) : ExportState()
-    data class Success(val file: File) : ExportState()
+    data class Success(val file: File, val publicUri: Uri? = null, val galleryPath: String = "Movies/ClipCut") : ExportState()
     data class Error(val message: String) : ExportState()
 }
 
@@ -109,6 +109,18 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun splitClipAtPlayhead() {
         val current = _project.value ?: return
         val playheadUs = playerManager.currentPositionUs.value
+        val totalDurUs = current.totalDurationUs
+
+        if (current.videoClips.isEmpty()) {
+            AppLog.w(TAG, "Cannot split: No clips in project")
+            return
+        }
+
+        // If playhead is at the very end or start, don't split
+        if (playheadUs <= 50_000L || playheadUs >= totalDurUs - 50_000L) {
+            AppLog.w(TAG, "Cannot split at edge: playhead is at ${playheadUs / 1000}ms (total: ${totalDurUs / 1000}ms)")
+            return
+        }
 
         var accumulatedUs = 0L
         val updatedClips = mutableListOf<TimelineItem>()
@@ -116,8 +128,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         for (clip in current.videoClips) {
             val clipDurationUs = clip.effectiveDurationUs
-            if (!didSplit && playheadUs > accumulatedUs && playheadUs < (accumulatedUs + clipDurationUs)) {
-                // Split point inside this clip
+            val clipEndUs = accumulatedUs + clipDurationUs
+            if (!didSplit && playheadUs > accumulatedUs + 30_000L && playheadUs < clipEndUs - 30_000L) {
+                // Split point safely inside this clip
                 val relativeTimelineOffsetUs = playheadUs - accumulatedUs
                 val relativeSourceUs = (relativeTimelineOffsetUs * clip.speed).toLong()
                 val splitSourceUs = clip.trimStartUs + relativeSourceUs
@@ -144,7 +157,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (didSplit) {
             updateProjectInternal(current.copy(videoClips = updatedClips))
         } else {
-            AppLog.w(TAG, "Cannot split: playhead is not inside any clip")
+            AppLog.w(TAG, "Cannot split: playhead (${playheadUs / 1000}ms) is on a clip boundary")
         }
     }
 
@@ -248,8 +261,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 _exportState.value = ExportState.Progress(progress, status)
             }
             result.fold(
-                onSuccess = { file ->
-                    _exportState.value = ExportState.Success(file)
+                onSuccess = { exportResult ->
+                    _exportState.value = ExportState.Success(
+                        file = exportResult.file,
+                        publicUri = exportResult.publicUri,
+                        galleryPath = exportResult.galleryPath
+                    )
                 },
                 onFailure = { error ->
                     _exportState.value = ExportState.Error(error.message ?: "Unknown export error")

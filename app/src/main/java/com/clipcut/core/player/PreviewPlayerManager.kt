@@ -33,6 +33,8 @@ class PreviewPlayerManager(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var positionJob: Job? = null
     private var currentProject: Project? = null
+    private var lastClipsFingerprint: String? = null
+    private var lastMusicFingerprint: String? = null
 
     fun initialize(): ExoPlayer {
         if (exoPlayer == null) {
@@ -55,6 +57,9 @@ class PreviewPlayerManager(private val context: Context) {
                         if (state == Player.STATE_ENDED) {
                             _isPlaying.value = false
                             _currentPositionUs.value = _totalDurationUs.value
+                            stopPositionUpdates()
+                            musicPlayer?.pause()
+                            AppLog.d(TAG, "Playback reached END - ready to replay")
                         }
                     }
 
@@ -83,45 +88,73 @@ class PreviewPlayerManager(private val context: Context) {
             player.clearMediaItems()
             musicPlayer?.clearMediaItems()
             _totalDurationUs.value = 0L
+            lastClipsFingerprint = null
+            lastMusicFingerprint = null
             return
         }
 
-        // Build media items with clipping configuration
-        val mediaItems = project.videoClips.map { clip ->
-            val clippingConfig = MediaItem.ClippingConfiguration.Builder()
-                .setStartPositionMs(clip.trimStartUs / 1000)
-                .setEndPositionMs(clip.trimEndUs / 1000)
-                .build()
-
-            MediaItem.Builder()
-                .setUri(Uri.parse(clip.uri))
-                .setClippingConfiguration(clippingConfig)
-                .build()
+        // Generate fingerprint of clips (id, uri, trims, speed)
+        // If only filters, text overlays, or volumes changed, DO NOT re-prepare ExoPlayer!
+        val newClipsFingerprint = project.videoClips.joinToString(";") { clip ->
+            "${clip.id}:${clip.uri}:${clip.trimStartUs}:${clip.trimEndUs}:${clip.speed}"
         }
 
-        val wasPlaying = player.isPlaying
-        player.setMediaItems(mediaItems)
-        player.prepare()
+        if (lastClipsFingerprint != newClipsFingerprint) {
+            lastClipsFingerprint = newClipsFingerprint
+            val wasPlaying = player.isPlaying
+            val savedPosUs = _currentPositionUs.value
+
+            val mediaItems = project.videoClips.map { clip ->
+                val clippingConfig = MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(clip.trimStartUs / 1000)
+                    .setEndPositionMs(clip.trimEndUs / 1000)
+                    .build()
+
+                MediaItem.Builder()
+                    .setUri(Uri.parse(clip.uri))
+                    .setClippingConfiguration(clippingConfig)
+                    .build()
+            }
+
+            player.setMediaItems(mediaItems)
+            player.prepare()
+
+            if (savedPosUs > 0L) {
+                seekToUs(savedPosUs)
+            }
+
+            if (wasPlaying) {
+                player.play()
+            }
+            AppLog.d(TAG, "Re-prepared ExoPlayer with ${mediaItems.size} clips (dur=${project.totalDurationUs / 1000}ms)")
+        }
 
         // Background music player sync
         if (project.audioTracks.isNotEmpty()) {
             val musicItem = project.audioTracks.first()
             val mPlayer = musicPlayer ?: ExoPlayer.Builder(context).build().also { musicPlayer = it }
-            mPlayer.volume = project.backgroundMusicVolume * musicItem.volume
-            mPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(musicItem.uri)))
-            mPlayer.prepare()
+            mPlayer.volume = (project.backgroundMusicVolume * musicItem.volume).coerceIn(0f, 2f)
+
+            val newMusicFingerprint = "${musicItem.id}:${musicItem.uri}"
+            if (lastMusicFingerprint != newMusicFingerprint) {
+                lastMusicFingerprint = newMusicFingerprint
+                mPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(musicItem.uri)))
+                mPlayer.prepare()
+            }
         } else {
             musicPlayer?.clearMediaItems()
+            lastMusicFingerprint = null
         }
-
-        if (wasPlaying) {
-            player.play()
-        }
-        AppLog.d(TAG, "Synced player with project (${project.videoClips.size} clips, dur=${project.totalDurationUs / 1000}ms)")
     }
 
     fun play() {
-        exoPlayer?.play()
+        val player = exoPlayer ?: return
+        // If playback has ended or is at the very end of timeline, rewind to start first!
+        if (player.playbackState == Player.STATE_ENDED || _currentPositionUs.value >= (_totalDurationUs.value - 50_000L).coerceAtLeast(0L)) {
+            AppLog.d(TAG, "Playback at end; rewinding to 0 before play")
+            seekToUs(0L)
+        }
+        player.play()
         musicPlayer?.play()
     }
 
@@ -138,24 +171,29 @@ class PreviewPlayerManager(private val context: Context) {
         val proj = currentProject ?: return
         val player = exoPlayer ?: return
 
+        val clampedTargetUs = targetTimelineUs.coerceIn(0L, _totalDurationUs.value)
         var accumulatedUs = 0L
         var targetWindowIndex = 0
         var windowOffsetMs = 0L
 
         for ((index, clip) in proj.videoClips.withIndex()) {
             val clipDurationUs = clip.effectiveDurationUs
-            if (targetTimelineUs <= accumulatedUs + clipDurationUs || index == proj.videoClips.lastIndex) {
+            if (clampedTargetUs <= accumulatedUs + clipDurationUs || index == proj.videoClips.lastIndex) {
                 targetWindowIndex = index
-                val localUs = targetTimelineUs - accumulatedUs
+                val localUs = clampedTargetUs - accumulatedUs
                 windowOffsetMs = (localUs * clip.speed / 1000).toLong()
                 break
             }
             accumulatedUs += clipDurationUs
         }
 
-        player.seekTo(targetWindowIndex, windowOffsetMs)
-        musicPlayer?.seekTo(targetTimelineUs / 1000)
-        _currentPositionUs.value = targetTimelineUs
+        player.seekTo(targetWindowIndex, windowOffsetMs.coerceAtLeast(0L))
+        musicPlayer?.seekTo(clampedTargetUs / 1000)
+        _currentPositionUs.value = clampedTargetUs
+    }
+
+    fun seekByUs(deltaUs: Long) {
+        seekToUs(_currentPositionUs.value + deltaUs)
     }
 
     private fun startPositionUpdates() {
