@@ -47,7 +47,7 @@ class GlPreviewRenderer(private val context: Context) {
     private var currentHeight = 0
 
     private val isRunning = AtomicBoolean(false)
-    private val isPaused = AtomicBoolean(true)
+    private val isPaused = AtomicBoolean(false)
     private var pendingSeekUs = -1L
     private var currentClipIndex = -1
     private var currentDecoder: VideoDecoder? = null
@@ -192,6 +192,9 @@ class GlPreviewRenderer(private val context: Context) {
 
     fun seekTo(timelineUs: Long) {
         pendingSeekUs = timelineUs
+        // Wake up render thread immediately so seeking feels responsive
+        renderHandler?.removeCallbacks(renderLoop)
+        renderHandler?.post(renderLoop)
     }
 
     fun release() {
@@ -214,10 +217,8 @@ class GlPreviewRenderer(private val context: Context) {
         override fun run() {
             if (!isRunning.get()) return
 
-            // When paused, throttle to ~5fps to keep the surface alive with
-            // minimal CPU. Seeking still works because pendingSeekUs is honored.
-            if (isPaused.get() && pendingSeekUs < 0L) {
-                renderHandler?.postDelayed(this, 200)
+            if (isPaused.get()) {
+                renderHandler?.postDelayed(this, 100)
                 return
             }
 
@@ -228,7 +229,7 @@ class GlPreviewRenderer(private val context: Context) {
                     GLES20.glClearColor(0f, 0f, 0f, 1f)
                     GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
                     eglCore?.swapBuffers(eglSurface!!)
-                    renderHandler?.postDelayed(this, 33)
+                    renderHandler?.postDelayed(this, 100)
                     return
                 }
 
@@ -404,42 +405,35 @@ class GlPreviewRenderer(private val context: Context) {
 
         val sourceUs = clip.trimStartUs + (clipLocalUs * clip.speed).toLong()
 
-        // Detect backward seek: if the target is behind the last decoded
-        // position by more than a frame interval, reset the decoder.
-        if (sourceUs < lastDecodedSourceUs - 100_000L) {
-            AppLog.d(TAG, "Backward seek detected (${lastDecodedSourceUs}us -> ${sourceUs}us); resetting decoder")
-            decoder.release()
-            currentDecoder = VideoDecoder(context, clip, os)
-            try {
-                currentDecoder!!.init()
-            } catch (t: Throwable) {
-                AppLog.e(TAG, "Failed to re-init decoder after seek", t)
-                currentDecoder = null
-                return
-            }
+        // Detect backward seek: if target is behind last decoded position by more than ~1 frame
+        if (lastDecodedSourceUs >= 0L && sourceUs < lastDecodedSourceUs - 33_000L) {
+            AppLog.d(TAG, "Backward seek detected (${lastDecodedSourceUs}us -> ${sourceUs}us); seeking decoder")
+            decoder.seekTo(sourceUs)
             lastDecodedSourceUs = -1L
         }
 
-        val activeDecoder = currentDecoder ?: return
-
-        // Decode forward until we reach the target
-        var lastPtsUs = lastDecodedSourceUs
-        var attempts = 0
-        while (attempts < 240) {
-            val ptsUs = activeDecoder.decodeNextFrame()
-            if (ptsUs < 0) break
-            lastPtsUs = ptsUs
-            if (ptsUs >= sourceUs) break
-            attempts++
+        // Only decode forward if we haven't already reached or passed sourceUs
+        if (lastDecodedSourceUs < 0L || sourceUs > lastDecodedSourceUs) {
+            var lastPtsUs = lastDecodedSourceUs
+            var attempts = 0
+            while (attempts < 240) {
+                val ptsUs = decoder.decodeNextFrame()
+                if (ptsUs < 0) break
+                lastPtsUs = ptsUs
+                if (ptsUs >= sourceUs) break
+                attempts++
+            }
+            if (lastPtsUs >= 0L) {
+                lastDecodedSourceUs = lastPtsUs
+            }
         }
 
-        if (lastPtsUs < 0) return
-        lastDecodedSourceUs = lastPtsUs
+        if (lastDecodedSourceUs < 0L) return
 
-        val rotation = activeDecoder.videoRotation
+        val rotation = decoder.videoRotation
         val rotated = rotation == 90 || rotation == 270
-        val srcW = if (rotated) activeDecoder.videoHeight else activeDecoder.videoWidth
-        val srcH = if (rotated) activeDecoder.videoWidth else activeDecoder.videoHeight
+        val srcW = if (rotated) decoder.videoHeight else decoder.videoWidth
+        val srcH = if (rotated) decoder.videoWidth else decoder.videoHeight
 
         buildFitMvpMatrix(srcW, srcH, currentWidth, currentHeight, mvpMatrix)
         os.getTransformMatrix(texMatrix)

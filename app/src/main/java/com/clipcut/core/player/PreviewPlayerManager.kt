@@ -36,6 +36,8 @@ class PreviewPlayerManager(private val context: Context) {
     private var lastClipsFingerprint: String? = null
     private var lastMusicFingerprint: String? = null
 
+    var onSeek: ((Long) -> Unit)? = null
+
     fun initialize(): ExoPlayer {
         if (exoPlayer == null) {
             val player = ExoPlayer.Builder(context).build().apply {
@@ -238,6 +240,7 @@ class PreviewPlayerManager(private val context: Context) {
         }
 
         _currentPositionUs.value = clampedTargetUs
+        onSeek?.invoke(clampedTargetUs)
     }
 
     fun seekByUs(deltaUs: Long) {

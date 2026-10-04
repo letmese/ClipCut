@@ -34,6 +34,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     val playerManager = PreviewPlayerManager(application)
     val previewRenderer = GlPreviewRenderer(application)
 
+    init {
+        playerManager.onSeek = { targetUs ->
+            previewRenderer.seekTo(targetUs)
+        }
+    }
+
     private val _project = MutableStateFlow<Project?>(null)
     val project: StateFlow<Project?> = _project.asStateFlow()
 

@@ -68,6 +68,21 @@ class VideoDecoder(
         }
     }
 
+    fun seekTo(targetUs: Long) {
+        val ext = extractor ?: return
+        val dec = decoder ?: return
+        try {
+            dec.flush()
+            val seekTarget = maxOf(clip.trimStartUs, targetUs)
+            ext.seekTo(seekTarget, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            isEosSignaled = false
+            isDecoderEos = false
+            AppLog.d(TAG, "VideoDecoder seekTo $targetUs successful")
+        } catch (e: Exception) {
+            AppLog.e(TAG, "VideoDecoder seekTo error", e)
+        }
+    }
+
     /**
      * Steps the decoder until one frame is rendered to OutputSurface, or EOS is reached.
      * Returns the frame PTS in microseconds, or -1 if EOS.

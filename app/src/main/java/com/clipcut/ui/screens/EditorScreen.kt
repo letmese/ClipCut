@@ -31,8 +31,8 @@ import com.clipcut.core.model.CropRect
 import com.clipcut.core.model.TimelineItem
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.filled.Undo
-import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.filled.MoreVert
 import com.clipcut.ui.theme.*
 import com.clipcut.ui.viewmodel.EditorViewModel
@@ -296,11 +296,11 @@ fun EditorScreen(
                     // Group 1: Undo / Redo
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         EditorActionButton(
-                            Icons.Default.Undo, "Undo",
+                            Icons.AutoMirrored.Filled.Undo, "Undo",
                             enabled = viewModel.canUndo.collectAsState().value
                         ) { viewModel.undo() }
                         EditorActionButton(
-                            Icons.Default.Redo, "Redo",
+                            Icons.AutoMirrored.Filled.Redo, "Redo",
                             enabled = viewModel.canRedo.collectAsState().value
                         ) { viewModel.redo() }
                     }

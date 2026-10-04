@@ -23,13 +23,59 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import com.clipcut.core.model.AudioTrackItem
+import com.clipcut.core.model.MediaType
 import com.clipcut.core.model.OverlayItem
 import com.clipcut.core.model.TimelineItem
 import com.clipcut.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 private const val MIN_CLIP_DURATION_US = 100_000L  // 100ms
+
+private object TimelineThumbnailCache {
+    private val cache = object : android.util.LruCache<String, Bitmap>(40) {}
+
+    fun get(context: android.content.Context, clip: TimelineItem): Bitmap? {
+        val key = "${clip.id}_${clip.trimStartUs}"
+        val existing = cache.get(key)
+        if (existing != null && !existing.isRecycled) return existing
+        return try {
+            val bmp = if (clip.mediaType == MediaType.VIDEO) {
+                val retriever = MediaMetadataRetriever()
+                retriever.setDataSource(context, Uri.parse(clip.uri))
+                val frame = retriever.getFrameAtTime(clip.trimStartUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                retriever.release()
+                frame
+            } else if (clip.mediaType == MediaType.IMAGE) {
+                context.contentResolver.openInputStream(Uri.parse(clip.uri))?.use {
+                    BitmapFactory.decodeStream(it)
+                }
+            } else null
+
+            if (bmp != null) {
+                val targetH = 90
+                val targetW = ((bmp.width.toFloat() / bmp.height.toFloat()) * targetH).toInt().coerceIn(40, 200)
+                val scaled = Bitmap.createScaledBitmap(bmp, targetW, targetH, true)
+                if (scaled != bmp) bmp.recycle()
+                cache.put(key, scaled)
+                scaled
+            } else null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+}
 
 @Composable
 fun TimelineView(
@@ -319,6 +365,16 @@ private fun RowScope.TimelineClip(
             } else 0f
         }
 
+        val context = LocalContext.current
+        var thumbnail by remember(clip.id, clip.uri, clip.trimStartUs) {
+            mutableStateOf<Bitmap?>(null)
+        }
+        LaunchedEffect(clip.id, clip.uri, clip.trimStartUs) {
+            withContext(Dispatchers.IO) {
+                thumbnail = TimelineThumbnailCache.get(context, clip)
+            }
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -339,6 +395,17 @@ private fun RowScope.TimelineClip(
                     )
                 }
         ) {
+            thumbnail?.let { bmp ->
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .alpha(0.5f)
+                )
+            }
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
