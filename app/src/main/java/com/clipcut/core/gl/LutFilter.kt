@@ -12,7 +12,7 @@ class LutFilter(
     private val lutUri: String,
     var intensity: Float = 1.0f
 ) : GlFilter(
-    vertexShaderSource = OES_VERTEX_SHADER,
+    vertexShaderSource = DEFAULT_VERTEX_SHADER,
     fragmentShaderSource = LUT_FRAGMENT_SHADER
 ) {
     private var uLutTextureHandle = 0
@@ -69,23 +69,10 @@ class LutFilter(
     companion object {
         private const val TAG = "LutFilter"
 
-        private const val OES_VERTEX_SHADER = """
-            uniform mat4 uMVPMatrix;
-            uniform mat4 uTexMatrix;
-            attribute vec4 aPosition;
-            attribute vec4 aTextureCoord;
-            varying vec2 vTextureCoord;
-            void main() {
-                gl_Position = uMVPMatrix * aPosition;
-                vTextureCoord = (uTexMatrix * aTextureCoord).xy;
-            }
-        """
-
         private const val LUT_FRAGMENT_SHADER = """
-            #extension GL_OES_EGL_image_external : require
             precision mediump float;
             varying vec2 vTextureCoord;
-            uniform samplerExternalOES sTexture;
+            uniform sampler2D sTexture;
             uniform sampler2D uLutTexture;
             uniform float uIntensity;
 

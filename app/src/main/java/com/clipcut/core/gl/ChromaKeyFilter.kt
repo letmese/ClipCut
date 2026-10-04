@@ -6,8 +6,8 @@ import android.opengl.Matrix
 
 class ChromaKeyFilter(
     var keyColor: FloatArray = floatArrayOf(0f, 1f, 0f),
-    var threshold: Float = 0.4f,
-    var smoothness: Float = 0.1f
+    var threshold: Float = 0.15f,
+    var smoothness: Float = 0.05f
 ) : GlFilter(
     vertexShaderSource = OES_VERTEX_SHADER,
     fragmentShaderSource = CHROMA_FRAGMENT_SHADER
@@ -73,10 +73,27 @@ class ChromaKeyFilter(
             uniform float uThreshold;
             uniform float uSmoothness;
 
+            // Convert RGB to YCbCr (BT.601). We only use Cb/Cr for distance.
+            vec2 rgb2CbCr(vec3 c) {
+                float cb = -0.168736 * c.r - 0.331264 * c.g + 0.5 * c.b;
+                float cr =  0.5 * c.r - 0.418688 * c.g - 0.081312 * c.b;
+                return vec2(cb, cr);
+            }
+
             void main() {
                 vec4 color = texture2D(sTexture, vTextureCoord);
-                float diff = distance(color.rgb, uKeyColor);
-                float alpha = smoothstep(uThreshold, uThreshold + uSmoothness, diff);
+
+                // Compare chroma only, ignoring luminance. This keeps shadows
+                // and highlights of the key color while preserving skin tones.
+                vec2 keyChroma = rgb2CbCr(uKeyColor);
+                vec2 pixelChroma = rgb2CbCr(color.rgb);
+
+                float chromaDist = distance(pixelChroma, keyChroma);
+
+                // Threshold is now in chroma units. Typical green key sits around
+                // 0.1-0.2 away from neutral skin tones in CbCr space.
+                float alpha = smoothstep(uThreshold, uThreshold + uSmoothness, chromaDist);
+
                 gl_FragColor = vec4(color.rgb, color.a * alpha);
             }
         """

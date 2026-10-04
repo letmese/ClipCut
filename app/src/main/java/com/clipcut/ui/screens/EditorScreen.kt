@@ -79,6 +79,7 @@ fun EditorScreen(
     var showMaskDialog by remember { mutableStateOf(false) }
     var showBlendDialog by remember { mutableStateOf(false) }
     var showBeatSheet by remember { mutableStateOf(false) }
+    var showReverseDialog by remember { mutableStateOf(false) }
 
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -327,6 +328,7 @@ fun EditorScreen(
                 videoClips = project?.videoClips ?: emptyList(),
                 audioTracks = project?.audioTracks ?: emptyList(),
                 overlays = project?.overlays ?: emptyList(),
+                beatMarkers = project?.beatMarkers ?: emptyList(),
                 selectedClipId = selectedClipId,
                 currentPositionUs = currentPositionUs,
                 totalDurationUs = totalDurationUs,
@@ -416,6 +418,11 @@ fun EditorScreen(
                             DropdownMenuItem(
                                 text = { Text("Canvas Ratio (${project?.aspectRatio?.label ?: "16:9"})") },
                                 onClick = { showMoreMenu = false; showAspectRatioDialog = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Reverse Clip") },
+                                enabled = selectedClip != null,
+                                onClick = { showMoreMenu = false; showReverseDialog = true }
                             )
                             DropdownMenuItem(
                                 text = { Text("Speed") },
@@ -787,6 +794,42 @@ fun EditorScreen(
             onRemoveMarker = { viewModel.removeBeatMarker(it) },
             onClearAll = { viewModel.clearBeatMarkers() },
             onDismiss = { showBeatSheet = false }
+        )
+    }
+
+    if (showReverseDialog && selectedClip != null) {
+        AlertDialog(
+            onDismissRequest = { showReverseDialog = false },
+            title = { Text("Reverse Clip", color = TextPrimary) },
+            text = {
+                Column {
+                    Text(
+                        "Play this clip backwards. Note: short clips only (< 30s).",
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(
+                            checked = selectedClip.isReversed,
+                            onCheckedChange = { viewModel.setClipReversed(selectedClip.id, it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = AccentPrimary,
+                                checkedTrackColor = AccentPrimary.copy(alpha = 0.5f)
+                            )
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Reverse playback", color = TextPrimary)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showReverseDialog = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary)
+                ) { Text("Done") }
+            },
+            containerColor = DarkSurfaceElevated
         )
     }
 }

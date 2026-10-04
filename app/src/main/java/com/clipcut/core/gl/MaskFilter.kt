@@ -5,7 +5,7 @@ import com.clipcut.core.model.MaskConfig
 import com.clipcut.core.model.MaskShape
 
 class MaskFilter : GlFilter(
-    vertexShaderSource = OES_VERTEX_SHADER,
+    vertexShaderSource = DEFAULT_VERTEX_SHADER,
     fragmentShaderSource = MASK_FRAGMENT_SHADER
 ) {
     var shape: Int = 0        // 0=none 1=linear 2=radial 3=rect 4=oval
@@ -60,23 +60,10 @@ class MaskFilter : GlFilter(
     }
 
     companion object {
-        private const val OES_VERTEX_SHADER = """
-            uniform mat4 uMVPMatrix;
-            uniform mat4 uTexMatrix;
-            attribute vec4 aPosition;
-            attribute vec4 aTextureCoord;
-            varying vec2 vTextureCoord;
-            void main() {
-                gl_Position = uMVPMatrix * aPosition;
-                vTextureCoord = (uTexMatrix * aTextureCoord).xy;
-            }
-        """
-
         private const val MASK_FRAGMENT_SHADER = """
-            #extension GL_OES_EGL_image_external : require
             precision mediump float;
             varying vec2 vTextureCoord;
-            uniform samplerExternalOES sTexture;
+            uniform sampler2D sTexture;
             uniform int uShape;
             uniform vec2 uCenter;
             uniform vec2 uSize;

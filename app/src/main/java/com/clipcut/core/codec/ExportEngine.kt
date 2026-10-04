@@ -12,19 +12,15 @@ import android.opengl.Matrix
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import com.clipcut.core.gl.ChromaKeyFilter
-import com.clipcut.core.gl.ColorAdjustFilter
 import com.clipcut.core.gl.FramebufferTexture
 import com.clipcut.core.gl.GlUtil
-import com.clipcut.core.gl.LutFilter
-import com.clipcut.core.gl.MaskFilter
 import com.clipcut.core.gl.OutputSurface
 import com.clipcut.core.gl.OverlayRenderer
+import com.clipcut.core.gl.PipelineRenderer
 import com.clipcut.core.gl.TransitionFilter
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.ExportConfig
 import com.clipcut.core.model.MediaType
-import com.clipcut.core.model.MaskShape
 import com.clipcut.core.model.Project
 import com.clipcut.core.model.TimelineItem
 import com.clipcut.core.model.TransitionType
@@ -70,15 +66,11 @@ class ExportEngine(
         var muxerWrapper: MediaMuxerWrapper? = null
         var videoEncoder: VideoEncoder? = null
         var outputSurface: OutputSurface? = null
-        var colorFilter: ColorAdjustFilter? = null
         var overlayRenderer: OverlayRenderer? = null
         var transitionFilter: TransitionFilter? = null
-        var maskFilter: MaskFilter? = null
+        var pipelineRenderer: PipelineRenderer? = null
         var outgoingFbo: FramebufferTexture? = null
         var incomingTransitionTexId = 0
-        var lutFilter: LutFilter? = null
-        var chromaFilter: ChromaKeyFilter? = null
-        var currentLutUri: String? = null
 
         try {
             onProgress(0.01f, "Initializing encoder & GL pipeline...")
@@ -95,10 +87,11 @@ class ExportEngine(
             val oesTexId = GlUtil.generateTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
             outputSurface = OutputSurface(oesTexId)
 
-            colorFilter = ColorAdjustFilter().also { it.init() }
+            pipelineRenderer = PipelineRenderer(context).also {
+                it.init(config.customWidth, config.customHeight)
+            }
             overlayRenderer = OverlayRenderer(context).also { it.init() }
             transitionFilter = TransitionFilter().also { it.init() }
-            maskFilter = MaskFilter().also { it.init() }
             outgoingFbo = FramebufferTexture(config.customWidth, config.customHeight).also { it.init() }
 
             incomingTransitionTexId = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
@@ -117,40 +110,15 @@ class ExportEngine(
             for ((clipIndex, clip) in project.videoClips.withIndex()) {
                 if (isCancelled.get()) throw InterruptedException("Export cancelled")
 
-                // Prepare LUT filter if needed
-                if (clip.lutConfig != null && clip.lutConfig.uri != currentLutUri) {
-                    lutFilter?.release()
-                    lutFilter = LutFilter(context, clip.lutConfig.uri, clip.lutConfig.intensity)
-                    lutFilter.init()
-                    currentLutUri = clip.lutConfig.uri
-                } else if (clip.lutConfig == null) {
-                    lutFilter?.release()
-                    lutFilter = null
-                    currentLutUri = null
-                }
-
-                // Prepare chroma filter if needed
-                if (clip.chromaKeyColor != null) {
-                    if (chromaFilter == null) {
-                        chromaFilter = ChromaKeyFilter().also { it.init() }
-                    }
-                    chromaFilter.keyColor = clip.chromaKeyColor
-                    chromaFilter.threshold = clip.chromaKeyThreshold
-                    chromaFilter.smoothness = clip.chromaKeySmoothness
-                } else {
-                    chromaFilter?.release()
-                    chromaFilter = null
-                }
-
                 val nextClip = project.videoClips.getOrNull(clipIndex + 1)
                 val nextNeedsTransition = nextClip != null && nextClip.transitionType != TransitionType.NONE
 
                 if (clip.mediaType == MediaType.IMAGE) {
                     renderImageClip(
-                        clip, clipIndex, currentTimelineOffsetUs, inputSurface, colorFilter,
-                        overlayRenderer, transitionFilter, maskFilter, lutFilter, chromaFilter,
-                        incomingTransitionTexId, muxerWrapper, videoEncoder, totalDurationUs,
-                        onProgress, outgoingFbo, nextNeedsTransition
+                        clip, clipIndex, currentTimelineOffsetUs, inputSurface,
+                        pipelineRenderer, overlayRenderer, transitionFilter,
+                        incomingTransitionTexId, muxerWrapper, videoEncoder,
+                        totalDurationUs, onProgress, outgoingFbo, nextNeedsTransition
                     )
                     currentTimelineOffsetUs += clip.effectiveDurationUs
                     continue
@@ -200,18 +168,25 @@ class ExportEngine(
                         val inTransition = transitionActive && scaledLocalTimeUs < transitionDurationUs
 
                         if (inTransition) {
-                            colorFilter.updateConfig(clip.filterConfig)
-                            colorFilter.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
-                            colorFilter.drawOes(oesTexId, texMatrix, mvpMatrix, rotation, config.customWidth, config.customHeight)
+                            // Pipeline-render the incoming frame to the default FB first
+                            pipelineRenderer!!.applyPostProcessing(
+                                sourceTexId = oesTexId,
+                                sourceTexMatrix = texMatrix,
+                                sourceIsOes = true,
+                                mvpMatrix = mvpMatrix,
+                                rotationDegrees = rotation,
+                                clip = clip
+                            )
 
-                            if (lutFilter != null) {
-                                // LUT is applied after the base render — skip for simplicity during transition
-                            }
-
+                            // Capture to incoming texture
                             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTransitionTexId)
-                            GLES20.glCopyTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0, config.customWidth, config.customHeight)
+                            GLES20.glCopyTexSubImage2D(
+                                GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                                config.customWidth, config.customHeight
+                            )
                             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
 
+                            // Draw transition
                             GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
                             GLES20.glClearColor(0f, 0f, 0f, 1f)
                             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
@@ -227,20 +202,15 @@ class ExportEngine(
                                 width = config.customWidth, height = config.customHeight
                             )
                         } else {
-                            // Chroma key first (if any)
-                            if (chromaFilter != null) {
-                                chromaFilter.drawOes(oesTexId, texMatrix, mvpMatrix, rotation, config.customWidth, config.customHeight)
-                            } else {
-                                colorFilter.updateConfig(clip.filterConfig)
-                                colorFilter.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
-                                colorFilter.drawOes(oesTexId, texMatrix, mvpMatrix, rotation, config.customWidth, config.customHeight)
-                            }
-                        }
-
-                        // Mask
-                        if (clip.maskConfig.shape != MaskShape.NONE) {
-                            maskFilter?.updateConfig(clip.maskConfig)
-                            // Mask would need a second pass — simplified here
+                            // Full pipeline: color + chroma + mask + LUT
+                            pipelineRenderer!!.applyPostProcessing(
+                                sourceTexId = oesTexId,
+                                sourceTexMatrix = texMatrix,
+                                sourceIsOes = true,
+                                mvpMatrix = mvpMatrix,
+                                rotationDegrees = rotation,
+                                clip = clip
+                            )
                         }
 
                         overlayRenderer.renderOverlays(
@@ -252,7 +222,10 @@ class ExportEngine(
 
                         if (nextNeedsTransition && !inTransition) {
                             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, outgoingFbo!!.textureId)
-                            GLES20.glCopyTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0, config.customWidth, config.customHeight)
+                            GLES20.glCopyTexSubImage2D(
+                                GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                                config.customWidth, config.customHeight
+                            )
                             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
                         }
 
@@ -302,12 +275,9 @@ class ExportEngine(
             if (incomingTransitionTexId != 0) {
                 GLES20.glDeleteTextures(1, intArrayOf(incomingTransitionTexId), 0)
             }
-            lutFilter?.release()
-            chromaFilter?.release()
-            maskFilter?.release()
+            pipelineRenderer?.release()
             outgoingFbo?.release()
             transitionFilter?.release()
-            colorFilter?.release()
             overlayRenderer?.release()
             outputSurface?.release()
             videoEncoder?.release()
@@ -317,12 +287,9 @@ class ExportEngine(
     private fun renderImageClip(
         clip: TimelineItem, clipIndex: Int, timelineStartUs: Long,
         inputSurface: com.clipcut.core.gl.InputSurface,
-        colorFilter: ColorAdjustFilter,
+        pipelineRenderer: PipelineRenderer,
         overlayRenderer: OverlayRenderer,
         transitionFilter: TransitionFilter?,
-        maskFilter: MaskFilter?,
-        lutFilter: LutFilter?,
-        chromaFilter: ChromaKeyFilter?,
         incomingTransitionTexId: Int,
         muxerWrapper: MediaMuxerWrapper,
         videoEncoder: VideoEncoder,
@@ -362,12 +329,20 @@ class ExportEngine(
                 val inTransition = transitionActive && framePtsUs < transitionDurationUs
 
                 if (inTransition) {
-                    colorFilter.updateConfig(clip.filterConfig)
-                    colorFilter.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
-                    colorFilter.draw(texId, GlUtil.IDENTITY_MATRIX, mvpMatrix, config.customWidth, config.customHeight, GLES20.GL_TEXTURE_2D)
+                    pipelineRenderer.applyPostProcessing(
+                        sourceTexId = texId,
+                        sourceTexMatrix = GlUtil.IDENTITY_MATRIX,
+                        sourceIsOes = false,
+                        mvpMatrix = mvpMatrix,
+                        rotationDegrees = 0,
+                        clip = clip
+                    )
 
                     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTransitionTexId)
-                    GLES20.glCopyTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0, config.customWidth, config.customHeight)
+                    GLES20.glCopyTexSubImage2D(
+                        GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                        config.customWidth, config.customHeight
+                    )
                     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
 
                     GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
@@ -385,16 +360,24 @@ class ExportEngine(
                         width = config.customWidth, height = config.customHeight
                     )
                 } else {
-                    colorFilter.updateConfig(clip.filterConfig)
-                    colorFilter.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
-                    colorFilter.draw(texId, GlUtil.IDENTITY_MATRIX, mvpMatrix, config.customWidth, config.customHeight, GLES20.GL_TEXTURE_2D)
+                    pipelineRenderer.applyPostProcessing(
+                        sourceTexId = texId,
+                        sourceTexMatrix = GlUtil.IDENTITY_MATRIX,
+                        sourceIsOes = false,
+                        mvpMatrix = mvpMatrix,
+                        rotationDegrees = 0,
+                        clip = clip
+                    )
                 }
 
                 overlayRenderer.renderOverlays(project.overlays, outputPtsUs, config.customWidth, config.customHeight)
 
                 if (nextNeedsTransition && outgoingFbo != null && (framePtsUs + frameIntervalUs >= durationUs) && !inTransition) {
                     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, outgoingFbo.textureId)
-                    GLES20.glCopyTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0, config.customWidth, config.customHeight)
+                    GLES20.glCopyTexSubImage2D(
+                        GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                        config.customWidth, config.customHeight
+                    )
                     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
                 }
 

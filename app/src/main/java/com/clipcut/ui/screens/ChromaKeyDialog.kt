@@ -52,8 +52,8 @@ fun ChromaKeyDialog(
                 }
 
                 Spacer(Modifier.height(12.dp))
-                CKSlider("Threshold", threshold, 0f..1f) { threshold = it }
-                CKSlider("Smoothness", smoothness, 0.01f..0.3f) { smoothness = it }
+                CKSlider("Threshold", threshold, 0f..0.4f) { threshold = it }
+                CKSlider("Smoothness", smoothness, 0.005f..0.15f) { smoothness = it }
             }
         },
         confirmButton = {

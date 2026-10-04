@@ -13,12 +13,12 @@ import android.os.HandlerThread
 import android.view.Surface
 import com.clipcut.core.codec.SpeedRampProcessor
 import com.clipcut.core.codec.VideoDecoder
-import com.clipcut.core.gl.ColorAdjustFilter
 import com.clipcut.core.gl.EglCore
 import com.clipcut.core.gl.FramebufferTexture
 import com.clipcut.core.gl.GlUtil
 import com.clipcut.core.gl.OutputSurface
 import com.clipcut.core.gl.OverlayRenderer
+import com.clipcut.core.gl.PipelineRenderer
 import com.clipcut.core.gl.TransitionFilter
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.MediaType
@@ -36,7 +36,7 @@ class GlPreviewRenderer(private val context: Context) {
     private var eglSurface: EGLSurface? = null
     private var outputSurface: OutputSurface? = null
 
-    private var colorFilter: ColorAdjustFilter? = null
+    private var pipelineRenderer: PipelineRenderer? = null
     private var overlayRenderer: OverlayRenderer? = null
     private var transitionFilter: TransitionFilter? = null
     private var outgoingFbo: FramebufferTexture? = null
@@ -53,10 +53,8 @@ class GlPreviewRenderer(private val context: Context) {
     private var currentClipIndex = -1
     private var currentDecoder: VideoDecoder? = null
     private var lastDecodedSourceUs = -1L
-    private var lastRequestedSourceUs = -1L
 
-    // Multi-image texture cache, keyed by clip ID
-    private val imageTextureCache = mutableMapOf<String, Triple<Int, Int, Int>>() // clipId -> (texId, w, h)
+    private val imageTextureCache = mutableMapOf<String, Triple<Int, Int, Int>>()
 
     var positionProvider: (() -> Long)? = null
 
@@ -76,16 +74,16 @@ class GlPreviewRenderer(private val context: Context) {
                 val oesTexId = GlUtil.generateTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
                 outputSurface = OutputSurface(oesTexId)
 
-                colorFilter = ColorAdjustFilter().also { it.init() }
+                pipelineRenderer = PipelineRenderer(context).also { it.init(width, height) }
                 overlayRenderer = OverlayRenderer(context).also { it.init() }
                 transitionFilter = TransitionFilter().also { it.init() }
-                outgoingFbo = FramebufferTexture(currentWidth, currentHeight).also { it.init() }
+                outgoingFbo = FramebufferTexture(width, height).also { it.init() }
 
                 incomingTransitionTexId = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTransitionTexId)
                 GLES20.glTexImage2D(
                     GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
-                    currentWidth, currentHeight, 0,
+                    width, height, 0,
                     GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null
                 )
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
@@ -103,7 +101,7 @@ class GlPreviewRenderer(private val context: Context) {
             currentWidth = width
             currentHeight = height
             renderHandler?.post {
-                // Recreate the outgoing FBO and incoming transition texture at the new size
+                pipelineRenderer?.resizeIfNeeded(width, height)
                 outgoingFbo?.release()
                 outgoingFbo = FramebufferTexture(width, height).also { it.init() }
 
@@ -130,9 +128,8 @@ class GlPreviewRenderer(private val context: Context) {
                 currentDecoder?.release()
                 currentDecoder = null
                 lastDecodedSourceUs = -1L
-                lastRequestedSourceUs = -1L
 
-                colorFilter?.release()
+                pipelineRenderer?.release()
                 overlayRenderer?.release()
                 transitionFilter?.release()
                 outgoingFbo?.release()
@@ -146,7 +143,7 @@ class GlPreviewRenderer(private val context: Context) {
                 eglSurface?.let { eglCore?.destroySurface(it) }
                 eglCore?.release()
 
-                colorFilter = null
+                pipelineRenderer = null
                 overlayRenderer = null
                 transitionFilter = null
                 outgoingFbo = null
@@ -154,7 +151,6 @@ class GlPreviewRenderer(private val context: Context) {
                 eglSurface = null
                 eglCore = null
 
-                // Image textures are also gone with the EGL context
                 imageTextureCache.clear()
             } catch (t: Throwable) {
                 AppLog.e(TAG, "Error releasing GL resources", t)
@@ -168,15 +164,12 @@ class GlPreviewRenderer(private val context: Context) {
 
     fun setProject(project: Project) {
         currentProject = project
-        // Force a decoder reset on the next frame so we pick up edits
         renderHandler?.post {
             currentDecoder?.release()
             currentDecoder = null
             currentClipIndex = -1
             lastDecodedSourceUs = -1L
-            lastRequestedSourceUs = -1L
 
-            // Evict cached image textures for clips that no longer exist
             val liveIds = project.videoClips.map { it.id }.toSet()
             val staleIds = imageTextureCache.keys.filter { it !in liveIds }
             for (id in staleIds) {
@@ -186,17 +179,11 @@ class GlPreviewRenderer(private val context: Context) {
         }
     }
 
-    fun pause() {
-        isPaused.set(true)
-    }
-
-    fun resume() {
-        isPaused.set(false)
-    }
+    fun pause() { isPaused.set(true) }
+    fun resume() { isPaused.set(false) }
 
     fun seekTo(timelineUs: Long) {
         pendingSeekUs = timelineUs
-        // Wake up render thread immediately so seeking feels responsive
         renderHandler?.removeCallbacks(renderLoop)
         renderHandler?.post(renderLoop)
     }
@@ -220,12 +207,10 @@ class GlPreviewRenderer(private val context: Context) {
     private val renderLoop = object : Runnable {
         override fun run() {
             if (!isRunning.get()) return
-
             if (isPaused.get()) {
                 renderHandler?.postDelayed(this, 100)
                 return
             }
-
             try {
                 val project = currentProject
                 if (project == null || project.videoClips.isEmpty()) {
@@ -236,22 +221,16 @@ class GlPreviewRenderer(private val context: Context) {
                     renderHandler?.postDelayed(this, 100)
                     return
                 }
-
                 val clockUs = positionProvider?.invoke() ?: 0L
                 val targetUs = if (pendingSeekUs >= 0L) {
                     val s = pendingSeekUs
                     pendingSeekUs = -1L
                     s
-                } else {
-                    clockUs
-                }
-
+                } else clockUs
                 renderFrameAt(project, targetUs)
-
             } catch (t: Throwable) {
                 AppLog.e(TAG, "Render loop error", t)
             }
-
             renderHandler?.postDelayed(this, 33)
         }
     }
@@ -272,7 +251,6 @@ class GlPreviewRenderer(private val context: Context) {
 
         val clip = project.videoClips[clipIndex]
 
-        // Detect clip change and reset the decoder
         if (clipIndex != currentClipIndex) {
             currentDecoder?.release()
             currentDecoder = null
@@ -287,22 +265,12 @@ class GlPreviewRenderer(private val context: Context) {
         val texMatrix = FloatArray(16)
         val mvpMatrix = FloatArray(16)
 
-        // Check if we're inside a transition window
         val transitionActive = clip.transitionType != TransitionType.NONE &&
                 clipIndex > 0 &&
                 clipLocalUs < clip.transitionDurationUs
 
         if (transitionActive) {
-            // Render incoming frame into the default framebuffer via transition.
-            // The outgoing frame is captured from the previous render pass; if we
-            // don't have one yet, just render the incoming clip directly.
-            renderTransitionPreview(
-                project = project,
-                incomingClip = clip,
-                clipLocalUs = clipLocalUs,
-                texMatrix = texMatrix,
-                mvpMatrix = mvpMatrix
-            )
+            renderTransitionPreview(project, clip, clipLocalUs, texMatrix, mvpMatrix)
         } else {
             if (clip.mediaType == MediaType.IMAGE) {
                 renderImagePreview(clip, mvpMatrix)
@@ -318,9 +286,6 @@ class GlPreviewRenderer(private val context: Context) {
             viewportHeight = currentHeight
         )
 
-        // Capture the composited frame into the outgoing FBO ONLY if the next clip
-        // has an active transition and we are NOT currently rendering inside an incoming transition window,
-        // preserving all overlays and preventing compound fade.
         val nextClip = project.videoClips.getOrNull(clipIndex + 1)
         val nextNeedsTransition = nextClip != null && nextClip.transitionType != TransitionType.NONE
         if (nextNeedsTransition && !transitionActive) {
@@ -335,7 +300,6 @@ class GlPreviewRenderer(private val context: Context) {
             }
         }
 
-        // Restore the viewport
         GLES20.glViewport(0, 0, currentWidth, currentHeight)
         eglCore?.swapBuffers(eglSurface!!)
     }
@@ -347,10 +311,8 @@ class GlPreviewRenderer(private val context: Context) {
         texMatrix: FloatArray,
         mvpMatrix: FloatArray
     ) {
-        val progress = (clipLocalUs.toFloat() / incomingClip.transitionDurationUs.toFloat())
-            .coerceIn(0f, 1f)
+        val progress = (clipLocalUs.toFloat() / incomingClip.transitionDurationUs.toFloat()).coerceIn(0f, 1f)
 
-        // 1. Render incoming clip into the default framebuffer first (support both images and video)
         if (incomingClip.mediaType == MediaType.IMAGE) {
             renderImagePreview(incomingClip, mvpMatrix)
         } else {
@@ -359,15 +321,10 @@ class GlPreviewRenderer(private val context: Context) {
 
         val texId = incomingTransitionTexId
         if (texId != 0) {
-            // 2. Copy the incoming frame into the pre-allocated texture without allocating
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId)
-            GLES20.glCopyTexSubImage2D(
-                GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
-                currentWidth, currentHeight
-            )
+            GLES20.glCopyTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0, currentWidth, currentHeight)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
 
-            // 3. Clear and blend outgoing FBO + incoming texture through transition shader
             GLES20.glViewport(0, 0, currentWidth, currentHeight)
             GLES20.glClearColor(0f, 0f, 0f, 1f)
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
@@ -392,6 +349,7 @@ class GlPreviewRenderer(private val context: Context) {
         mvpMatrix: FloatArray
     ) {
         val os = outputSurface ?: return
+        val pipeline = pipelineRenderer ?: return
 
         if (currentDecoder == null) {
             currentDecoder = VideoDecoder(context, clip, os)
@@ -399,7 +357,6 @@ class GlPreviewRenderer(private val context: Context) {
                 currentDecoder!!.init()
                 lastDecodedSourceUs = -1L
             } catch (t: Throwable) {
-                AppLog.e(TAG, "Failed to init decoder for preview", t)
                 currentDecoder = null
                 return
             }
@@ -407,20 +364,17 @@ class GlPreviewRenderer(private val context: Context) {
 
         val decoder = currentDecoder ?: return
 
-        // Convert timeline-local time to source time (handles speed ramps)
         val sourceUs = if (clip.speedRamp.isActive) {
             clip.trimStartUs + SpeedRampProcessor.timelineToSource(clipLocalUs, clip.speedRamp, clip.speed)
         } else {
             clip.trimStartUs + (clipLocalUs * clip.speed).toLong()
         }
 
-        // Backward seek detection
         if (lastDecodedSourceUs >= 0L && sourceUs < lastDecodedSourceUs - 33_000L) {
             decoder.seekTo(sourceUs)
             lastDecodedSourceUs = -1L
         }
 
-        // FIXED: decode forward whenever the target has advanced OR when we have no frame yet
         if (lastDecodedSourceUs < 0L || sourceUs >= lastDecodedSourceUs) {
             var lastPtsUs = lastDecodedSourceUs
             var attempts = 0
@@ -444,20 +398,18 @@ class GlPreviewRenderer(private val context: Context) {
         buildFitMvpMatrix(srcW, srcH, currentWidth, currentHeight, mvpMatrix)
         os.getTransformMatrix(texMatrix)
 
-        val cf = colorFilter ?: return
-        cf.updateConfig(clip.filterConfig)
-        cf.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
-        cf.drawOes(
-            texId = os.textureId,
-            texMatrix = texMatrix,
+        pipeline.applyPostProcessing(
+            sourceTexId = os.textureId,
+            sourceTexMatrix = texMatrix,
+            sourceIsOes = true,
             mvpMatrix = mvpMatrix,
             rotationDegrees = rotation,
-            width = currentWidth,
-            height = currentHeight
+            clip = clip
         )
     }
 
     private fun renderImagePreview(clip: TimelineItem, mvpMatrix: FloatArray) {
+        val pipeline = pipelineRenderer ?: return
         val cached = imageTextureCache[clip.id]
         val texId: Int
         val w: Int
@@ -469,14 +421,12 @@ class GlPreviewRenderer(private val context: Context) {
             h = cached.third
         } else {
             val bmp = try {
-                context.contentResolver.openInputStream(android.net.Uri.parse(clip.uri))?.use { stream ->
-                    BitmapFactory.decodeStream(stream)
+                context.contentResolver.openInputStream(android.net.Uri.parse(clip.uri))?.use {
+                    BitmapFactory.decodeStream(it)
                 }
             } catch (t: Throwable) {
-                AppLog.e(TAG, "Failed to load image for preview: ${clip.uri}", t)
                 null
             } ?: return
-
             w = bmp.width
             h = bmp.height
             texId = uploadBitmapToTexture(bmp)
@@ -487,16 +437,13 @@ class GlPreviewRenderer(private val context: Context) {
 
         buildFitMvpMatrix(w, h, currentWidth, currentHeight, mvpMatrix)
 
-        val cf = colorFilter ?: return
-        cf.updateConfig(clip.filterConfig)
-        cf.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
-        cf.draw(
-            texId = texId,
-            texMatrix = GlUtil.IDENTITY_MATRIX,
+        pipeline.applyPostProcessing(
+            sourceTexId = texId,
+            sourceTexMatrix = GlUtil.IDENTITY_MATRIX,
+            sourceIsOes = false,
             mvpMatrix = mvpMatrix,
-            width = currentWidth,
-            height = currentHeight,
-            textureTarget = GLES20.GL_TEXTURE_2D
+            rotationDegrees = 0,
+            clip = clip
         )
     }
 
