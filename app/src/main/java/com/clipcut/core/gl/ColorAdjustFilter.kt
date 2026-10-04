@@ -56,6 +56,10 @@ class ColorAdjustFilter : GlFilter(
         GLES20.glUniform1i(uFilterModeHandle, mode)
     }
 
+    // Scratch matrices — allocated once, reused every frame
+    private val rotationMatrix = FloatArray(16)
+    private val finalTexMatrix = FloatArray(16)
+
     fun drawOes(
         texId: Int,
         texMatrix: FloatArray,
@@ -64,22 +68,25 @@ class ColorAdjustFilter : GlFilter(
         width: Int,
         height: Int
     ) {
-        val finalTexMatrix = if (rotationDegrees != 0) {
-            val rotMatrix = FloatArray(16)
-            Matrix.setIdentityM(rotMatrix, 0)
-            Matrix.translateM(rotMatrix, 0, 0.5f, 0.5f, 0f)
-            Matrix.rotateM(rotMatrix, 0, -rotationDegrees.toFloat(), 0f, 0f, 1f)
-            Matrix.translateM(rotMatrix, 0, -0.5f, -0.5f, 0f)
-            val result = FloatArray(16)
-            Matrix.multiplyMM(result, 0, texMatrix, 0, rotMatrix, 0)
-            result
+        val matrixToUse: FloatArray = if (rotationDegrees != 0) {
+            // Build a rotation about the texture center (UV space 0..1).
+            // Positive rotationDegrees = clockwise on screen.
+            Matrix.setIdentityM(rotationMatrix, 0)
+            Matrix.translateM(rotationMatrix, 0, 0.5f, 0.5f, 0f)
+            Matrix.rotateM(rotationMatrix, 0, -rotationDegrees.toFloat(), 0f, 0f, 1f)
+            Matrix.translateM(rotationMatrix, 0, -0.5f, -0.5f, 0f)
+
+            // finalTexMatrix = rotation * texMatrix
+            // multiplyMM(result, resultOffset, lhs, lhsOffset, rhs, rhsOffset) = lhs * rhs
+            Matrix.multiplyMM(finalTexMatrix, 0, rotationMatrix, 0, texMatrix, 0)
+            finalTexMatrix
         } else {
             texMatrix
         }
 
         draw(
             texId = texId,
-            texMatrix = finalTexMatrix,
+            texMatrix = matrixToUse,
             mvpMatrix = mvpMatrix,
             width = width,
             height = height,

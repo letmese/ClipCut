@@ -3,11 +3,12 @@ package com.clipcut.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -16,8 +17,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -27,6 +29,8 @@ import com.clipcut.core.model.OverlayItem
 import com.clipcut.core.model.TimelineItem
 import com.clipcut.ui.theme.*
 import java.util.Locale
+
+private const val MIN_CLIP_DURATION_US = 100_000L  // 100ms
 
 @Composable
 fun TimelineView(
@@ -48,7 +52,7 @@ fun TimelineView(
             .background(DarkSurfaceElevated)
             .padding(vertical = 4.dp)
     ) {
-        // Scrubber / Ruler Bar with Time indicators & Drag Scrubbing
+        // -------- Scrubber / Ruler Bar --------
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -58,8 +62,7 @@ fun TimelineView(
                     detectTapGestures { offset ->
                         if (totalDurationUs > 0) {
                             val fraction = (offset.x / size.width).coerceIn(0f, 1f)
-                            val targetUs = (fraction * totalDurationUs).toLong()
-                            onSeek(targetUs)
+                            onSeek((fraction * totalDurationUs).toLong())
                         }
                     }
                 }
@@ -71,6 +74,8 @@ fun TimelineView(
                                 onSeek((fraction * totalDurationUs).toLong())
                             }
                         },
+                        onDragEnd = { },
+                        onDragCancel = { },
                         onHorizontalDrag = { change, _ ->
                             change.consume()
                             if (totalDurationUs > 0) {
@@ -107,7 +112,7 @@ fun TimelineView(
             }
         }
 
-        // Timeline Track Area
+        // -------- Timeline Track Area --------
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -117,8 +122,7 @@ fun TimelineView(
                     detectTapGestures { offset ->
                         if (totalDurationUs > 0) {
                             val fraction = (offset.x / size.width).coerceIn(0f, 1f)
-                            val targetUs = (fraction * totalDurationUs).toLong()
-                            onSeek(targetUs)
+                            onSeek((fraction * totalDurationUs).toLong())
                         }
                     }
                 }
@@ -130,6 +134,8 @@ fun TimelineView(
                                 onSeek((fraction * totalDurationUs).toLong())
                             }
                         },
+                        onDragEnd = { },
+                        onDragCancel = { },
                         onHorizontalDrag = { change, _ ->
                             change.consume()
                             if (totalDurationUs > 0) {
@@ -146,7 +152,7 @@ fun TimelineView(
                     .padding(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // Video Clip Track
+                // ---------- Video Clip Track ----------
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -175,101 +181,27 @@ fun TimelineView(
                         var runningOffsetUs = 0L
                         videoClips.forEachIndexed { index, clip ->
                             val isSelected = clip.id == selectedClipId
-                            val weight = (clip.effectiveDurationUs.toFloat() / maxOf(1L, totalDurationUs).toFloat()).coerceAtLeast(0.08f)
+                            val weight = (clip.effectiveDurationUs.toFloat() /
+                                    maxOf(1L, totalDurationUs).toFloat())
+                                .coerceAtLeast(0.08f)
                             val clipStartUs = runningOffsetUs
                             runningOffsetUs += clip.effectiveDurationUs
 
-                            Box(
-                                modifier = Modifier
-                                    .weight(weight)
-                                    .fillMaxHeight()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSelected) AccentPrimary.copy(alpha = 0.25f) else TimelineClipBg)
-                                    .border(
-                                        width = if (isSelected) 2.dp else 1.dp,
-                                        color = if (isSelected) AccentPrimary else TimelineClipBorder,
-                                        shape = RoundedCornerShape(8.dp)
-                                    )
-                                    .clickable {
-                                        onSelectClip(clip.id)
-                                        onSeek(clipStartUs)
-                                    }
-                            ) {
-                                // Content in center with horizontal padding if selected
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(horizontal = if (isSelected) 20.dp else 6.dp, vertical = 6.dp),
-                                    verticalArrangement = Arrangement.Center
-                                ) {
-                                    Text(
-                                        text = "Clip ${index + 1}",
-                                        color = if (isSelected) AccentPrimary else TextPrimary,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "${formatDuration(clip.effectiveDurationUs)} (${clip.speed}x)",
-                                        color = TextSecondary,
-                                        fontSize = 10.sp,
-                                        maxLines = 1
-                                    )
-                                }
-
-                                // Interactive Left & Right Trim Handles when selected
-                                if (isSelected) {
-                                    // Left Trim Handle
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.CenterStart)
-                                            .width(20.dp)
-                                            .fillMaxHeight()
-                                            .background(AccentPrimary, RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp))
-                                            .pointerInput(clip.id) {
-                                                detectHorizontalDragGestures { change, dragAmount ->
-                                                    change.consume()
-                                                    val deltaUs = (dragAmount * 80_000L).toLong()
-                                                    val newStartUs = (clip.trimStartUs + deltaUs).coerceIn(0L, clip.trimEndUs - 100_000L)
-                                                    if (newStartUs != clip.trimStartUs) {
-                                                        onTrimClip(clip.id, newStartUs, clip.trimEndUs)
-                                                    }
-                                                }
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text("◀", color = TextPrimary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                                    }
-
-                                    // Right Trim Handle
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.CenterEnd)
-                                            .width(20.dp)
-                                            .fillMaxHeight()
-                                            .background(AccentPrimary, RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp))
-                                            .pointerInput(clip.id) {
-                                                detectHorizontalDragGestures { change, dragAmount ->
-                                                    change.consume()
-                                                    val deltaUs = (dragAmount * 80_000L).toLong()
-                                                    val newEndUs = (clip.trimEndUs + deltaUs).coerceIn(clip.trimStartUs + 100_000L, clip.sourceDurationUs)
-                                                    if (newEndUs != clip.trimEndUs) {
-                                                        onTrimClip(clip.id, clip.trimStartUs, newEndUs)
-                                                    }
-                                                }
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text("▶", color = TextPrimary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
+                            TimelineClip(
+                                clip = clip,
+                                index = index,
+                                isSelected = isSelected,
+                                clipWeight = weight,
+                                clipStartUs = clipStartUs,
+                                onSelectClip = onSelectClip,
+                                onSeek = onSeek,
+                                onTrimClip = onTrimClip
+                            )
                         }
                     }
                 }
 
-                // Audio Track (Music/Sound)
+                // ---------- Audio Track ----------
                 if (audioTracks.isNotEmpty()) {
                     Row(
                         modifier = Modifier
@@ -301,7 +233,7 @@ fun TimelineView(
                     }
                 }
 
-                // Overlay Track (Text/Stickers)
+                // ---------- Overlay Track ----------
                 if (overlays.isNotEmpty()) {
                     Row(
                         modifier = Modifier
@@ -334,10 +266,13 @@ fun TimelineView(
                 }
             }
 
-            // Playhead Indicator
+            // ---------- Playhead Indicator (Non-Interactive Overlay) ----------
             if (totalDurationUs > 0) {
-                val progressFraction = (currentPositionUs.toFloat() / totalDurationUs.toFloat()).coerceIn(0f, 1f)
-                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val progressFraction =
+                    (currentPositionUs.toFloat() / totalDurationUs.toFloat()).coerceIn(0f, 1f)
+                BoxWithConstraints(
+                    modifier = Modifier.matchParentSize()
+                ) {
                     val playheadX = maxWidth * progressFraction
                     Box(
                         modifier = Modifier
@@ -349,6 +284,178 @@ fun TimelineView(
                 }
             }
         }
+    }
+}
+
+/**
+ * One clip row with local trim state. Commits to the ViewModel on drag end.
+ */
+@Composable
+private fun RowScope.TimelineClip(
+    clip: TimelineItem,
+    index: Int,
+    isSelected: Boolean,
+    clipWeight: Float,
+    clipStartUs: Long,
+    onSelectClip: (String) -> Unit,
+    onSeek: (Long) -> Unit,
+    onTrimClip: (String, Long, Long) -> Unit
+) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .weight(clipWeight)
+            .fillMaxHeight()
+    ) {
+        val density = LocalDensity.current
+        val clipWidthPx = with(density) { maxWidth.toPx() }
+
+        var pendingTrimStartUs by remember(clip.id, clip.trimStartUs) {
+            mutableStateOf(clip.trimStartUs)
+        }
+        var pendingTrimEndUs by remember(clip.id, clip.trimEndUs) {
+            mutableStateOf(clip.trimEndUs)
+        }
+
+        val pixelsPerSourceUs = remember(clipWidthPx, clip.trimmedDurationUs) {
+            if (clip.trimmedDurationUs > 0L) {
+                clipWidthPx / clip.trimmedDurationUs.toFloat()
+            } else 0f
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(8.dp))
+                .background(
+                    if (isSelected) AccentPrimary.copy(alpha = 0.25f) else TimelineClipBg
+                )
+                .border(
+                    width = if (isSelected) 2.dp else 1.dp,
+                    color = if (isSelected) AccentPrimary else TimelineClipBorder,
+                    shape = RoundedCornerShape(8.dp)
+                )
+                .clickable {
+                    onSelectClip(clip.id)
+                    onSeek(clipStartUs)
+                }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(
+                        horizontal = if (isSelected) 24.dp else 6.dp,
+                        vertical = 6.dp
+                    ),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "Clip ${index + 1}",
+                    color = if (isSelected) AccentPrimary else TextPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "${formatDuration(clip.effectiveDurationUs)} (${clip.speed}x)",
+                    color = TextSecondary,
+                    fontSize = 10.sp,
+                    maxLines = 1
+                )
+            }
+
+            if (isSelected) {
+                // -------- Left trim handle --------
+                TrimHandle(
+                    edge = TrimEdge.LEFT,
+                    pixelsPerUs = pixelsPerSourceUs,
+                    modifier = Modifier.align(Alignment.CenterStart),
+                    onDragDeltaUs = { deltaUs ->
+                        val newStart = (pendingTrimStartUs + deltaUs)
+                            .coerceIn(0L, pendingTrimEndUs - MIN_CLIP_DURATION_US)
+                        pendingTrimStartUs = newStart
+                    },
+                    onDragEnd = {
+                        onTrimClip(clip.id, pendingTrimStartUs, pendingTrimEndUs)
+                    }
+                )
+
+                // -------- Right trim handle --------
+                TrimHandle(
+                    edge = TrimEdge.RIGHT,
+                    pixelsPerUs = pixelsPerSourceUs,
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    onDragDeltaUs = { deltaUs ->
+                        val newEnd = (pendingTrimEndUs + deltaUs)
+                            .coerceIn(
+                                pendingTrimStartUs + MIN_CLIP_DURATION_US,
+                                clip.sourceDurationUs
+                            )
+                        pendingTrimEndUs = newEnd
+                    },
+                    onDragEnd = {
+                        onTrimClip(clip.id, pendingTrimStartUs, pendingTrimEndUs)
+                    }
+                )
+            }
+        }
+    }
+}
+
+enum class TrimEdge { LEFT, RIGHT }
+
+/**
+ * Draggable trim handle. Claims the gesture on the first down so the parent
+ * scrub detector never sees the event.
+ */
+@Composable
+private fun TrimHandle(
+    edge: TrimEdge,
+    pixelsPerUs: Float,
+    onDragDeltaUs: (Long) -> Unit,
+    onDragEnd: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val touchWidth = 32.dp
+    val visualWidth = 6.dp
+    val pixelsPerUsState = rememberUpdatedState(pixelsPerUs)
+
+    Box(
+        modifier = modifier
+            .width(touchWidth)
+            .fillMaxHeight()
+            .pointerInput(edge) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = true)
+                    down.consume()
+
+                    drag(down.id) { change ->
+                        val deltaPx = change.positionChange().x
+                        if (deltaPx != 0f) {
+                            val ppus = pixelsPerUsState.value
+                            if (ppus > 0f) {
+                                val deltaUs = (deltaPx / ppus).toLong()
+                                if (deltaUs != 0L) {
+                                    onDragDeltaUs(deltaUs)
+                                }
+                            }
+                            change.consume()
+                        }
+                    }
+
+                    onDragEnd()
+                }
+            },
+        contentAlignment = if (edge == TrimEdge.LEFT) Alignment.CenterStart
+                           else Alignment.CenterEnd
+    ) {
+        Box(
+            modifier = Modifier
+                .width(visualWidth)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(3.dp))
+                .background(AccentPrimary)
+        )
     }
 }
 

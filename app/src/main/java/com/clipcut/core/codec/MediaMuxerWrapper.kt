@@ -59,13 +59,23 @@ class MediaMuxerWrapper(
             isStarted = true
             AppLog.i(TAG, "MediaMuxer started successfully")
 
-            // Drain queued samples
+            // Drain queued samples sorted by monotonic PTS
+            pendingVideoSamples.sortBy { it.bufferInfo.presentationTimeUs }
             for (sample in pendingVideoSamples) {
+                if (sample.bufferInfo.presentationTimeUs <= lastVideoPtsUs) {
+                    sample.bufferInfo.presentationTimeUs = lastVideoPtsUs + 1L
+                }
+                lastVideoPtsUs = sample.bufferInfo.presentationTimeUs
                 muxer.writeSampleData(videoTrackIndex, sample.buffer, sample.bufferInfo)
             }
             pendingVideoSamples.clear()
 
+            pendingAudioSamples.sortBy { it.bufferInfo.presentationTimeUs }
             for (sample in pendingAudioSamples) {
+                if (sample.bufferInfo.presentationTimeUs <= lastAudioPtsUs) {
+                    sample.bufferInfo.presentationTimeUs = lastAudioPtsUs + 1L
+                }
+                lastAudioPtsUs = sample.bufferInfo.presentationTimeUs
                 muxer.writeSampleData(audioTrackIndex, sample.buffer, sample.bufferInfo)
             }
             pendingAudioSamples.clear()
