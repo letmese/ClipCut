@@ -339,6 +339,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private fun commitInternal(newProject: Project) {
         val p = newProject.copy(lastModifiedTime = System.currentTimeMillis())
         _project.value = p
+        val currentSelected = _selectedClipId.value
+        if (currentSelected != null && p.videoClips.none { it.id == currentSelected }) {
+            _selectedClipId.value = p.videoClips.firstOrNull()?.id
+        }
         playerManager.syncWithProject(p)
         previewRenderer.setProject(p)
         viewModelScope.launch { dao.updateProject(ProjectEntity.fromDomain(p)) }

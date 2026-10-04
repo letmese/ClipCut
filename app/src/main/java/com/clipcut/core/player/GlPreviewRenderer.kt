@@ -52,6 +52,7 @@ class GlPreviewRenderer(private val context: Context) {
     private var currentClipIndex = -1
     private var currentDecoder: VideoDecoder? = null
     private var lastDecodedSourceUs = -1L
+    private var lastRequestedSourceUs = -1L
 
     // Multi-image texture cache, keyed by clip ID
     private val imageTextureCache = mutableMapOf<String, Triple<Int, Int, Int>>() // clipId -> (texId, w, h)
@@ -128,6 +129,7 @@ class GlPreviewRenderer(private val context: Context) {
                 currentDecoder?.release()
                 currentDecoder = null
                 lastDecodedSourceUs = -1L
+                lastRequestedSourceUs = -1L
 
                 colorFilter?.release()
                 overlayRenderer?.release()
@@ -171,6 +173,7 @@ class GlPreviewRenderer(private val context: Context) {
             currentDecoder = null
             currentClipIndex = -1
             lastDecodedSourceUs = -1L
+            lastRequestedSourceUs = -1L
 
             // Evict cached image textures for clips that no longer exist
             val liveIds = project.videoClips.map { it.id }.toSet()
@@ -405,26 +408,30 @@ class GlPreviewRenderer(private val context: Context) {
 
         val sourceUs = clip.trimStartUs + (clipLocalUs * clip.speed).toLong()
 
-        // Detect backward seek: if target is behind last decoded position by more than ~1 frame
-        if (lastDecodedSourceUs >= 0L && sourceUs < lastDecodedSourceUs - 33_000L) {
-            AppLog.d(TAG, "Backward seek detected (${lastDecodedSourceUs}us -> ${sourceUs}us); seeking decoder")
-            decoder.seekTo(sourceUs)
-            lastDecodedSourceUs = -1L
-        }
+        if (lastDecodedSourceUs < 0L || sourceUs != lastRequestedSourceUs) {
+            lastRequestedSourceUs = sourceUs
 
-        // Only decode forward if we haven't already reached or passed sourceUs
-        if (lastDecodedSourceUs < 0L || sourceUs > lastDecodedSourceUs) {
-            var lastPtsUs = lastDecodedSourceUs
-            var attempts = 0
-            while (attempts < 240) {
-                val ptsUs = decoder.decodeNextFrame()
-                if (ptsUs < 0) break
-                lastPtsUs = ptsUs
-                if (ptsUs >= sourceUs) break
-                attempts++
+            // Detect backward seek: if target is behind last decoded position by more than ~1 frame
+            if (lastDecodedSourceUs >= 0L && sourceUs < lastDecodedSourceUs - 33_000L) {
+                AppLog.d(TAG, "Backward seek detected (${lastDecodedSourceUs}us -> ${sourceUs}us); seeking decoder")
+                decoder.seekTo(sourceUs)
+                lastDecodedSourceUs = -1L
             }
-            if (lastPtsUs >= 0L) {
-                lastDecodedSourceUs = lastPtsUs
+
+            // Only decode forward if we haven't already reached or passed sourceUs (with half-frame tolerance to prevent judder)
+            if (lastDecodedSourceUs < 0L || sourceUs > lastDecodedSourceUs - 16_000L) {
+                var lastPtsUs = lastDecodedSourceUs
+                var attempts = 0
+                while (attempts < 60) {
+                    val ptsUs = decoder.decodeNextFrame()
+                    if (ptsUs < 0) break
+                    lastPtsUs = ptsUs
+                    if (ptsUs >= sourceUs) break
+                    attempts++
+                }
+                if (lastPtsUs >= 0L) {
+                    lastDecodedSourceUs = lastPtsUs
+                }
             }
         }
 

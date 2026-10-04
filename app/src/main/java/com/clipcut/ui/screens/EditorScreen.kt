@@ -306,7 +306,26 @@ fun EditorScreen(
                     }
 
                     // Group 2: Add
-                    EditorActionButton(Icons.Default.Add, "Add") { showAddMenu = true }
+                    Box {
+                        EditorActionButton(Icons.Default.Add, "Add") { showAddMenu = true }
+                        DropdownMenu(
+                            expanded = showAddMenu,
+                            onDismissRequest = { showAddMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Import Video") },
+                                onClick = { showAddMenu = false; videoPickerLauncher.launch("video/*") }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Import Image") },
+                                onClick = { showAddMenu = false; imagePickerLauncher.launch("image/*") }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Import Audio") },
+                                onClick = { showAddMenu = false; audioPickerLauncher.launch("audio/*") }
+                            )
+                        }
+                    }
 
                     // Group 3: Edit
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -328,72 +347,53 @@ fun EditorScreen(
                     }
 
                     // Group 4: More
-                    EditorActionButton(Icons.Default.MoreVert, "More") { showMoreMenu = true }
-
-                    // Add dropdown
-                    DropdownMenu(
-                        expanded = showAddMenu,
-                        onDismissRequest = { showAddMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Import Video") },
-                            onClick = { showAddMenu = false; videoPickerLauncher.launch("video/*") }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Import Image") },
-                            onClick = { showAddMenu = false; imagePickerLauncher.launch("image/*") }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Import Audio") },
-                            onClick = { showAddMenu = false; audioPickerLauncher.launch("audio/*") }
-                        )
-                    }
-
-                    // More dropdown
-                    DropdownMenu(
-                        expanded = showMoreMenu,
-                        onDismissRequest = { showMoreMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Speed") },
-                            enabled = selectedClip != null,
-                            onClick = { showMoreMenu = false; showSpeedDialog = true }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Filters") },
-                            enabled = selectedClip != null,
-                            onClick = { showMoreMenu = false; showFilterSheet = true }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Transition") },
-                            enabled = selectedClip != null && selectedIndex > 0,
-                            onClick = { showMoreMenu = false; showTransitionDialog = true }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Crop / Aspect") },
-                            enabled = selectedClip != null,
-                            onClick = { showMoreMenu = false; showCropDialog = true }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Fade In / Out") },
-                            enabled = selectedClip != null,
-                            onClick = { showMoreMenu = false; showFadeDialog = true }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Move ◀") },
-                            enabled = selectedIndex > 0,
-                            onClick = { showMoreMenu = false; viewModel.reorderClips(selectedIndex, selectedIndex - 1) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Move ▶") },
-                            enabled = selectedIndex in 0..<clips.lastIndex,
-                            onClick = { showMoreMenu = false; viewModel.reorderClips(selectedIndex, selectedIndex + 1) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Delete Clip", color = AccentPrimary) },
-                            enabled = selectedClip != null,
-                            onClick = { showMoreMenu = false; selectedClipId?.let { viewModel.deleteClip(it) } }
-                        )
+                    Box {
+                        EditorActionButton(Icons.Default.MoreVert, "More") { showMoreMenu = true }
+                        DropdownMenu(
+                            expanded = showMoreMenu,
+                            onDismissRequest = { showMoreMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Speed") },
+                                enabled = selectedClip != null,
+                                onClick = { showMoreMenu = false; showSpeedDialog = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Filters") },
+                                enabled = selectedClip != null,
+                                onClick = { showMoreMenu = false; showFilterSheet = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Transition") },
+                                enabled = selectedClip != null && selectedIndex > 0,
+                                onClick = { showMoreMenu = false; showTransitionDialog = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Crop / Aspect") },
+                                enabled = selectedClip != null,
+                                onClick = { showMoreMenu = false; showCropDialog = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Fade In / Out") },
+                                enabled = selectedClip != null,
+                                onClick = { showMoreMenu = false; showFadeDialog = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Move ◀") },
+                                enabled = selectedIndex > 0,
+                                onClick = { showMoreMenu = false; viewModel.reorderClips(selectedIndex, selectedIndex - 1) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Move ▶") },
+                                enabled = selectedIndex in 0..<clips.lastIndex,
+                                onClick = { showMoreMenu = false; viewModel.reorderClips(selectedIndex, selectedIndex + 1) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete Clip", color = AccentPrimary) },
+                                enabled = selectedClip != null,
+                                onClick = { showMoreMenu = false; selectedClipId?.let { viewModel.deleteClip(it) } }
+                            )
+                        }
                     }
                 }
             }
