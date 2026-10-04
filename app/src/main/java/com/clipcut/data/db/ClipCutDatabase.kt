@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 class ClipCutDatabase private constructor(context: Context) :
-    SQLiteOpenHelper(context, "clipcut.db", null, 2) {
+    SQLiteOpenHelper(context, "clipcut.db", null, 3) {
 
     private val gson = Gson()
     private val _projectsFlow = MutableStateFlow<List<ProjectEntity>>(emptyList())
@@ -32,6 +32,7 @@ class ClipCutDatabase private constructor(context: Context) :
                 name TEXT NOT NULL,
                 createdTime INTEGER NOT NULL,
                 lastModifiedTime INTEGER NOT NULL,
+                aspectRatio TEXT NOT NULL DEFAULT '16:9',
                 videoClips TEXT NOT NULL,
                 audioTracks TEXT NOT NULL,
                 overlays TEXT NOT NULL,
@@ -40,7 +41,7 @@ class ClipCutDatabase private constructor(context: Context) :
                 backgroundMusicVolume REAL NOT NULL
             )
         """.trimIndent())
-        AppLog.i("ClipCutDatabase", "SQLite projects table created (v2)")
+        AppLog.i("ClipCutDatabase", "SQLite projects table created (v3)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -49,13 +50,18 @@ class ClipCutDatabase private constructor(context: Context) :
             try {
                 db.execSQL("ALTER TABLE projects ADD COLUMN pipTracks TEXT NOT NULL DEFAULT '[]'")
                 AppLog.i("ClipCutDatabase", "Added pipTracks column to projects table")
-                return
             } catch (e: Exception) {
-                AppLog.e("ClipCutDatabase", "ALTER TABLE failed, recreating table", e)
+                AppLog.e("ClipCutDatabase", "ALTER TABLE pipTracks failed", e)
             }
         }
-        db.execSQL("DROP TABLE IF EXISTS projects")
-        onCreate(db)
+        if (oldVersion < 3) {
+            try {
+                db.execSQL("ALTER TABLE projects ADD COLUMN aspectRatio TEXT NOT NULL DEFAULT '16:9'")
+                AppLog.i("ClipCutDatabase", "Added aspectRatio column to projects table")
+            } catch (e: Exception) {
+                AppLog.e("ClipCutDatabase", "ALTER TABLE aspectRatio failed", e)
+            }
+        }
     }
 
     private fun refreshFlow() {
@@ -78,11 +84,14 @@ class ClipCutDatabase private constructor(context: Context) :
         val oJson = cursor.getString(cursor.getColumnIndexOrThrow("overlays"))
         val pipIdx = cursor.getColumnIndex("pipTracks")
         val pipJson = if (pipIdx >= 0) cursor.getString(pipIdx) else "[]"
+        val arIdx = cursor.getColumnIndex("aspectRatio")
+        val arStr = if (arIdx >= 0) cursor.getString(arIdx) else "16:9"
         val origVol = cursor.getFloat(cursor.getColumnIndexOrThrow("originalVideoVolume"))
         val bgVol = cursor.getFloat(cursor.getColumnIndexOrThrow("backgroundMusicVolume"))
 
         return ProjectEntity(
             id = id, name = name, createdTime = created, lastModifiedTime = modified,
+            aspectRatio = arStr,
             videoClips = gson.fromJson(vJson, timelineType) ?: emptyList(),
             audioTracks = gson.fromJson(aJson, audioType) ?: emptyList(),
             overlays = gson.fromJson(oJson, overlayType) ?: emptyList(),
@@ -117,6 +126,7 @@ class ClipCutDatabase private constructor(context: Context) :
                     put("name", project.name)
                     put("createdTime", project.createdTime)
                     put("lastModifiedTime", project.lastModifiedTime)
+                    put("aspectRatio", project.aspectRatio)
                     put("videoClips", gson.toJson(project.videoClips))
                     put("audioTracks", gson.toJson(project.audioTracks))
                     put("overlays", gson.toJson(project.overlays))

@@ -23,12 +23,65 @@ enum class TransitionType(val displayName: String) {
     SLIDE_RIGHT("Slide Right"), DISSOLVE("Dissolve")
 }
 
-enum class AspectRatio(val label: String, val wRatio: Float, val hRatio: Float) {
-    FREE("Free", 0f, 0f),
-    R_16_9("16:9", 16f, 9f),
-    R_9_16("9:16", 9f, 16f),
-    R_1_1("1:1", 1f, 1f),
-    R_4_5("4:5", 4f, 5f)
+enum class AspectRatio(
+    val label: String,
+    val wRatio: Float,
+    val hRatio: Float,
+    val description: String = ""
+) {
+    ORIGINAL("Original", 0f, 0f, "Fit Media"),
+    R_16_9("16:9", 16f, 9f, "YouTube"),
+    R_9_16("9:16", 9f, 16f, "TikTok / Shorts"),
+    R_1_1("1:1", 1f, 1f, "Instagram"),
+    R_4_5("4:5", 4f, 5f, "Feed"),
+    R_4_3("4:3", 4f, 3f, "Standard"),
+    R_21_9("21:9", 21f, 9f, "Cinematic"),
+    FREE("Free", 0f, 0f, "Freeform");
+
+    fun calculateExportDimensions(resolution: ExportResolution): Pair<Int, Int> {
+        return when (this) {
+            R_16_9 -> when (resolution) {
+                ExportResolution.RES_720P -> Pair(1280, 720)
+                ExportResolution.RES_1080P -> Pair(1920, 1080)
+                ExportResolution.RES_4K -> Pair(3840, 2160)
+            }
+            R_9_16 -> when (resolution) {
+                ExportResolution.RES_720P -> Pair(720, 1280)
+                ExportResolution.RES_1080P -> Pair(1080, 1920)
+                ExportResolution.RES_4K -> Pair(2160, 3840)
+            }
+            R_1_1 -> when (resolution) {
+                ExportResolution.RES_720P -> Pair(720, 720)
+                ExportResolution.RES_1080P -> Pair(1080, 1080)
+                ExportResolution.RES_4K -> Pair(2160, 2160)
+            }
+            R_4_5 -> when (resolution) {
+                ExportResolution.RES_720P -> Pair(720, 900)
+                ExportResolution.RES_1080P -> Pair(1080, 1350)
+                ExportResolution.RES_4K -> Pair(2160, 2700)
+            }
+            R_4_3 -> when (resolution) {
+                ExportResolution.RES_720P -> Pair(960, 720)
+                ExportResolution.RES_1080P -> Pair(1440, 1080)
+                ExportResolution.RES_4K -> Pair(2880, 2160)
+            }
+            R_21_9 -> when (resolution) {
+                ExportResolution.RES_720P -> Pair(1680, 720)
+                ExportResolution.RES_1080P -> Pair(2560, 1080)
+                ExportResolution.RES_4K -> Pair(3840, 1648)
+            }
+            ORIGINAL, FREE -> when (resolution) {
+                ExportResolution.RES_720P -> Pair(1280, 720)
+                ExportResolution.RES_1080P -> Pair(1920, 1080)
+                ExportResolution.RES_4K -> Pair(3840, 2160)
+            }
+        }
+    }
+
+    companion object {
+        fun fromLabel(label: String): AspectRatio =
+            values().firstOrNull { it.label == label || it.name == label } ?: R_16_9
+    }
 }
 
 enum class FontFamilyOption(val label: String) {
@@ -157,6 +210,7 @@ data class Project(
     val name: String = "Untitled Video",
     val createdTime: Long = System.currentTimeMillis(),
     val lastModifiedTime: Long = System.currentTimeMillis(),
+    val aspectRatio: AspectRatio = AspectRatio.R_16_9,
     val videoClips: List<TimelineItem> = emptyList(),
     val audioTracks: List<AudioTrackItem> = emptyList(),
     val overlays: List<OverlayItem> = emptyList(),

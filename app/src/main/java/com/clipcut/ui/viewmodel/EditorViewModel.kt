@@ -1,6 +1,7 @@
 package com.clipcut.ui.viewmodel
 
 import android.app.Application
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
@@ -81,6 +82,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun selectClip(id: String?) { _selectedClipId.value = id }
 
+    fun setProjectAspectRatio(aspectRatio: AspectRatio) {
+        val current = _project.value ?: return
+        if (current.aspectRatio == aspectRatio) return
+        applyEdit(current.copy(aspectRatio = aspectRatio))
+        AppLog.i(TAG, "Set project aspect ratio to ${aspectRatio.label}")
+    }
+
     // -------------------- UNDO / REDO --------------------
 
     private fun pushHistory(project: Project) {
@@ -129,14 +137,54 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     uri = uri.toString(), mediaType = MediaType.IMAGE,
                     sourceDurationUs = dur, trimStartUs = 0L, trimEndUs = dur
                 )
-                applyEdit(current.copy(videoClips = current.videoClips + newClip))
+                val newProject = if (current.videoClips.isEmpty()) {
+                    val detectedRatio = try {
+                        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        getApplication<Application>().contentResolver.openInputStream(uri)?.use {
+                            BitmapFactory.decodeStream(it, null, opts)
+                        }
+                        if (opts.outWidth > 0 && opts.outHeight > 0) {
+                            val r = opts.outWidth.toFloat() / opts.outHeight.toFloat()
+                            when {
+                                r < 0.65f -> AspectRatio.R_9_16
+                                r in 0.7f..0.88f -> AspectRatio.R_4_5
+                                r in 0.9f..1.1f -> AspectRatio.R_1_1
+                                r in 1.25f..1.4f -> AspectRatio.R_4_3
+                                r > 2.0f -> AspectRatio.R_21_9
+                                else -> AspectRatio.R_16_9
+                            }
+                        } else null
+                    } catch (_: Throwable) { null }
+                    if (detectedRatio != null) current.copy(aspectRatio = detectedRatio, videoClips = current.videoClips + newClip)
+                    else current.copy(videoClips = current.videoClips + newClip)
+                } else {
+                    current.copy(videoClips = current.videoClips + newClip)
+                }
+                applyEdit(newProject)
                 _selectedClipId.value = newClip.id
                 return@launch
             }
             try {
                 val retriever = MediaMetadataRetriever()
+                var detectedRatio: AspectRatio? = null
                 val durationMs = try {
                     retriever.setDataSource(getApplication(), uri)
+                    val rot = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                    val w = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+                    val h = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+                    if (w > 0 && h > 0) {
+                        val effW = if (rot == 90 || rot == 270) h else w
+                        val effH = if (rot == 90 || rot == 270) w else h
+                        val r = effW.toFloat() / effH.toFloat()
+                        detectedRatio = when {
+                            r < 0.65f -> AspectRatio.R_9_16
+                            r in 0.7f..0.88f -> AspectRatio.R_4_5
+                            r in 0.9f..1.1f -> AspectRatio.R_1_1
+                            r in 1.25f..1.4f -> AspectRatio.R_4_3
+                            r > 2.0f -> AspectRatio.R_21_9
+                            else -> AspectRatio.R_16_9
+                        }
+                    }
                     retriever.extractMetadata(
                         MediaMetadataRetriever.METADATA_KEY_DURATION
                     )?.toLongOrNull() ?: 5000L
@@ -150,7 +198,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         uri = uri.toString(), mediaType = mediaType,
                         sourceDurationUs = durationUs, trimStartUs = 0L, trimEndUs = durationUs
                     )
-                    applyEdit(current.copy(videoClips = current.videoClips + newClip))
+                    val newProject = if (current.videoClips.isEmpty() && detectedRatio != null) {
+                        current.copy(aspectRatio = detectedRatio, videoClips = current.videoClips + newClip)
+                    } else {
+                        current.copy(videoClips = current.videoClips + newClip)
+                    }
+                    applyEdit(newProject)
                     _selectedClipId.value = newClip.id
                 } else if (mediaType == MediaType.AUDIO) {
                     val newTrack = AudioTrackItem(

@@ -9,7 +9,7 @@ $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
 $header = @"
 ================================================================================
 CLIP CUT - ALL SOURCE CODE BUNDLE
-Version: 1.1.3 (Build 15)
+Version: 1.1.4 (Build 16)
 Generated: $timestamp
 ================================================================================
 

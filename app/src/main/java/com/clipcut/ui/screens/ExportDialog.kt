@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.FileProvider
+import com.clipcut.core.model.AspectRatio
 import com.clipcut.core.model.ExportCodec
 import com.clipcut.core.model.ExportConfig
 import com.clipcut.core.model.ExportResolution
@@ -33,6 +34,7 @@ import java.util.Locale
 
 @Composable
 fun ExportDialog(
+    projectAspectRatio: AspectRatio = AspectRatio.R_16_9,
     exportState: ExportState,
     onStartExport: (ExportConfig) -> Unit,
     onCancelExport: () -> Unit,
@@ -40,6 +42,7 @@ fun ExportDialog(
     onViewLogsClick: () -> Unit
 ) {
     val context = LocalContext.current
+    var selectedAspectRatio by remember { mutableStateOf(projectAspectRatio) }
     var selectedRes by remember { mutableStateOf(ExportResolution.RES_1080P) }
     var selectedCodec by remember { mutableStateOf(ExportCodec.H264) }
     var frameRate by remember { mutableStateOf(30) }
@@ -69,8 +72,54 @@ fun ExportDialog(
                         )
                         Spacer(Modifier.height(16.dp))
 
+                        // Aspect Ratio Selector
+                        Text("Aspect Ratio", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.align(Alignment.Start))
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(
+                                AspectRatio.R_16_9,
+                                AspectRatio.R_9_16,
+                                AspectRatio.R_1_1,
+                                AspectRatio.R_4_5,
+                                AspectRatio.R_4_3,
+                                AspectRatio.R_21_9
+                            ).forEach { ar ->
+                                val isSelected = selectedAspectRatio == ar
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isSelected) AccentPrimary else DarkSurface)
+                                        .border(1.dp, if (isSelected) AccentPrimary else DarkSurfaceBorder, RoundedCornerShape(8.dp))
+                                        .clickable { selectedAspectRatio = ar }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = ar.label,
+                                        color = if (isSelected) TextPrimary else TextSecondary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(14.dp))
+
                         // Resolution Selector
-                        Text("Resolution", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.align(Alignment.Start))
+                        val (curW, curH) = selectedAspectRatio.calculateExportDimensions(selectedRes)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Resolution", color = TextSecondary, fontSize = 12.sp)
+                            Text("$curW × $curH", color = AccentPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                         Spacer(Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -146,10 +195,11 @@ fun ExportDialog(
 
                             Button(
                                 onClick = {
+                                    val (outW, outH) = selectedAspectRatio.calculateExportDimensions(selectedRes)
                                     val cfg = ExportConfig(
                                         resolution = selectedRes,
-                                        customWidth = selectedRes.width,
-                                        customHeight = selectedRes.height,
+                                        customWidth = outW,
+                                        customHeight = outH,
                                         frameRate = frameRate,
                                         bitRate = selectedRes.defaultBitrate,
                                         codec = selectedCodec

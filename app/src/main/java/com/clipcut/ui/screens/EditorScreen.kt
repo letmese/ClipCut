@@ -29,11 +29,17 @@ import com.clipcut.core.model.TransitionType
 import com.clipcut.core.model.AspectRatio
 import com.clipcut.core.model.CropRect
 import com.clipcut.core.model.TimelineItem
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.ui.graphics.Color
 import com.clipcut.ui.theme.*
 import com.clipcut.ui.viewmodel.EditorViewModel
 import java.util.Locale
@@ -66,6 +72,7 @@ fun EditorScreen(
     var showClipDialog by remember { mutableStateOf(false) }
     var showCropDialog by remember { mutableStateOf(false) }
     var showFadeDialog by remember { mutableStateOf(false) }
+    var showAspectRatioDialog by remember { mutableStateOf(false) }
 
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -111,6 +118,24 @@ fun EditorScreen(
                     }
                 },
                 actions = {
+                    val currentRatio = project?.aspectRatio ?: AspectRatio.R_16_9
+                    Surface(
+                        color = DarkSurfaceElevated,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .clickable { showAspectRatioDialog = true }
+                            .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(16.dp))
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(Icons.Default.AspectRatio, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(currentRatio.label, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(16.dp))
+                        }
+                    }
                     IconButton(onClick = onOpenLogs) {
                         Icon(Icons.Default.BugReport, contentDescription = "Logs", tint = AccentPrimary)
                     }
@@ -160,28 +185,57 @@ fun EditorScreen(
                         project?.let { renderer.setProject(it) }
                     }
 
-                    AndroidExternalSurface(modifier = Modifier.fillMaxSize()) {
-                        onSurface { surface, width, height ->
-                            renderer.onSurfaceCreated(surface, width, height)
-                            surface.onChanged { w, h -> renderer.onSurfaceChanged(w, h) }
-                            surface.onDestroyed { renderer.onSurfaceDestroyed() }
-                        }
-                    }
+                    val currentRatio = project?.aspectRatio ?: AspectRatio.R_16_9
+                    val targetRatioValue = if (currentRatio.wRatio > 0f && currentRatio.hRatio > 0f) {
+                        currentRatio.wRatio / currentRatio.hRatio
+                    } else 16f / 9f
 
-                    if (!isPlaying) {
-                        val isAtEnd = totalDurationUs > 0 && currentPositionUs >= (totalDurationUs - 50_000L)
-                        IconButton(
-                            onClick = { viewModel.playerManager.togglePlayPause() },
+                    BoxWithConstraints(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val maxW = maxWidth
+                        val maxH = maxHeight
+                        val boxAspect = (maxW / maxH).coerceAtLeast(0.01f)
+                        val (canvasW, canvasH) = if (boxAspect > targetRatioValue) {
+                            Pair(maxH * targetRatioValue, maxH)
+                        } else {
+                            Pair(maxW, maxW / targetRatioValue)
+                        }
+
+                        Box(
                             modifier = Modifier
-                                .size(56.dp)
-                                .background(DarkSurface.copy(alpha = 0.75f), CircleShape)
+                                .size(canvasW, canvasH)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color.Black),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = if (isAtEnd) Icons.Default.Replay else Icons.Default.PlayArrow,
-                                contentDescription = if (isAtEnd) "Replay" else "Play",
-                                tint = TextPrimary,
-                                modifier = Modifier.size(32.dp)
-                            )
+                            AndroidExternalSurface(modifier = Modifier.fillMaxSize()) {
+                                onSurface { surface, width, height ->
+                                    renderer.onSurfaceCreated(surface, width, height)
+                                    surface.onChanged { w, h -> renderer.onSurfaceChanged(w, h) }
+                                    surface.onDestroyed { renderer.onSurfaceDestroyed() }
+                                }
+                            }
+
+                            if (!isPlaying) {
+                                val isAtEnd = totalDurationUs > 0 && currentPositionUs >= (totalDurationUs - 50_000L)
+                                IconButton(
+                                    onClick = { viewModel.playerManager.togglePlayPause() },
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .background(DarkSurface.copy(alpha = 0.75f), CircleShape)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isAtEnd) Icons.Default.Replay else Icons.Default.PlayArrow,
+                                        contentDescription = if (isAtEnd) "Replay" else "Play",
+                                        tint = TextPrimary,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 } else {
@@ -354,6 +408,10 @@ fun EditorScreen(
                             onDismissRequest = { showMoreMenu = false }
                         ) {
                             DropdownMenuItem(
+                                text = { Text("Canvas Ratio (${project?.aspectRatio?.label ?: "16:9"})") },
+                                onClick = { showMoreMenu = false; showAspectRatioDialog = true }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Speed") },
                                 enabled = selectedClip != null,
                                 onClick = { showMoreMenu = false; showSpeedDialog = true }
@@ -369,7 +427,7 @@ fun EditorScreen(
                                 onClick = { showMoreMenu = false; showTransitionDialog = true }
                             )
                             DropdownMenuItem(
-                                text = { Text("Crop / Aspect") },
+                                text = { Text("Crop & Rotate") },
                                 enabled = selectedClip != null,
                                 onClick = { showMoreMenu = false; showCropDialog = true }
                             )
@@ -615,9 +673,19 @@ fun EditorScreen(
         )
     }
 
+    // Aspect Ratio dialog
+    if (showAspectRatioDialog) {
+        AspectRatioDialog(
+            currentAspectRatio = project?.aspectRatio ?: AspectRatio.R_16_9,
+            onSelect = { ar -> viewModel.setProjectAspectRatio(ar) },
+            onDismiss = { showAspectRatioDialog = false }
+        )
+    }
+
     // Export dialog
     if (showExportDialog || exportState !is com.clipcut.ui.viewmodel.ExportState.Idle) {
         ExportDialog(
+            projectAspectRatio = project?.aspectRatio ?: AspectRatio.R_16_9,
             exportState = exportState,
             onStartExport = { cfg -> viewModel.startExport(cfg) },
             onCancelExport = { viewModel.cancelExport() },
@@ -780,4 +848,123 @@ private fun EditorActionButton(
             fontWeight = FontWeight.Medium
         )
     }
+}
+
+@Composable
+private fun AspectRatioDialog(
+    currentAspectRatio: AspectRatio,
+    onSelect: (AspectRatio) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.AspectRatio, contentDescription = null, tint = AccentPrimary)
+                Spacer(Modifier.width(8.dp))
+                Text("Canvas Aspect Ratio", color = TextPrimary)
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Choose the framing aspect ratio for your video canvas and export:",
+                    color = TextSecondary,
+                    fontSize = 13.sp
+                )
+                Spacer(Modifier.height(14.dp))
+
+                val options = listOf(
+                    AspectRatio.R_16_9,
+                    AspectRatio.R_9_16,
+                    AspectRatio.R_1_1,
+                    AspectRatio.R_4_5,
+                    AspectRatio.R_4_3,
+                    AspectRatio.R_21_9
+                )
+
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(options) { ar ->
+                        val isSelected = currentAspectRatio == ar
+                        Surface(
+                            color = if (isSelected) AccentPrimary.copy(alpha = 0.2f) else DarkSurface,
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(
+                                width = if (isSelected) 2.dp else 1.dp,
+                                color = if (isSelected) AccentPrimary else DarkSurfaceBorder
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onSelect(ar)
+                                    onDismiss()
+                                }
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                                modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp)
+                            ) {
+                                // Miniature aspect frame preview
+                                val frameW = when (ar) {
+                                    AspectRatio.R_16_9 -> 32.dp
+                                    AspectRatio.R_9_16 -> 18.dp
+                                    AspectRatio.R_1_1 -> 24.dp
+                                    AspectRatio.R_4_5 -> 20.dp
+                                    AspectRatio.R_4_3 -> 28.dp
+                                    AspectRatio.R_21_9 -> 36.dp
+                                    else -> 28.dp
+                                }
+                                val frameH = when (ar) {
+                                    AspectRatio.R_16_9 -> 18.dp
+                                    AspectRatio.R_9_16 -> 32.dp
+                                    AspectRatio.R_1_1 -> 24.dp
+                                    AspectRatio.R_4_5 -> 25.dp
+                                    AspectRatio.R_4_3 -> 21.dp
+                                    AspectRatio.R_21_9 -> 15.dp
+                                    else -> 20.dp
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .size(frameW, frameH)
+                                        .border(
+                                            width = 1.5.dp,
+                                            color = if (isSelected) AccentPrimary else TextTertiary,
+                                            shape = RoundedCornerShape(2.dp)
+                                        )
+                                        .background(
+                                            if (isSelected) AccentPrimary.copy(alpha = 0.4f) else DarkSurfaceBorder.copy(alpha = 0.2f)
+                                        )
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = ar.label,
+                                    color = if (isSelected) AccentPrimary else TextPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = ar.description,
+                                    color = TextSecondary,
+                                    fontSize = 10.sp,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = TextSecondary)
+            }
+        },
+        containerColor = DarkSurfaceElevated
+    )
 }

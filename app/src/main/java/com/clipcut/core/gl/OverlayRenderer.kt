@@ -18,6 +18,13 @@ class OverlayRenderer(private val context: Context) {
     // Reused scratch matrix — one per renderer instance, not per frame
     private val scratchMvpMatrix = FloatArray(16)
 
+    // Invert V texture coordinates so Android Bitmap (top at row 0) maps correctly to GL quad (top at y=+1)
+    private val bitmapTexMatrix = FloatArray(16).apply {
+        Matrix.setIdentityM(this, 0)
+        Matrix.translateM(this, 0, 0f, 1f, 0f)
+        Matrix.scaleM(this, 0, 1f, -1f, 1f)
+    }
+
     private data class CachedTexture(
         val texId: Int,
         val width: Int,
@@ -96,6 +103,7 @@ class OverlayRenderer(private val context: Context) {
 
             quadFilter.draw(
                 texId = texture.texId,
+                texMatrix = bitmapTexMatrix,
                 mvpMatrix = scratchMvpMatrix,
                 width = viewportWidth,
                 height = viewportHeight,
