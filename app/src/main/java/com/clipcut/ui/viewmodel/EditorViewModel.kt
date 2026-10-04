@@ -116,6 +116,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     // -------------------- MEDIA --------------------
 
     fun importMedia(uri: Uri, mediaType: MediaType) {
+        try {
+            val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            getApplication<android.app.Application>().contentResolver.takePersistableUriPermission(uri, flags)
+        } catch (_: SecurityException) {}
+
         val current = _project.value ?: return
         viewModelScope.launch {
             if (mediaType == MediaType.IMAGE) {
@@ -130,11 +135,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             }
             try {
                 val retriever = MediaMetadataRetriever()
-                retriever.setDataSource(getApplication(), uri)
-                val durationMs = retriever.extractMetadata(
-                    MediaMetadataRetriever.METADATA_KEY_DURATION
-                )?.toLongOrNull() ?: 5000L
-                retriever.release()
+                val durationMs = try {
+                    retriever.setDataSource(getApplication(), uri)
+                    retriever.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_DURATION
+                    )?.toLongOrNull() ?: 5000L
+                } finally {
+                    try { retriever.release() } catch (_: Throwable) {}
+                }
                 val durationUs = durationMs * 1000L
 
                 if (mediaType == MediaType.VIDEO) {

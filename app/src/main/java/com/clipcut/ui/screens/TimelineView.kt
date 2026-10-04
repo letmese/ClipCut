@@ -53,19 +53,23 @@ private object TimelineThumbnailCache {
         return try {
             val bmp = if (clip.mediaType == MediaType.VIDEO) {
                 val retriever = MediaMetadataRetriever()
-                retriever.setDataSource(context, Uri.parse(clip.uri))
-                val frame = retriever.getFrameAtTime(clip.trimStartUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                retriever.release()
-                frame
+                try {
+                    retriever.setDataSource(context, Uri.parse(clip.uri))
+                    retriever.getFrameAtTime(clip.trimStartUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                } finally {
+                    try { retriever.release() } catch (_: Throwable) {}
+                }
             } else if (clip.mediaType == MediaType.IMAGE) {
                 context.contentResolver.openInputStream(Uri.parse(clip.uri))?.use {
                     BitmapFactory.decodeStream(it)
                 }
             } else null
 
-            if (bmp != null) {
+            if (bmp != null && !bmp.isRecycled) {
+                val h = bmp.height.coerceAtLeast(1)
+                val w = bmp.width.coerceAtLeast(1)
                 val targetH = 90
-                val targetW = ((bmp.width.toFloat() / bmp.height.toFloat()) * targetH).toInt().coerceIn(40, 200)
+                val targetW = ((w.toFloat() / h.toFloat()) * targetH).toInt().coerceIn(40, 200)
                 val scaled = Bitmap.createScaledBitmap(bmp, targetW, targetH, true)
                 if (scaled != bmp) bmp.recycle()
                 cache.put(key, scaled)
@@ -395,7 +399,7 @@ private fun RowScope.TimelineClip(
                     )
                 }
         ) {
-            thumbnail?.let { bmp ->
+            thumbnail?.takeIf { !it.isRecycled }?.let { bmp ->
                 Image(
                     bitmap = bmp.asImageBitmap(),
                     contentDescription = null,

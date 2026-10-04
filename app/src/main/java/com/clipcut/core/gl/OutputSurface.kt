@@ -1,14 +1,18 @@
 package com.clipcut.core.gl
 
 import android.graphics.SurfaceTexture
-import android.opengl.GLES11Ext
+import android.os.Handler
+import android.os.HandlerThread
 import android.view.Surface
 import com.clipcut.core.log.AppLog
 
 class OutputSurface(val textureId: Int) : SurfaceTexture.OnFrameAvailableListener {
 
+    private val callbackThread = HandlerThread("OutputSurfaceCallback").also { it.start() }
+    private val callbackHandler = Handler(callbackThread.looper)
+
     val surfaceTexture: SurfaceTexture = SurfaceTexture(textureId).apply {
-        setOnFrameAvailableListener(this@OutputSurface)
+        setOnFrameAvailableListener(this@OutputSurface, callbackHandler)
     }
     val surface: Surface = Surface(surfaceTexture)
 
@@ -17,15 +21,12 @@ class OutputSurface(val textureId: Int) : SurfaceTexture.OnFrameAvailableListene
 
     override fun onFrameAvailable(st: SurfaceTexture) {
         synchronized(frameSyncObject) {
-            if (frameAvailable) {
-                AppLog.w(TAG, "Frame available already set, frame may be dropped")
-            }
             frameAvailable = true
             frameSyncObject.notifyAll()
         }
     }
 
-    fun awaitNewImage(timeoutMs: Long = 2500): Boolean {
+    fun awaitNewImage(timeoutMs: Long = 1000): Boolean {
         synchronized(frameSyncObject) {
             while (!frameAvailable) {
                 try {
@@ -54,8 +55,13 @@ class OutputSurface(val textureId: Int) : SurfaceTexture.OnFrameAvailableListene
 
     fun release() {
         AppLog.d(TAG, "Releasing OutputSurface")
-        surface.release()
-        surfaceTexture.release()
+        try {
+            surface.release()
+            surfaceTexture.release()
+            callbackThread.quitSafely()
+        } catch (e: Exception) {
+            AppLog.e(TAG, "Error releasing OutputSurface", e)
+        }
     }
 
     companion object {

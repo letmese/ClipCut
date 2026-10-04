@@ -159,7 +159,7 @@ class GlPreviewRenderer(private val context: Context) {
                 latch.countDown()
             }
         }
-        try { latch.await() } catch (_: InterruptedException) {}
+        try { latch.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: InterruptedException) {}
         currentSurface = null
     }
 
