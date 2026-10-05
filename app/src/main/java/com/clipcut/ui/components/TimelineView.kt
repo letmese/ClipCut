@@ -230,13 +230,21 @@ fun TimelineView(
                     }
                 }
 
-                // Vertical Playhead across all tracks
+                // Vertical Playhead across all tracks with explicit height
+                val trackHeights = buildList {
+                    if (beatMarkers.isNotEmpty()) add(18.dp)
+                    add(26.dp) // timebar
+                    add(48.dp) // video
+                    add(44.dp) // audio
+                    add(44.dp) // text
+                }
+                val totalTrackHeight = trackHeights.fold(0.dp) { acc, h -> acc + h }
                 val playheadPx = with(density) { playheadDp.toPx() }
                 Box(
                     modifier = Modifier
                         .offset { IntOffset(playheadPx.toInt(), 0) }
                         .width(2.dp)
-                        .fillMaxHeight()
+                        .height(totalTrackHeight)
                         .background(TimelinePlayhead)
                 )
             }

@@ -9,16 +9,8 @@ import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES20
 import android.view.Surface
+import com.clipcut.core.log.AppLog
 
-/**
- * EglCore — minimal EGL 1.4 context+surface manager.
- *  - createWindowSurface(Surface) for MediaCodec encoder input or TextureView
- *  - createOffscreenSurface(w,h) for headless filtering passes
- *
- * FLAG_RECORDABLE is required when the EGLSurface will be consumed by
- * MediaCodec.configure(...) with a Surface; without it encoder input
- * glReadPixels / swapBuffers can silently produce black frames.
- */
 class EglCore(
     sharedContext: EGLContext? = null,
     flags: Int = FLAG_RECORDABLE
@@ -26,90 +18,98 @@ class EglCore(
     private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
     private var eglConfig: EGLConfig? = null
-    private var glVersion = -1
+    @Volatile private var released = false
 
     init {
         eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-        check(eglDisplay !== EGL14.EGL_NO_DISPLAY) { "no EGL display" }
+        check(eglDisplay != EGL14.EGL_NO_DISPLAY) { "eglGetDisplay failed" }
         val version = IntArray(2)
-        EGL14.eglInitialize(eglDisplay, version, 0, version, 1)
-        glVersion = version[0]
+        check(EGL14.eglInitialize(eglDisplay, version, 0, version, 1)) { "eglInitialize failed" }
 
         val configs = arrayOfNulls<EGLConfig>(1)
         val numConfigs = IntArray(1)
         val configAttribs = intArrayOf(
-            EGL14.EGL_RENDERABLE_TYPE, if (flags and FLAG_RECORDABLE != 0) EGL14.EGL_OPENGL_ES2_BIT else EGL14.EGL_OPENGL_ES2_BIT,
+            EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
             EGL14.EGL_RED_SIZE, 8,
             EGL14.EGL_GREEN_SIZE, 8,
             EGL14.EGL_BLUE_SIZE, 8,
             EGL14.EGL_ALPHA_SIZE, 8,
             EGL14.EGL_DEPTH_SIZE, 0,
             EGL14.EGL_STENCIL_SIZE, 0,
+            EGL_RECORDABLE_ANDROID, if (flags and FLAG_RECORDABLE != 0) 1 else 0,
             EGL14.EGL_NONE
         )
-        EGL14.eglChooseConfig(eglDisplay, configAttribs, 0, configs, 0, 1, numConfigs, 0)
+        val ok = EGL14.eglChooseConfig(eglDisplay, configAttribs, 0, configs, 0, 1, numConfigs, 0)
+        check(ok && numConfigs[0] > 0) { "eglChooseConfig returned 0 configs" }
 
-        val ctxAttribs = intArrayOf(
-            EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE
-        )
+        val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
         eglContext = EGL14.eglCreateContext(
-            eglDisplay, configs[0],
-            sharedContext ?: EGL14.EGL_NO_CONTEXT, ctxAttribs, 0
+            eglDisplay, configs[0], sharedContext ?: EGL14.EGL_NO_CONTEXT, ctxAttribs, 0
         )
-        check(eglContext !== EGL14.EGL_NO_CONTEXT) { "eglCreateContext failed" }
+        check(eglContext != EGL14.EGL_NO_CONTEXT) { "eglCreateContext failed" }
         eglConfig = configs[0]
     }
 
     fun release() {
-        if (eglDisplay !== EGL14.EGL_NO_DISPLAY) {
+        if (released) return
+        released = true
+        if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
             EGL14.eglMakeCurrent(eglDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
-            EGL14.eglDestroyContext(eglDisplay, eglContext)
+            if (eglContext != EGL14.EGL_NO_CONTEXT) EGL14.eglDestroyContext(eglDisplay, eglContext)
             EGL14.eglTerminate(eglDisplay)
         }
         eglDisplay = EGL14.EGL_NO_DISPLAY
         eglContext = EGL14.EGL_NO_CONTEXT
+        eglConfig = null
     }
 
     fun createWindowSurface(surface: Any): EGLSurface {
+        check(!released) { "EglCore already released" }
         val attrs = intArrayOf(EGL14.EGL_NONE)
-        return EGL14.eglCreateWindowSurface(eglDisplay, eglConfig, surface, attrs, 0)
+        val s = EGL14.eglCreateWindowSurface(eglDisplay, eglConfig, surface, attrs, 0)
+        check(s != null && s != EGL14.EGL_NO_SURFACE) { "eglCreateWindowSurface failed" }
+        return s
     }
 
-    fun createOffscreenSurface(width: Int, height: Int): EGLSurface {
-        val attrs = intArrayOf(EGL14.EGL_WIDTH, width, EGL14.EGL_HEIGHT, height, EGL14.EGL_NONE)
-        return EGL14.eglCreatePbufferSurface(eglDisplay, eglConfig, attrs, 0)
+    fun createOffscreenSurface(w: Int, h: Int): EGLSurface {
+        val attrs = intArrayOf(EGL14.EGL_WIDTH, w, EGL14.EGL_HEIGHT, h, EGL14.EGL_NONE)
+        val s = EGL14.eglCreatePbufferSurface(eglDisplay, eglConfig, attrs, 0)
+        check(s != null && s != EGL14.EGL_NO_SURFACE) { "eglCreatePbufferSurface failed" }
+        return s
     }
 
     fun makeCurrent(eglSurface: EGLSurface) {
+        if (released) return
         EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
     }
 
     fun makeNothingCurrent() {
+        if (released) return
         EGL14.eglMakeCurrent(eglDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, eglContext)
     }
 
     fun swapBuffers(eglSurface: EGLSurface): Boolean {
+        if (released) return false
         return EGL14.eglSwapBuffers(eglDisplay, eglSurface)
     }
 
     fun setPresentationTime(eglSurface: EGLSurface, nsecs: Long) {
+        if (released) return
         EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, nsecs)
     }
 
-    fun destroySurface(eglSurface: EGLSurface) {
+    fun destroySurface(eglSurface: EGLSurface?) {
+        if (eglSurface == null || eglSurface == EGL14.EGL_NO_SURFACE) return
+        if (released) return
         EGL14.eglDestroySurface(eglDisplay, eglSurface)
     }
 
     companion object {
         const val FLAG_RECORDABLE = 0x01
+        const val EGL_RECORDABLE_ANDROID = 0x3142
     }
 }
 
-/**
- * InputSurface — the Surface handed to MediaCodec.createInputSurface().
- * Used by VideoEncoder.  MediaCodec frames then flow through the EglCore
- * context owned by this surface.
- */
 class InputSurface(val surface: Surface) {
     private val eglCore = EglCore(flags = EglCore.FLAG_RECORDABLE)
     private val eglSurface: EGLSurface = eglCore.createWindowSurface(surface)
@@ -117,62 +117,57 @@ class InputSurface(val surface: Surface) {
     fun makeCurrent() = eglCore.makeCurrent(eglSurface)
     fun swapBuffers(): Boolean = eglCore.swapBuffers(eglSurface)
     fun setPresentationTime(nsecs: Long) = eglCore.setPresentationTime(eglSurface, nsecs)
+
     fun release() {
-        eglCore.destroySurface(eglSurface)
-        eglCore.release()
-        surface.release()
+        try { eglCore.makeNothingCurrent() } catch (_: Throwable) {}
+        try { eglCore.destroySurface(eglSurface) } catch (_: Throwable) {}
+        try { eglCore.release() } catch (_: Throwable) {}
+        try { surface.release() } catch (_: Throwable) {}
     }
 }
 
-/**
- * OutputSurface — receives decoded frames from MediaCodec via the
- * SurfaceTexture / SurfaceTexture.OnFrameAvailableListener callback.
- * The texture is created by an external caller and passed in.
- */
 class OutputSurface(val textureId: Int) : SurfaceTexture.OnFrameAvailableListener {
     private val surfaceTexture = SurfaceTexture(textureId).also { it.setOnFrameAvailableListener(this) }
     val surface: Surface = Surface(surfaceTexture)
 
     @Volatile private var frameAvailable = false
+    @Volatile private var released = false
     private val lock = Object()
 
     override fun onFrameAvailable(st: SurfaceTexture) {
-        synchronized(lock) { frameAvailable = true; lock.notify() }
+        synchronized(lock) { frameAvailable = true; lock.notifyAll() }
     }
 
-    /** Block until a new frame is available, then update its texture. */
     fun awaitNewImage(timeoutMs: Long = 1000): Boolean {
         synchronized(lock) {
+            if (released) return false
             if (!frameAvailable) {
-                try { lock.wait(timeoutMs) } catch (_: InterruptedException) {}
+                try { lock.wait(timeoutMs) } catch (_: InterruptedException) { return false }
             }
-            if (!frameAvailable) return false
+            if (!frameAvailable || released) return false
             frameAvailable = false
         }
         return try {
             surfaceTexture.updateTexImage()
             true
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            AppLog.w("OutputSurface", "updateTexImage failed: ${t.message}")
             false
         }
     }
 
-    fun getTransformMatrix(mtx: FloatArray) = surfaceTexture.getTransformMatrix(mtx)
+    fun getTransformMatrix(mtx: FloatArray) {
+        try { surfaceTexture.getTransformMatrix(mtx) } catch (_: Throwable) {}
+    }
 
     fun release() {
-        try {
-            surface.release()
-        } catch (_: Throwable) {}
-        try {
-            surfaceTexture.release()
-        } catch (_: Throwable) {}
+        synchronized(lock) { released = true; lock.notifyAll() }
+        try { surfaceTexture.setOnFrameAvailableListener(null) } catch (_: Throwable) {}
+        try { surface.release() } catch (_: Throwable) {}
+        try { surfaceTexture.release() } catch (_: Throwable) {}
     }
 }
 
-/**
- * FramebufferTexture — an FBO with a single RGBA color attachment.
- * Used by PipelineRenderer.applyPostProcessing for multi-pass filtering.
- */
 class FramebufferTexture(val width: Int, val height: Int) {
     val textureId: Int = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
     private var fboName = -1
@@ -181,9 +176,21 @@ class FramebufferTexture(val width: Int, val height: Int) {
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId)
         GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, width, height, 0,
             GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         val fbo = IntArray(1)
         GLES20.glGenFramebuffers(1, fbo, 0)
         fboName = fbo[0]
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fboName)
+        GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0,
+            GLES20.GL_TEXTURE_2D, textureId, 0)
+        val status = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)
+        if (status != GLES20.GL_FRAMEBUFFER_COMPLETE) {
+            AppLog.e("FramebufferTexture", "FBO incomplete: 0x${Integer.toHexString(status)}")
+        }
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
     }
 
     fun bind() {
@@ -192,12 +199,13 @@ class FramebufferTexture(val width: Int, val height: Int) {
             GLES20.GL_TEXTURE_2D, textureId, 0)
     }
 
-    fun unbind() {
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-    }
+    fun unbind() { GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0) }
 
     fun release() {
-        GLES20.glDeleteFramebuffers(1, intArrayOf(fboName), 0)
+        if (fboName != -1) {
+            GLES20.glDeleteFramebuffers(1, intArrayOf(fboName), 0)
+            fboName = -1
+        }
         GLES20.glDeleteTextures(1, intArrayOf(textureId), 0)
     }
 }

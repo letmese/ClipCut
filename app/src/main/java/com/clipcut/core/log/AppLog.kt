@@ -112,7 +112,11 @@ object AppLog {
         val file = getLogFile(context)
         flush()
         try {
-            val uri = Uri.fromFile(file)
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
             val send = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_STREAM, uri)

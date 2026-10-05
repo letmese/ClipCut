@@ -15,6 +15,7 @@ import com.clipcut.core.model.Project
 import com.clipcut.core.model.SpeedRamp
 import com.clipcut.core.model.TimelineItem
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * VideoDecoder — wraps MediaCodec/MediaExtractor in decode-to-surface mode.
@@ -45,17 +46,17 @@ class VideoDecoder(context: Context, clip: TimelineItem, outputSurface: OutputSu
         videoHeight = trackFormat.getInteger(MediaFormat.KEY_HEIGHT)
         videoRotation = if (Build.VERSION.SDK_INT >= 23) trackFormat.getInteger("rotation-degrees", 0) else 0
         durationUs = if (trackFormat.containsKey(MediaFormat.KEY_DURATION)) trackFormat.getLong(MediaFormat.KEY_DURATION) else 0L
-        // We stash the format for use by init()
         _cachedFormat = trackFormat
     }
 
     fun init() {
         val mime = _cachedFormat.getString(MediaFormat.KEY_MIME) ?: "video/avc"
-        val format = MediaFormat.createVideoFormat(mime, videoWidth, videoHeight)
+        // Use the format MediaExtractor provided — preserves CSD (SPS/PPS) & key parameters
+        val format = _cachedFormat
         decoder = MediaCodec.createDecoderByType(mime)
         outputSurface?.surface?.let { decoder?.configure(format, it, null, 0) }
         decoder?.start()
-        AppLog.d("VideoDecoder", "init ${videoWidth}x${videoHeight} dur=${durationUs}")
+        AppLog.d("VideoDecoder", "init ${videoWidth}x${videoHeight} rot=$videoRotation dur=$durationUs")
     }
 
     fun seekTo(targetUs: Long) {
@@ -85,7 +86,6 @@ class VideoDecoder(context: Context, clip: TimelineItem, outputSurface: OutputSu
                 if (render) return info.presentationTimeUs
             }
             if (outIdx == MediaCodec.INFO_TRY_AGAIN_LATER && inIdx < 0) {
-                // No buffer ready and no input — give a chance for timeout
                 Thread.sleep(2)
                 continue
             }
@@ -159,14 +159,10 @@ class VideoEncoder(private val config: ExportConfig) {
 }
 
 /**
- * AudioProcessor — minimal PCM mixer:
- *  1. For each AudioTrackItem in Project, decode via MediaExtractor+MediaCodec
- *     to PCM (16-bit).
- *  2. Mix with originalVideoVolume * clip.volume, applying fade in/out.
+ * AudioProcessor — PCM mixer with correct little-endian decoding and chunked buffer feed:
+ *  1. For each AudioTrackItem in Project, decode via MediaExtractor+MediaCodec to PCM (16-bit).
+ *  2. Mix with originalVideoVolume * clip.volume, applying volume scaling in Little-Endian.
  *  3. Re-encode via MediaCodec AAC into the muxer.
- *
- * This build implements the structure; the per-track decode/mix loop is
- * intentionally conservative to keep the file compilable and dependency-free.
  */
 class AudioProcessor(
     private val context: Context,
@@ -196,7 +192,6 @@ class AudioProcessor(
         if (tracksToMix.isEmpty()) {
             onProgress(1f); return
         }
-        // Setup AAC encoder
         val encMime = "audio/mp4a-latm"
         val encFmt = MediaFormat.createAudioFormat(encMime, exportConfig.audioSampleRate, exportConfig.audioChannels).apply {
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
@@ -207,7 +202,6 @@ class AudioProcessor(
         enc.configure(encFmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         enc.start()
 
-        // Per-track decode loop
         var processedUs = 0L
         for (track in tracksToMix) {
             if (track.uri.isEmpty()) continue
@@ -221,7 +215,7 @@ class AudioProcessor(
                     if (mime.startsWith("audio/")) { ext.selectTrack(i); audioFmt = fmt; audioTrackIdx = i; break }
                 }
                 if (audioFmt != null) {
-                    val dec = MediaCodec.createDecoderByType(audioFmt!!.getString(MediaFormat.KEY_MIME)!!)
+                    val dec = MediaCodec.createDecoderByType(audioFmt.getString(MediaFormat.KEY_MIME)!!)
                     dec.configure(audioFmt, null, null, 0)
                     dec.start()
                     drainAudioLoop(ext, dec, enc, muxerWrapper, track, totalDurationUs)
@@ -247,7 +241,6 @@ class AudioProcessor(
         totalUs: Long
     ) {
         val info = MediaCodec.BufferInfo()
-        val kUs = 1_000_000L
         while (true) {
             val inIdx = dec.dequeueInputBuffer(10_000)
             if (inIdx >= 0) {
@@ -265,9 +258,7 @@ class AudioProcessor(
                 val buf = dec.getOutputBuffer(outIdx) ?: continue
                 if (info.size > 0) {
                     buf.position(info.offset); buf.limit(info.offset + info.size)
-                    // Apply volume by scaling 16-bit PCM samples
                     applyVolume(buf, track.volume)
-                    // Encode to AAC
                     feedToEncoder(enc, muxer, buf, info.presentationTimeUs)
                 }
                 dec.releaseOutputBuffer(outIdx, false)
@@ -277,27 +268,45 @@ class AudioProcessor(
     }
 
     private fun applyVolume(buf: ByteBuffer, vol: Float) {
-        buf.mark()
-        val tmp = ByteBuffer.allocate(buf.remaining()).order(buf.order())
-        tmp.put(buf.duplicate()).flip()
-        buf.reset()
-        while (tmp.hasRemaining()) {
-            val s = tmp.short.toInt()
+        if (vol == 1.0f) return
+        val savedPos = buf.position()
+        val savedLimit = buf.limit()
+        val savedOrder = buf.order()
+        buf.order(ByteOrder.LITTLE_ENDIAN)
+        val shorts = buf.asShortBuffer()
+        val n = shorts.remaining()
+        for (i in 0 until n) {
+            val s = shorts.get(i).toInt()
             val scaled = (s * vol).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
-            buf.putShort(scaled.toShort())
+            shorts.put(i, scaled.toShort())
         }
+        buf.order(savedOrder)
+        buf.position(savedPos)
+        buf.limit(savedLimit)
     }
 
     private var encFormatChanged = false
     private fun feedToEncoder(enc: MediaCodec, muxer: MediaMuxerWrapper, input: ByteBuffer, ptsUs: Long) {
-        val inIdx = enc.dequeueInputBuffer(10_000)
-        if (inIdx >= 0) {
-            val out = enc.getInputBuffer(inIdx)!!
+        var consumed = 0
+        val src = input.duplicate()
+        while (src.hasRemaining()) {
+            val inIdx = enc.dequeueInputBuffer(10_000)
+            if (inIdx < 0) {
+                drainAudioEnc(enc, muxer, endOfStream = false)
+                continue
+            }
+            val out = enc.getInputBuffer(inIdx) ?: continue
             out.clear()
-            out.put(input.duplicate())
-            enc.queueInputBuffer(inIdx, 0, out.position(), ptsUs, 0)
+            val chunk = minOf(out.remaining(), src.remaining())
+            val slice = src.duplicate()
+            slice.limit(slice.position() + chunk)
+            out.put(slice)
+            val pts = ptsUs + (consumed * 1_000_000L / (exportConfig.audioSampleRate.toLong() * 2L * 2L))
+            enc.queueInputBuffer(inIdx, 0, chunk, pts, 0)
+            src.position(src.position() + chunk)
+            consumed += chunk
+            drainAudioEnc(enc, muxer, endOfStream = false)
         }
-        drainAudioEnc(enc, muxer, endOfStream = false)
     }
 
     private fun drainAudioEnc(enc: MediaCodec, muxer: MediaMuxerWrapper?, endOfStream: Boolean) {
@@ -349,7 +358,7 @@ class ReverseDecoder(
             if (mime.startsWith("video/")) { ext.selectTrack(i); format = fmt; break }
         }
         if (format == null) { ext.release(); return }
-        val mime = format!!.getString(MediaFormat.KEY_MIME)!!
+        val mime = format.getString(MediaFormat.KEY_MIME)!!
         val dec = MediaCodec.createDecoderByType(mime)
         dec.configure(format, null, null, 0)
         dec.start()

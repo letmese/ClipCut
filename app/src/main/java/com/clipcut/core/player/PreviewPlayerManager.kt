@@ -1,6 +1,8 @@
 package com.clipcut.core.player
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -13,12 +15,6 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * PreviewPlayerManager — wraps a single ExoPlayer instance for preview.
- *
- * The timeline (Project) is a sequence of clips joined by transitions; for
- * preview we currently concatenate all VIDEO clips into one MediaItem via
- * concatenation if Media3 supports it. For simplicity in this build, we
- * render the first clip; full multi-clip preview is handled by the
- * GlPreviewRenderer which iterates clips at the GL level using VideoDecoder.
  *
  * Exposes the API surface required by EditorViewModel:
  *   isPlaying, currentPositionUs, totalDurationUs, isBuffering
@@ -42,7 +38,7 @@ class PreviewPlayerManager(private val context: Context) {
 
     var onSeek: ((Long) -> Unit)? = null
 
-    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     init {
         initialize()
@@ -52,16 +48,16 @@ class PreviewPlayerManager(private val context: Context) {
                 if (p != null && _isPlaying.value) {
                     _positionUs.value = p.currentPosition * 1000L
                 }
-                kotlinx.coroutines.delay(16)
+                delay(16)
             }
         }
     }
 
     private fun runOnMainThread(block: () -> Unit) {
-        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
             block()
         } else {
-            android.os.Handler(android.os.Looper.getMainLooper()).post { block() }
+            Handler(Looper.getMainLooper()).post { block() }
         }
     }
 
@@ -70,8 +66,10 @@ class PreviewPlayerManager(private val context: Context) {
     }
 
     fun initialize(): ExoPlayer {
-        if (player != null) return player!!
-        val p = ExoPlayer.Builder(context).build()
+        player?.let { return it }
+        val p = ExoPlayer.Builder(context)
+            .setLooper(Looper.getMainLooper())
+            .build()
         p.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { _isPlaying.value = playing }
             override fun onPlaybackStateChanged(state: Int) {
@@ -134,8 +132,9 @@ class PreviewPlayerManager(private val context: Context) {
 
     fun release() = runOnMainThread {
         scope.cancel()
-        player?.release()
+        try { player?.release() } catch (t: Throwable) { AppLog.w(TAG, "player.release", t) }
         player = null
+        _isPlaying.value = false
     }
 
     companion object { private const val TAG = "PreviewPlayerManager" }

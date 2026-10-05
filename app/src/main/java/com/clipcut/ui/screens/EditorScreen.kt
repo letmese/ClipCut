@@ -105,6 +105,13 @@ fun EditorScreen(
 
     LaunchedEffect(projectId) { viewModel.loadProject(projectId) }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.playerManager.pause()
+            viewModel.previewRenderer.pause()
+        }
+    }
+
     Scaffold(
         containerColor = DarkBackground,
         topBar = {
@@ -151,15 +158,19 @@ fun EditorScreen(
                     )
                 } else {
                     AndroidExternalSurface(
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        isOpaque = true
                     ) {
                         onSurface { surface, width, height ->
+                            if (width <= 0 || height <= 0) return@onSurface
                             viewModel.previewRenderer.onSurfaceCreated(surface, width, height)
                             surface.onDestroyed {
                                 viewModel.previewRenderer.onSurfaceDestroyed()
                             }
                             surface.onChanged { newWidth, newHeight ->
-                                viewModel.previewRenderer.onSurfaceChanged(newWidth, newHeight)
+                                if (newWidth > 0 && newHeight > 0) {
+                                    viewModel.previewRenderer.onSurfaceChanged(newWidth, newHeight)
+                                }
                             }
                         }
                     }

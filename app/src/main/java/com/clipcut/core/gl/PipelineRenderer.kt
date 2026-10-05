@@ -12,19 +12,12 @@ import com.clipcut.core.model.TimelineItem
 
 /**
  * PipelineRenderer — the orchestration glue that runs a clip through:
- *   1. ColorAdjustFilter (with crop/flip/rotation)
+ *   1. ColorAdjustFilter (with crop/flip/rotation in UV space)
  *   2. LutFilter (optional)
  *   3. MaskFilter (optional)
  *   4. ChromaKeyFilter (optional)
  *   5. EffectFilter (optional, from EffectRegistry)
  *   6. BlendFilter against a base layer (for PiP compositing)
- *
- * For each clip in EditorViewModel the GlPreviewRenderer calls renderFrame()
- * with the OES texture produced by ExoPlayer / VideoDecoder, and then for
- * per-clip post-processing applyPostProcessing().
- *
- * renderFrame is hot-path (60fps on preview). We allocate a single FBO once
- * and reuse it across clips via resizeIfNeeded().
  */
 class PipelineRenderer(private val context: Context) {
     private var width: Int = -1
@@ -91,8 +84,18 @@ class PipelineRenderer(private val context: Context) {
     ) {
         if (!initialised) return
 
-        val mvp = FloatArray(16)
-        Matrix.setRotateM(mvp, 0, rotationDegrees.toFloat(), 0f, 0f, 1f)
+        // Compute UV space rotation to preserve proper bounds
+        val rotTex = FloatArray(16).also {
+            Matrix.setIdentityM(it, 0)
+            when (rotationDegrees) {
+                90 -> { it[0] = 0f; it[1] = -1f; it[4] = 1f; it[5] = 0f; it[12] = 0f; it[13] = 1f }
+                180 -> { it[0] = -1f; it[5] = -1f; it[12] = 1f; it[13] = 1f }
+                270 -> { it[0] = 0f; it[1] = 1f; it[4] = -1f; it[5] = 0f; it[12] = 1f; it[13] = 0f }
+            }
+        }
+        val combinedTex = FloatArray(16)
+        Matrix.multiplyMM(combinedTex, 0, rotTex, 0, sourceTexMatrix, 0)
+
         colorAdjust.updateConfig(filterConfig)
         colorAdjust.updateCropFlip(cropRect, flipH, flipV)
 
@@ -102,7 +105,7 @@ class PipelineRenderer(private val context: Context) {
             GLES20.glViewport(0, 0, width, height)
             GLES20.glClearColor(0f, 0f, 0f, 1f)
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-            oesFilter?.draw(sourceTexId, sourceTexMatrix, GlUtil.IDENTITY_MATRIX, width, height, android.opengl.GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
+            oesFilter?.draw(sourceTexId, combinedTex, GlUtil.IDENTITY_MATRIX, width, height, android.opengl.GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
             fbo?.unbind()
 
             val f2 = fbo2
@@ -111,7 +114,7 @@ class PipelineRenderer(private val context: Context) {
                 GLES20.glViewport(0, 0, width, height)
                 GLES20.glClearColor(0f, 0f, 0f, 1f)
                 GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-                colorAdjust.draw(fbo?.textureId ?: sourceTexId, GlUtil.IDENTITY_MATRIX, mvp, width, height)
+                colorAdjust.draw(fbo?.textureId ?: sourceTexId, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
                 f2.unbind()
                 currentTex = f2.textureId
             } else {
@@ -122,7 +125,7 @@ class PipelineRenderer(private val context: Context) {
             GLES20.glViewport(0, 0, width, height)
             GLES20.glClearColor(0f, 0f, 0f, 1f)
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-            colorAdjust.draw(sourceTexId, sourceTexMatrix, mvp, width, height)
+            colorAdjust.draw(sourceTexId, combinedTex, GlUtil.IDENTITY_MATRIX, width, height)
             fbo?.unbind()
             currentTex = fbo?.textureId ?: sourceTexId
         }
@@ -150,7 +153,6 @@ class PipelineRenderer(private val context: Context) {
             currentTex = target?.textureId ?: currentTex
         }
 
-        // Step 4: Chroma key
         // Step 4: Chroma key
         if (chromaKeyColor != null) {
             val target = nextTarget()

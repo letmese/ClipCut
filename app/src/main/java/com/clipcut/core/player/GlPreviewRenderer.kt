@@ -18,25 +18,16 @@ import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.Project
 import com.clipcut.core.model.TimelineItem
 
-/**
- * GlPreviewRenderer — bridges the GLSurfaceView to the PipelineRenderer.
- *
- *  positionProvider: lambda returning current timeline ptsUs (used for keyframe
- *                    interpolation and overlay enablement).  EditorScreen sets
- *                    this to a lambda backed by PreviewPlayerManager.currentPositionUs.
- *
- *  setProject: caches the project so onDrawFrame can re-resolve overlays and
- *              push them to PipelineRenderer for each frame.
- *
- *  seekTo: forces a re-render of the cached clip at the seeked position.
- */
 class GlPreviewRenderer(private val context: Context) {
+
     private var pipeline: PipelineRenderer? = null
-    private var project: Project? = null
-    private var surface: Surface? = null
-    private var viewportWidth: Int = 0
-    private var viewportHeight: Int = 0
-    private var paused: Boolean = false
+    @Volatile private var project: Project? = null
+    @Volatile private var viewportWidth = 0
+    @Volatile private var viewportHeight = 0
+    @Volatile private var paused = false
+    @Volatile private var requestResize = false
+    @Volatile private var resizeW = 0
+    @Volatile private var resizeH = 0
 
     var positionProvider: (() -> Long)? = null
     var playerManager: PreviewPlayerManager? = null
@@ -46,128 +37,153 @@ class GlPreviewRenderer(private val context: Context) {
     private var outputSurface: OutputSurface? = null
     private var overlayRenderer: OverlayRenderer? = null
     private var overlayFilter: GlFilter? = null
-    private var oesTextureId: Int = -1
+    private var oesTextureId = -1
 
     private val texMatrix = FloatArray(16)
     @Volatile private var isRunning = false
     @Volatile private var isDirty = true
     @Volatile private var hasReceivedFirstFrame = false
+
+    private val threadLock = Any()
     private var renderThread: Thread? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
     fun onSurfaceCreated(surface: Surface, width: Int, height: Int) {
-        this.surface = surface
-        this.viewportWidth = width
-        this.viewportHeight = height
-        this.hasReceivedFirstFrame = false
-        AppLog.d(TAG, "onSurfaceCreated ${width}x${height}")
-
-        stopRenderThread()
-        isRunning = true
-        renderThread = Thread({
-            runRenderLoop(surface, width, height)
-        }, "GlPreviewRenderThread").apply { start() }
+        synchronized(threadLock) {
+            stopRenderThreadLocked()
+            this.viewportWidth = width
+            this.viewportHeight = height
+            hasReceivedFirstFrame = false
+            isDirty = true
+            isRunning = true
+            renderThread = Thread({ runRenderLoop(surface, width, height) }, "GlPreviewRenderThread")
+                .also { it.start() }
+        }
     }
 
     fun onSurfaceChanged(width: Int, height: Int) {
-        this.viewportWidth = width
-        this.viewportHeight = height
-        pipeline?.resizeIfNeeded(width, height)
+        if (width <= 0 || height <= 0) return
+        viewportWidth = width
+        viewportHeight = height
+        resizeW = width; resizeH = height; requestResize = true
         isDirty = true
-        AppLog.d(TAG, "onSurfaceChanged ${width}x${height}")
     }
 
     fun onSurfaceDestroyed() {
+        synchronized(threadLock) { stopRenderThreadLocked() }
         if (Looper.myLooper() == Looper.getMainLooper()) {
             playerManager?.setVideoSurface(null)
         } else {
             mainHandler.post { playerManager?.setVideoSurface(null) }
         }
-        stopRenderThread()
-        surface = null
     }
 
-    private fun stopRenderThread() {
+    private fun stopRenderThreadLocked() {
+        val t = renderThread ?: return
         isRunning = false
-        try {
-            renderThread?.join(500)
-        } catch (_: InterruptedException) {}
+        try { t.join(1500) } catch (_: InterruptedException) {}
+        if (t.isAlive) {
+            AppLog.w(TAG, "render thread did not exit in 1500ms")
+        }
         renderThread = null
     }
 
-    private fun runRenderLoop(surface: Surface, initialWidth: Int, initialHeight: Int) {
+    private fun runRenderLoop(windowSurface: Surface, initialW: Int, initialH: Int) {
+        var core: EglCore? = null
+        var eSurface: EGLSurface? = null
+        var outSurface: OutputSurface? = null
+        var pipe: PipelineRenderer? = null
+        var over: OverlayRenderer? = null
+        var filter: GlFilter? = null
+        var oesTex = -1
+
         try {
-            val core = EglCore(null, EglCore.FLAG_RECORDABLE)
+            core = EglCore(null, EglCore.FLAG_RECORDABLE)
             eglCore = core
-            val eSurface = core.createWindowSurface(surface)
+            eSurface = core.createWindowSurface(windowSurface)
             eglSurface = eSurface
             core.makeCurrent(eSurface)
 
-            val oesId = GlUtil.generateTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
-            oesTextureId = oesId
-            val outSurface = OutputSurface(oesId)
+            oesTex = GlUtil.generateTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
+            oesTextureId = oesTex
+            outSurface = OutputSurface(oesTex)
             outputSurface = outSurface
 
-            mainHandler.post {
-                playerManager?.setVideoSurface(outSurface.surface)
-            }
+            val os = outSurface.surface
+            mainHandler.post { playerManager?.setVideoSurface(os) }
 
-            val pipe = PipelineRenderer(context).also { it.init(initialWidth, initialHeight) }
+            pipe = PipelineRenderer(context).also { it.init(initialW, initialH) }
             pipeline = pipe
 
-            val over = OverlayRenderer(context).also { it.init() }
+            over = OverlayRenderer(context).also { it.init() }
             overlayRenderer = over
 
-            val filter = PassthroughFilter().also { it.init() }
+            filter = PassthroughFilter().also { it.init() }
             overlayFilter = filter
 
             while (isRunning) {
-                if (!paused) {
-                    onDrawFrame()
+                if (requestResize) {
+                    requestResize = false
+                    pipe.resizeIfNeeded(resizeW, resizeH)
                 }
-                Thread.sleep(16)
+                if (!paused) {
+                    renderOnce(core, eSurface, outSurface, pipe, over, filter, oesTex)
+                } else {
+                    Thread.sleep(16)
+                }
             }
         } catch (t: Throwable) {
-            AppLog.e(TAG, "Render thread exception: ${t.message}", t)
+            AppLog.e(TAG, "Render thread fatal: ${t.message}", t)
         } finally {
-            cleanUpGl()
+            mainHandler.post { playerManager?.setVideoSurface(null) }
+            try { filter?.release() } catch (_: Throwable) {}
+            try { over?.release() } catch (_: Throwable) {}
+            try { pipe?.release() } catch (_: Throwable) {}
+            try { outSurface?.release() } catch (_: Throwable) {}
+            if (oesTex != -1) {
+                try { GLES20.glDeleteTextures(1, intArrayOf(oesTex), 0) } catch (_: Throwable) {}
+            }
+            try { core?.makeNothingCurrent() } catch (_: Throwable) {}
+            try { core?.destroySurface(eSurface) } catch (_: Throwable) {}
+            try { core?.release() } catch (_: Throwable) {}
+            eglCore = null; eglSurface = null; outputSurface = null
+            pipeline = null; overlayRenderer = null; overlayFilter = null
+            oesTextureId = -1
         }
     }
 
-    fun onDrawFrame() {
-        val core = eglCore ?: return
-        val eSurface = eglSurface ?: return
-        val outSurface = outputSurface ?: return
-        val pipe = pipeline ?: return
-
-        val newFrame = outSurface.awaitNewImage(10)
-        if (newFrame) {
-            hasReceivedFirstFrame = true
-        }
-        if (!newFrame && !isDirty) {
-            return
-        }
+    private fun renderOnce(
+        core: EglCore, eSurface: EGLSurface, out: OutputSurface,
+        pipe: PipelineRenderer, over: OverlayRenderer, filter: GlFilter, oesTex: Int
+    ) {
+        val newFrame = out.awaitNewImage(10)
+        if (newFrame) hasReceivedFirstFrame = true
+        if (!newFrame && !isDirty) { Thread.sleep(8); return }
         isDirty = false
 
+        val w = viewportWidth.coerceAtLeast(1)
+        val h = viewportHeight.coerceAtLeast(1)
+
         if (!hasReceivedFirstFrame) {
-            GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
+            GLES20.glViewport(0, 0, w, h)
             GLES20.glClearColor(0.08f, 0.08f, 0.08f, 1f)
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
             core.swapBuffers(eSurface)
+            Thread.sleep(16)
             return
         }
 
-        outSurface.getTransformMatrix(texMatrix)
+        out.getTransformMatrix(texMatrix)
         val posUs = positionProvider?.invoke() ?: 0L
         val clip = findClipAt(posUs)
 
-        GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
+        GLES20.glViewport(0, 0, w, h)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
         if (clip != null) {
             pipe.applyPostProcessing(
-                sourceTexId = oesTextureId,
+                sourceTexId = oesTex,
                 sourceTexMatrix = texMatrix,
                 sourceIsOes = true,
                 mvpMatrix = GlUtil.IDENTITY_MATRIX,
@@ -178,17 +194,18 @@ class GlPreviewRenderer(private val context: Context) {
 
         val proj = project
         if (proj != null && proj.overlays.isNotEmpty()) {
-            overlayRenderer?.renderOverlays(proj.overlays, posUs, viewportWidth, viewportHeight)
-            val overId = overlayRenderer?.textureId ?: -1
+            over.renderOverlays(proj.overlays, posUs, w, h)
+            val overId = over.textureId
             if (overId != -1) {
                 GLES20.glEnable(GLES20.GL_BLEND)
                 GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-                overlayFilter?.draw(overId, GlUtil.FLIP_Y_MATRIX, GlUtil.IDENTITY_MATRIX, viewportWidth, viewportHeight)
+                filter.draw(overId, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, w, h)
                 GLES20.glDisable(GLES20.GL_BLEND)
             }
         }
 
         core.swapBuffers(eSurface)
+        Thread.sleep(16)
     }
 
     private fun findClipAt(timelineUs: Long): TimelineItem? {
@@ -203,62 +220,11 @@ class GlPreviewRenderer(private val context: Context) {
         return clips.lastOrNull()
     }
 
-    private fun cleanUpGl() {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            playerManager?.setVideoSurface(null)
-        } else {
-            mainHandler.post {
-                playerManager?.setVideoSurface(null)
-            }
-        }
-        try {
-            overlayFilter?.release()
-        } catch (_: Throwable) {}
-        overlayFilter = null
-        try {
-            overlayRenderer?.release()
-        } catch (_: Throwable) {}
-        overlayRenderer = null
-        try {
-            pipeline?.release()
-        } catch (_: Throwable) {}
-        pipeline = null
-        try {
-            outputSurface?.release()
-        } catch (_: Throwable) {}
-        outputSurface = null
-        if (oesTextureId != -1) {
-            try {
-                GLES20.glDeleteTextures(1, intArrayOf(oesTextureId), 0)
-            } catch (_: Throwable) {}
-            oesTextureId = -1
-        }
-        eglSurface?.let {
-            try { eglCore?.destroySurface(it) } catch (_: Throwable) {}
-        }
-        eglSurface = null
-        try {
-            eglCore?.release()
-        } catch (_: Throwable) {}
-        eglCore = null
-    }
-
-    fun setProject(project: Project) {
-        this.project = project
-        isDirty = true
-        AppLog.d(TAG, "setProject: ${project.videoClips.size} clips")
-    }
-
+    fun setProject(project: Project) { this.project = project; isDirty = true }
     fun pause() { paused = true }
     fun resume() { paused = false; isDirty = true }
-
-    fun seekTo(timelineUs: Long) {
-        isDirty = true
-    }
-
-    fun release() {
-        onSurfaceDestroyed()
-    }
+    fun seekTo(@Suppress("UNUSED_PARAMETER") timelineUs: Long) { isDirty = true }
+    fun release() { onSurfaceDestroyed() }
 
     companion object { private const val TAG = "GlPreviewRenderer" }
 }

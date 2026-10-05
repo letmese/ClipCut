@@ -1,6 +1,7 @@
 package com.clipcut.core.gl
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -8,23 +9,22 @@ import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.opengl.GLES20
 import android.opengl.GLUtils
+import com.clipcut.core.model.FontFamilyOption
 import com.clipcut.core.model.OverlayItem
 import com.clipcut.core.model.TextAnimation
 
 /**
- * OverlayRenderer — paints overlays (text + bitmap) into an offscreen
- * SurfaceBitmap then uploads it as a GL texture. PipelineRenderer composites
- * that texture on top of the clip's frame.
- *
- * The current implementation uses the android.graphics Canvas approach
- * (rasterise to a Bitmap, glTexImage2D), which is simple and accurate.
- * Per-frame keyframe interpolation is computed on the CPU side.
+ * OverlayRenderer — paints overlays (text + styling) into a reusable
+ * Bitmap then uploads it as a GL texture.
  */
 class OverlayRenderer(private val context: Context) {
     private var width: Int = 1920
     private var height: Int = 1080
     private var overlayTexId: Int = -1
     val textureId: Int get() = overlayTexId
+
+    private var reusableBitmap: Bitmap? = null
+    private var reusableCanvas: Canvas? = null
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -46,15 +46,22 @@ class OverlayRenderer(private val context: Context) {
         viewportWidth: Int,
         viewportHeight: Int
     ) {
-        if (overlays.isEmpty()) return
-        width = viewportWidth; height = viewportHeight
+        if (overlays.isEmpty() || overlayTexId == -1) return
 
-        val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
+        if (width != viewportWidth || height != viewportHeight || reusableBitmap == null) {
+            width = viewportWidth.coerceAtLeast(1)
+            height = viewportHeight.coerceAtLeast(1)
+            reusableBitmap?.recycle()
+            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            reusableBitmap = bmp
+            reusableCanvas = Canvas(bmp)
+        }
+        val bmp = reusableBitmap ?: return
+        val canvas = reusableCanvas ?: return
+
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
         overlays.filter { currentPtsUs in it.timelineStartUs..it.timelineEndUs }.forEach { o ->
-            // Compute interpolated transform via keyframes
             val (x, y, scale, rot) = interpolatedTransform(o, currentPtsUs)
             val cx = (x * width).toInt()
             val cy = (y * height).toInt()
@@ -66,9 +73,9 @@ class OverlayRenderer(private val context: Context) {
             textPaint.isFakeBoldText = o.textBold
             textPaint.textSkewX = if (o.textItalic) -0.25f else 0f
             textPaint.typeface = when (o.fontFamily) {
-                com.clipcut.core.model.FontFamilyOption.SERIF -> Typeface.SERIF
-                com.clipcut.core.model.FontFamilyOption.MONOSPACE -> Typeface.MONOSPACE
-                com.clipcut.core.model.FontFamilyOption.SANS_SERIF_CONDENSED -> Typeface.create("sans-serif-condensed", Typeface.NORMAL)
+                FontFamilyOption.SERIF -> Typeface.SERIF
+                FontFamilyOption.MONOSPACE -> Typeface.MONOSPACE
+                FontFamilyOption.SANS_SERIF_CONDENSED -> Typeface.create("sans-serif-condensed", Typeface.NORMAL)
                 else -> Typeface.DEFAULT
             }
             val text = applyAnimation(o, currentPtsUs)
@@ -79,8 +86,10 @@ class OverlayRenderer(private val context: Context) {
                 if (o.backgroundColor != 0L) {
                     bgPaint.color = o.backgroundColor.toInt()
                     val pad = o.backgroundPaddingPx.toFloat()
-                    canvas.drawRect(cx - textWidth / 2 - pad, cy - textHeight / 2 - pad,
-                        cx + textWidth / 2 + pad, cy + textHeight / 2 + pad, bgPaint)
+                    canvas.drawRect(
+                        cx - textWidth / 2 - pad, cy - textHeight / 2 - pad,
+                        cx + textWidth / 2 + pad, cy + textHeight / 2 + pad, bgPaint
+                    )
                 }
                 canvas.save()
                 canvas.rotate(rot, cx.toFloat(), cy.toFloat())
@@ -89,9 +98,14 @@ class OverlayRenderer(private val context: Context) {
             }
         }
 
+        // Upload: GLUtils.texImage2D stores row 0 at texture V=0 (bottom).
+        // Canvas row 0 is visual top. Flip bitmap once vertically so texture V=0
+        // corresponds to visual top. Now every caller uses IDENTITY tex-matrix!
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
-        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
-        bitmap.recycle()
+        val matrix = android.graphics.Matrix().apply { preScale(1f, -1f) }
+        val flipped = Bitmap.createBitmap(bmp, 0, 0, width, height, matrix, false)
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, flipped, 0)
+        flipped.recycle()
     }
 
     private fun interpolatedTransform(o: OverlayItem, ptsUs: Long): FloatArray {
@@ -131,6 +145,9 @@ class OverlayRenderer(private val context: Context) {
     }
 
     fun release() {
+        reusableBitmap?.recycle()
+        reusableBitmap = null
+        reusableCanvas = null
         if (overlayTexId != -1) {
             GLES20.glDeleteTextures(1, intArrayOf(overlayTexId), 0)
             overlayTexId = -1
