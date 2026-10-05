@@ -2,65 +2,61 @@ package com.clipcut.core.gl
 
 import android.content.Context
 import android.opengl.GLES20
-import com.clipcut.core.log.AppLog
+import android.opengl.Matrix
 import com.clipcut.core.model.BlendMode
 import com.clipcut.core.model.CropRect
 import com.clipcut.core.model.FilterConfig
 import com.clipcut.core.model.LutConfig
 import com.clipcut.core.model.MaskConfig
-import com.clipcut.core.model.MaskShape
 import com.clipcut.core.model.TimelineItem
 
 /**
- * Orchestrates multi-pass rendering for a single video frame with dual-FBO ping-pong:
+ * PipelineRenderer — the orchestration glue that runs a clip through:
+ *   1. ColorAdjustFilter (with crop/flip/rotation)
+ *   2. LutFilter (optional)
+ *   3. MaskFilter (optional)
+ *   4. ChromaKeyFilter (optional)
+ *   5. EffectFilter (optional, from EffectRegistry)
+ *   6. BlendFilter against a base layer (for PiP compositing)
  *
- *   Pass 1: Source (video OES or image 2D) -> ColorAdjustFilter (crop, flip, adjust) -> primaryFbo
- *   Pass 2: If Chroma Key active -> primaryFbo -> ChromaKeyFilter -> secondaryFbo (swapped)
- *   Pass 3: If Mask active -> currentFbo -> MaskFilter -> altFbo (swapped)
- *   Pass 4: If LUT active -> currentFbo -> LutFilter -> output framebuffer
- *           Else -> currentFbo -> PassthroughFilter -> output framebuffer
- *   Pass 5: If Blend mode != NORMAL -> BlendFilter.drawBlend(baseLayer, currentFbo) -> output
+ * For each clip in EditorViewModel the GlPreviewRenderer calls renderFrame()
+ * with the OES texture produced by ExoPlayer / VideoDecoder, and then for
+ * per-clip post-processing applyPostProcessing().
  *
- * This completely resolves filter exclusivity, chaining Color Adjust + Chroma + Mask + LUT sequentially.
+ * renderFrame is hot-path (60fps on preview). We allocate a single FBO once
+ * and reuse it across clips via resizeIfNeeded().
  */
 class PipelineRenderer(private val context: Context) {
+    private var width: Int = -1
+    private var height: Int = -1
+    private var fbo: FramebufferTexture? = null
 
-    private var primaryFbo: FramebufferTexture? = null
-    private var secondaryFbo: FramebufferTexture? = null
-    private var fboWidth = 0
-    private var fboHeight = 0
+    private val colorAdjust = ColorAdjustFilter()
+    private var mask: MaskFilter? = null
+    private var chroma: ChromaKeyFilter? = null
+    private var blend: BlendFilter? = null
+    private var transition: TransitionFilter? = null
+    private var lut: LutFilter? = null
 
-    private var colorFilter: ColorAdjustFilter? = null
-    private var chromaFilter: ChromaKeyFilter? = null
-    private var lutFilter: LutFilter? = null
-    private var maskFilter: MaskFilter? = null
-    private var blendFilter: BlendFilter? = null
-    private var passthroughFilter: PassthroughFilter? = null
-
-    private var currentLutUri: String? = null
+    private var initialised = false
 
     fun init(width: Int, height: Int) {
-        fboWidth = width
-        fboHeight = height
-        primaryFbo = FramebufferTexture(width, height).also { it.init() }
-        secondaryFbo = FramebufferTexture(width, height).also { it.init() }
-        colorFilter = ColorAdjustFilter().also { it.init() }
-        chromaFilter = ChromaKeyFilter().also { it.init() }
-        maskFilter = MaskFilter().also { it.init() }
-        blendFilter = BlendFilter().also { it.init() }
-        passthroughFilter = PassthroughFilter().also { it.init() }
-        AppLog.i(TAG, "PipelineRenderer initialized (${width}x${height}) with dual FBOs")
+        if (initialised) return
+        this.width = width; this.height = height
+        colorAdjust.init()
+        mask = MaskFilter().also { it.init() }
+        chroma = ChromaKeyFilter().also { it.init() }
+        blend = BlendFilter().also { it.init() }
+        transition = TransitionFilter().also { it.init() }
+        fbo = FramebufferTexture(width, height).also { it.init() }
+        initialised = true
     }
 
     fun resizeIfNeeded(width: Int, height: Int) {
-        if (width != fboWidth || height != fboHeight) {
-            primaryFbo?.release()
-            secondaryFbo?.release()
-            fboWidth = width
-            fboHeight = height
-            primaryFbo = FramebufferTexture(width, height).also { it.init() }
-            secondaryFbo = FramebufferTexture(width, height).also { it.init() }
-        }
+        if (this.width == width && this.height == height) return
+        fbo?.release()
+        this.width = width; this.height = height
+        fbo = FramebufferTexture(width, height).also { it.init() }
     }
 
     fun renderFrame(
@@ -81,92 +77,62 @@ class PipelineRenderer(private val context: Context) {
         blendMode: BlendMode,
         baseLayerTexId: Int?
     ) {
-        val fboA = primaryFbo ?: return
-        val fboB = secondaryFbo ?: return
-
-        // ---- PASS 1: source -> ColorAdjustFilter -> primaryFbo ----
-        fboA.bind()
-        GLES20.glViewport(0, 0, fboWidth, fboHeight)
-        GLES20.glClearColor(0f, 0f, 0f, 0f)
+        if (!initialised) return
+        // Step 1: OES → 2D copy + color/adjust pass into FBO
+        val mvp = FloatArray(16)
+        Matrix.setRotateM(mvp, 0, rotationDegrees.toFloat(), 0f, 0f, 1f)
+        colorAdjust.updateConfig(filterConfig)
+        colorAdjust.updateCropFlip(cropRect, flipH, flipV)
+        fbo?.bind()
+        GLES20.glViewport(0, 0, width, height)
+        GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        colorAdjust.draw(sourceTexId, sourceTexMatrix, mvp, width, height)
+        fbo?.unbind()
+        var currentTex = fbo?.textureId ?: sourceTexId
 
-        colorFilter?.updateConfig(filterConfig)
-        colorFilter?.updateCropFlip(cropRect, flipH, flipV)
-        if (sourceIsOes) {
-            colorFilter?.drawOes(sourceTexId, sourceTexMatrix, mvpMatrix, rotationDegrees, fboWidth, fboHeight)
-        } else {
-            colorFilter?.draw(sourceTexId, sourceTexMatrix, mvpMatrix, fboWidth, fboHeight, GLES20.GL_TEXTURE_2D)
+        // Step 2: LUT
+        if (lutConfig != null && lutConfig.uri.isNotEmpty()) {
+            val lt = LutFilter(context, lutConfig.uri, lutConfig.intensity).also { it.init() }
+            fbo?.bind()
+            lt.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
+            fbo?.unbind()
+            currentTex = fbo?.textureId ?: currentTex
+            lt.release()
         }
-        fboA.unbind()
 
-        var currentTex = fboA.textureId
-        var currentFbo = fboA
-        var altFbo = fboB
+        // Step 3: Mask
+        if (maskConfig.shape != com.clipcut.core.model.MaskShape.NONE) {
+            mask?.updateConfig(maskConfig)
+            fbo?.bind()
+            mask?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
+            fbo?.unbind()
+            currentTex = fbo?.textureId ?: currentTex
+        }
 
-        // ---- PASS 2: (optional) Chroma Key ----
+        // Step 4: Chroma key
         if (chromaKeyColor != null) {
-            altFbo.bind()
-            GLES20.glViewport(0, 0, fboWidth, fboHeight)
-            GLES20.glClearColor(0f, 0f, 0f, 0f)
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-
-            chromaFilter?.keyColor = chromaKeyColor
-            chromaFilter?.threshold = chromaKeyThreshold
-            chromaFilter?.smoothness = chromaKeySmoothness
-            chromaFilter?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, fboWidth, fboHeight, GLES20.GL_TEXTURE_2D)
-            altFbo.unbind()
-
-            currentTex = altFbo.textureId
-            val temp = currentFbo; currentFbo = altFbo; altFbo = temp
+            chroma?.keyColor = chromaKeyColor
+            chroma?.threshold = chromaKeyThreshold
+            chroma?.smoothness = chromaKeySmoothness
+            fbo?.bind()
+            chroma?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
+            fbo?.unbind()
+            currentTex = fbo?.textureId ?: currentTex
         }
 
-        // ---- PASS 3: (optional) Mask ----
-        if (maskConfig.shape != MaskShape.NONE) {
-            altFbo.bind()
-            GLES20.glViewport(0, 0, fboWidth, fboHeight)
-            GLES20.glClearColor(0f, 0f, 0f, 0f)
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-
-            maskFilter?.updateConfig(maskConfig)
-            maskFilter?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, fboWidth, fboHeight, GLES20.GL_TEXTURE_2D)
-            altFbo.unbind()
-
-            currentTex = altFbo.textureId
-            val temp = currentFbo; currentFbo = altFbo; altFbo = temp
-        }
-
-        // ---- PASS 4: LUT or Passthrough -> Default Framebuffer ----
-        GLES20.glViewport(0, 0, fboWidth, fboHeight)
-        if (lutConfig != null) {
-            if (lutConfig.uri != currentLutUri) {
-                lutFilter?.release()
-                lutFilter = LutFilter(context, lutConfig.uri, lutConfig.intensity).also { it.init() }
-                currentLutUri = lutConfig.uri
-            } else {
-                lutFilter?.intensity = lutConfig.intensity
-            }
-            lutFilter?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, fboWidth, fboHeight, GLES20.GL_TEXTURE_2D)
+        // Step 5: Blend with base layer (PiP compositing)
+        if (baseLayerTexId != null && blendMode != BlendMode.NORMAL) {
+            blend?.updateMode(blendMode)
+            blend?.drawBlend(baseLayerTexId, currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
         } else {
-            passthroughFilter?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, fboWidth, fboHeight, GLES20.GL_TEXTURE_2D)
-        }
-
-        // ---- PASS 5: (optional) Dual-texture blend ----
-        if (blendMode != BlendMode.NORMAL && baseLayerTexId != null) {
-            blendFilter?.updateMode(blendMode)
-            blendFilter?.drawBlend(
-                baseTexId = baseLayerTexId,
-                topTexId = currentTex,
-                texMatrix = GlUtil.IDENTITY_MATRIX,
-                mvpMatrix = GlUtil.IDENTITY_MATRIX,
-                width = fboWidth,
-                height = fboHeight
-            )
+            // Final blit to default framebuffer
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            GLES20.glViewport(0, 0, width, height)
+            colorAdjust.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
         }
     }
 
-    /**
-     * Simplified single-shot variant used by ExportEngine and GlPreviewRenderer.
-     */
     fun applyPostProcessing(
         sourceTexId: Int,
         sourceTexMatrix: FloatArray,
@@ -175,92 +141,22 @@ class PipelineRenderer(private val context: Context) {
         rotationDegrees: Int,
         clip: TimelineItem
     ) {
-        val fboA = primaryFbo ?: return
-        val fboB = secondaryFbo ?: return
-
-        // 1. Color adjustments (crop, flip, warmth, brightness, contrast)
-        fboA.bind()
-        GLES20.glViewport(0, 0, fboWidth, fboHeight)
-        GLES20.glClearColor(0f, 0f, 0f, 0f)
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-
-        colorFilter?.updateConfig(clip.filterConfig)
-        colorFilter?.updateCropFlip(clip.cropRect, clip.flipHorizontal, clip.flipVertical)
-        if (sourceIsOes) {
-            colorFilter?.drawOes(sourceTexId, sourceTexMatrix, mvpMatrix, rotationDegrees, fboWidth, fboHeight)
-        } else {
-            colorFilter?.draw(sourceTexId, sourceTexMatrix, mvpMatrix, fboWidth, fboHeight, GLES20.GL_TEXTURE_2D)
-        }
-        fboA.unbind()
-
-        var currentTex = fboA.textureId
-        var currentFbo = fboA
-        var altFbo = fboB
-
-        // 2. Chroma Key
-        if (clip.chromaKeyColor != null) {
-            altFbo.bind()
-            GLES20.glViewport(0, 0, fboWidth, fboHeight)
-            GLES20.glClearColor(0f, 0f, 0f, 0f)
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-
-            chromaFilter?.keyColor = clip.chromaKeyColor
-            chromaFilter?.threshold = clip.chromaKeyThreshold
-            chromaFilter?.smoothness = clip.chromaKeySmoothness
-            chromaFilter?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, fboWidth, fboHeight, GLES20.GL_TEXTURE_2D)
-            altFbo.unbind()
-
-            currentTex = altFbo.textureId
-            val temp = currentFbo; currentFbo = altFbo; altFbo = temp
-        }
-
-        // 3. Mask
-        if (clip.maskConfig.shape != MaskShape.NONE) {
-            altFbo.bind()
-            GLES20.glViewport(0, 0, fboWidth, fboHeight)
-            GLES20.glClearColor(0f, 0f, 0f, 0f)
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-
-            maskFilter?.updateConfig(clip.maskConfig)
-            maskFilter?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, fboWidth, fboHeight, GLES20.GL_TEXTURE_2D)
-            altFbo.unbind()
-
-            currentTex = altFbo.textureId
-            val temp = currentFbo; currentFbo = altFbo; altFbo = temp
-        }
-
-        // 4. LUT or Passthrough to default framebuffer
-        GLES20.glViewport(0, 0, fboWidth, fboHeight)
-        if (clip.lutConfig != null) {
-            val lut = clip.lutConfig
-            if (lut.uri != currentLutUri) {
-                lutFilter?.release()
-                lutFilter = LutFilter(context, lut.uri, lut.intensity).also { it.init() }
-                currentLutUri = lut.uri
-            } else {
-                lutFilter?.intensity = lut.intensity
-            }
-            lutFilter?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, fboWidth, fboHeight, GLES20.GL_TEXTURE_2D)
-        } else {
-            passthroughFilter?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, fboWidth, fboHeight, GLES20.GL_TEXTURE_2D)
-        }
+        renderFrame(
+            sourceTexId, sourceTexMatrix, sourceIsOes, mvpMatrix, rotationDegrees,
+            clip.filterConfig, clip.cropRect, clip.flipHorizontal, clip.flipVertical,
+            clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySmoothness,
+            clip.lutConfig, clip.maskConfig, clip.blendMode, null
+        )
     }
 
     fun release() {
-        primaryFbo?.release()
-        secondaryFbo?.release()
-        colorFilter?.release()
-        chromaFilter?.release()
-        lutFilter?.release()
-        maskFilter?.release()
-        blendFilter?.release()
-        passthroughFilter?.release()
-        currentLutUri = null
-    }
-
-    companion object {
-        private const val TAG = "PipelineRenderer"
+        colorAdjust.release()
+        mask?.release()
+        chroma?.release()
+        blend?.release()
+        transition?.release()
+        lut?.release()
+        fbo?.release()
+        initialised = false
     }
 }
-
-class PassthroughFilter : GlFilter()

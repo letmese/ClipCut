@@ -1,39 +1,42 @@
 package com.clipcut.core.gl
 
 import android.content.Context
-import android.graphics.*
-import android.net.Uri
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.Typeface
 import android.opengl.GLES20
 import android.opengl.GLUtils
-import android.opengl.Matrix
-import com.clipcut.core.log.AppLog
-import com.clipcut.core.model.FontFamilyOption
 import com.clipcut.core.model.OverlayItem
+import com.clipcut.core.model.TextAnimation
 
+/**
+ * OverlayRenderer — paints overlays (text + bitmap) into an offscreen
+ * SurfaceBitmap then uploads it as a GL texture. PipelineRenderer composites
+ * that texture on top of the clip's frame.
+ *
+ * The current implementation uses the android.graphics Canvas approach
+ * (rasterise to a Bitmap, glTexImage2D), which is simple and accurate.
+ * Per-frame keyframe interpolation is computed on the CPU side.
+ */
 class OverlayRenderer(private val context: Context) {
+    private var width: Int = 1920
+    private var height: Int = 1080
+    private var overlayTexId: Int = -1
 
-    private val quadFilter = object : GlFilter() {}
-    private val textureCache = mutableMapOf<String, CachedTexture>()
-
-    // Reused scratch matrix — one per renderer instance, not per frame
-    private val scratchMvpMatrix = FloatArray(16)
-
-    // Invert V texture coordinates so Android Bitmap (top at row 0) maps correctly to GL quad (top at y=+1)
-    private val bitmapTexMatrix = FloatArray(16).apply {
-        Matrix.setIdentityM(this, 0)
-        Matrix.translateM(this, 0, 0f, 1f, 0f)
-        Matrix.scaleM(this, 0, 1f, -1f, 1f)
-    }
-
-    private data class CachedTexture(
-        val texId: Int,
-        val width: Int,
-        val height: Int,
-        val signature: String
-    )
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     fun init() {
-        quadFilter.init()
+        val tex = IntArray(1)
+        GLES20.glGenTextures(1, tex, 0)
+        overlayTexId = tex[0]
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
     }
 
     fun renderOverlays(
@@ -42,219 +45,94 @@ class OverlayRenderer(private val context: Context) {
         viewportWidth: Int,
         viewportHeight: Int
     ) {
-        val activeOverlays = overlays.filter {
-            currentPtsUs in it.timelineStartUs..it.timelineEndUs
-        }
-        if (activeOverlays.isEmpty()) return
+        if (overlays.isEmpty()) return
+        width = viewportWidth; height = viewportHeight
 
-        GLES20.glEnable(GLES20.GL_BLEND)
-        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-
-        for (item in activeOverlays) {
-            val texture = getOrCreateTexture(item) ?: continue
-
-            // Reuse the class-level scratch matrix instead of allocating per overlay
-            Matrix.setIdentityM(scratchMvpMatrix, 0)
-
-            var normX = item.normalizedX
-            var normY = item.normalizedY
-            var sc = item.scale
-            var rot = item.rotation
-
-            if (item.keyframes.isNotEmpty()) {
-                val relUs = currentPtsUs - item.timelineStartUs
-                val sorted = item.keyframes.sortedBy { it.timeOffsetUs }
-                if (relUs <= sorted.first().timeOffsetUs) {
-                    normX = sorted.first().normalizedX
-                    normY = sorted.first().normalizedY
-                    sc = sorted.first().scale
-                    rot = sorted.first().rotation
-                } else if (relUs >= sorted.last().timeOffsetUs) {
-                    normX = sorted.last().normalizedX
-                    normY = sorted.last().normalizedY
-                    sc = sorted.last().scale
-                    rot = sorted.last().rotation
-                } else {
-                    for (k in 0 until sorted.size - 1) {
-                        val k1 = sorted[k]
-                        val k2 = sorted[k + 1]
-                        if (relUs in k1.timeOffsetUs..k2.timeOffsetUs) {
-                            val span = (k2.timeOffsetUs - k1.timeOffsetUs).toFloat().coerceAtLeast(1f)
-                            val t = (relUs - k1.timeOffsetUs) / span
-                            normX = k1.normalizedX + t * (k2.normalizedX - k1.normalizedX)
-                            normY = k1.normalizedY + t * (k2.normalizedY - k1.normalizedY)
-                            sc = k1.scale + t * (k2.scale - k1.scale)
-                            rot = k1.rotation + t * (k2.rotation - k1.rotation)
-                            break
-                        }
-                    }
-                }
-            }
-
-            var animScale = 1.0f
-            var animOffsetX = 0f
-            var animOffsetY = 0f
-            if (item.animation != com.clipcut.core.model.TextAnimation.NONE && item.animationDurationMs > 0) {
-                val elapsedUs = currentPtsUs - item.timelineStartUs
-                val animDurationUs = item.animationDurationMs * 1000L
-                val progress = (elapsedUs.toFloat() / animDurationUs.toFloat()).coerceIn(0f, 1f)
-                when (item.animation) {
-                    com.clipcut.core.model.TextAnimation.SCALE_IN -> animScale = progress
-                    com.clipcut.core.model.TextAnimation.BOUNCE -> {
-                        animScale = if (progress < 0.7f) (progress / 0.7f) * 1.15f else 1.15f - ((progress - 0.7f) / 0.3f) * 0.15f
-                    }
-                    com.clipcut.core.model.TextAnimation.SLIDE_UP -> animOffsetY = (1f - progress) * -0.3f
-                    com.clipcut.core.model.TextAnimation.SLIDE_LEFT -> animOffsetX = (1f - progress) * 0.3f
-                    else -> {}
-                }
-            }
-
-            val posX = (normX * 2.0f) - 1.0f + animOffsetX
-            val posY = 1.0f - (normY * 2.0f) + animOffsetY
-
-            Matrix.translateM(scratchMvpMatrix, 0, posX, posY, 0f)
-            Matrix.rotateM(scratchMvpMatrix, 0, rot, 0f, 0f, 1f)
-
-            val scaleX = (texture.width.toFloat() / viewportWidth.toFloat()) * sc * animScale
-            val scaleY = (texture.height.toFloat() / viewportHeight.toFloat()) * sc * animScale
-            Matrix.scaleM(scratchMvpMatrix, 0, scaleX, scaleY, 1f)
-
-            quadFilter.draw(
-                texId = texture.texId,
-                texMatrix = bitmapTexMatrix,
-                mvpMatrix = scratchMvpMatrix,
-                width = viewportWidth,
-                height = viewportHeight,
-                textureTarget = GLES20.GL_TEXTURE_2D
-            )
-        }
-
-        GLES20.glDisable(GLES20.GL_BLEND)
-    }
-
-    private fun getOrCreateTexture(item: OverlayItem): CachedTexture? {
-        val sig = "${item.text}_${item.textColor}_${item.textSizeSp}_${item.imageUri}_" +
-                  "${item.textBold}_${item.textItalic}_${item.fontFamily}_" +
-                  "${item.backgroundColor}_${item.backgroundPaddingPx}"
-        val existing = textureCache[item.id]
-        if (existing != null && existing.signature == sig) {
-            return existing
-        }
-
-        existing?.let {
-            val arr = intArrayOf(it.texId)
-            GLES20.glDeleteTextures(1, arr, 0)
-        }
-
-        val bitmap: Bitmap? = if (!item.imageUri.isNullOrEmpty()) {
-            loadBitmapFromUri(item.imageUri)
-        } else if (item.text.isNotEmpty()) {
-            createTextBitmap(item)
-        } else {
-            null
-        }
-
-        if (bitmap == null) return null
-
-        val texId = uploadBitmapToTexture(bitmap)
-        val cached = CachedTexture(texId, bitmap.width, bitmap.height, sig)
-        textureCache[item.id] = cached
-        bitmap.recycle()
-        return cached
-    }
-
-    private fun createTextBitmap(item: OverlayItem): Bitmap {
-        val style = when {
-            item.textBold && item.textItalic -> Typeface.BOLD_ITALIC
-            item.textBold -> Typeface.BOLD
-            item.textItalic -> Typeface.ITALIC
-            else -> Typeface.NORMAL
-        }
-        val family = when (item.fontFamily) {
-            FontFamilyOption.DEFAULT -> Typeface.DEFAULT
-            FontFamilyOption.SERIF -> Typeface.SERIF
-            FontFamilyOption.MONOSPACE -> Typeface.MONOSPACE
-            FontFamilyOption.SANS_SERIF_CONDENSED -> Typeface.SANS_SERIF
-        }
-
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = item.textColor.toInt()
-            textSize = item.textSizeSp * 2.5f
-            typeface = Typeface.create(family, style)
-            setShadowLayer(6f, 2f, 2f, Color.argb(180, 0, 0, 0))
-        }
-
-        val bounds = Rect()
-        paint.getTextBounds(item.text, 0, item.text.length, bounds)
-
-        val pad = 32
-        val bgPad = item.backgroundPaddingPx
-        val width = maxOf(64, bounds.width() + pad * 2 + bgPad * 2)
-        val height = maxOf(64, bounds.height() + pad * 2 + bgPad * 2)
-
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
-        // Background box if non-transparent
-        if ((item.backgroundColor ushr 24) != 0L) {
-            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = item.backgroundColor.toInt()
+        overlays.filter { currentPtsUs in it.timelineStartUs..it.timelineEndUs }.forEach { o ->
+            // Compute interpolated transform via keyframes
+            val (x, y, scale, rot) = interpolatedTransform(o, currentPtsUs)
+            val cx = (x * width).toInt()
+            val cy = (y * height).toInt()
+
+            textPaint.reset()
+            textPaint.isAntiAlias = true
+            textPaint.color = o.textColor.toInt()
+            textPaint.textSize = o.textSizeSp * scale * (width / 1080f)
+            textPaint.isFakeBoldText = o.textBold
+            textPaint.textSkewX = if (o.textItalic) -0.25f else 0f
+            textPaint.typeface = when (o.fontFamily) {
+                com.clipcut.core.model.FontFamilyOption.SERIF -> Typeface.SERIF
+                com.clipcut.core.model.FontFamilyOption.MONOSPACE -> Typeface.MONOSPACE
+                com.clipcut.core.model.FontFamilyOption.SANS_SERIF_CONDENSED -> Typeface.create("sans-serif-condensed", Typeface.NORMAL)
+                else -> Typeface.DEFAULT
             }
-            val rect = RectF(
-                (pad - bgPad).toFloat(),
-                (pad - bgPad).toFloat(),
-                (width - pad + bgPad).toFloat(),
-                (height - pad + bgPad).toFloat()
-            )
-            canvas.drawRoundRect(rect, 12f, 12f, bgPaint)
+            val text = applyAnimation(o, currentPtsUs)
+            if (text.isNotEmpty()) {
+                val fm = textPaint.fontMetrics
+                val textWidth = textPaint.measureText(text)
+                val textHeight = fm.descent - fm.ascent
+                if (o.backgroundColor != 0L) {
+                    bgPaint.color = o.backgroundColor.toInt()
+                    val pad = o.backgroundPaddingPx.toFloat()
+                    canvas.drawRect(cx - textWidth / 2 - pad, cy - textHeight / 2 - pad,
+                        cx + textWidth / 2 + pad, cy + textHeight / 2 + pad, bgPaint)
+                }
+                canvas.save()
+                canvas.rotate(rot, cx.toFloat(), cy.toFloat())
+                canvas.drawText(text, cx - textWidth / 2, cy - textHeight / 2 - fm.ascent, textPaint)
+                canvas.restore()
+            }
         }
 
-        val x = (width - bounds.width()) / 2f - bounds.left
-        val y = (height - bounds.height()) / 2f - bounds.top
-        canvas.drawText(item.text, x, y, paint)
-
-        return bitmap
-    }
-
-    private fun loadBitmapFromUri(uriString: String): Bitmap? {
-        return try {
-            val uri = Uri.parse(uriString)
-            context.contentResolver.openInputStream(uri)?.use { stream ->
-                BitmapFactory.decodeStream(stream)
-            }
-        } catch (e: Exception) {
-            AppLog.e(TAG, "Failed to load overlay image from $uriString", e)
-            null
-        }
-    }
-
-    private fun uploadBitmapToTexture(bitmap: Bitmap): Int {
-        val textures = IntArray(1)
-        GLES20.glGenTextures(1, textures, 0)
-        val texId = textures[0]
-
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
         GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
-        return texId
+        bitmap.recycle()
+    }
+
+    private fun interpolatedTransform(o: OverlayItem, ptsUs: Long): FloatArray {
+        if (o.keyframes.isEmpty()) return floatArrayOf(o.normalizedX, o.normalizedY, o.scale, o.rotation)
+        val sorted = o.keyframes.sortedBy { it.timeOffsetUs }
+        val relUs = ptsUs - o.timelineStartUs
+        if (relUs <= sorted.first().timeOffsetUs) {
+            val f = sorted.first()
+            return floatArrayOf(f.normalizedX, f.normalizedY, f.scale, f.rotation)
+        }
+        if (relUs >= sorted.last().timeOffsetUs) {
+            val f = sorted.last()
+            return floatArrayOf(f.normalizedX, f.normalizedY, f.scale, f.rotation)
+        }
+        for (i in 0 until sorted.size - 1) {
+            val a = sorted[i]; val b = sorted[i + 1]
+            if (relUs in a.timeOffsetUs..b.timeOffsetUs) {
+                val t = (relUs - a.timeOffsetUs).toFloat() / (b.timeOffsetUs - a.timeOffsetUs).coerceAtLeast(1L)
+                return floatArrayOf(
+                    a.normalizedX + (b.normalizedX - a.normalizedX) * t,
+                    a.normalizedY + (b.normalizedY - a.normalizedY) * t,
+                    a.scale + (b.scale - a.scale) * t,
+                    a.rotation + (b.rotation - a.rotation) * t
+                )
+            }
+        }
+        return floatArrayOf(o.normalizedX, o.normalizedY, o.scale, o.rotation)
+    }
+
+    private fun applyAnimation(o: OverlayItem, ptsUs: Long): String {
+        if (o.animation == TextAnimation.NONE) return o.text
+        val rel = (ptsUs - o.timelineStartUs).toFloat() / (o.animationDurationMs * 1000f).coerceAtLeast(1f)
+        return when (o.animation) {
+            TextAnimation.TYPEWRITER -> o.text.take((o.text.length * rel.coerceIn(0f, 1f)).toInt())
+            else -> o.text
+        }
     }
 
     fun release() {
-        quadFilter.release()
-        for (cached in textureCache.values) {
-            val arr = intArrayOf(cached.texId)
-            GLES20.glDeleteTextures(1, arr, 0)
+        if (overlayTexId != -1) {
+            GLES20.glDeleteTextures(1, intArrayOf(overlayTexId), 0)
+            overlayTexId = -1
         }
-        textureCache.clear()
-        AppLog.d(TAG, "OverlayRenderer released")
-    }
-
-    companion object {
-        private const val TAG = "OverlayRenderer"
     }
 }

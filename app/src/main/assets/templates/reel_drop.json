@@ -1,0 +1,21 @@
+{
+  "id": "reel_drop",
+  "name": "Reel Drop",
+  "aspectRatio": "9:16",
+  "durationUs": 30000000,
+  "clipSlots": [
+    { "order": 0, "durationUs": 5000000, "filter": "Vivid", "effect": "zoom_pulse" },
+    { "order": 1, "durationUs": 5000000, "filter": "Moody", "effect": "shake" },
+    { "order": 2, "durationUs": 5000000, "filter": "Cool", "effect": "glitch" },
+    { "order": 3, "durationUs": 5000000, "filter": "Cinematic", "effect": "bloom" },
+    { "order": 4, "durationUs": 5000000, "filter": "Punch", "effect": "scan_lines" },
+    { "order": 5, "durationUs": 5000000, "filter": "Vivid", "effect": "light_leak" }
+  ],
+  "transitions": ["zoom_in", "glitch", "slide_up", "slide_down"],
+  "effects": ["zoom_pulse", "shake", "glitch", "bloom", "scan_lines", "light_leak"],
+  "filters": ["Vivid", "Moody", "Cool", "Cinematic", "Punch"],
+  "musicUrl": null,
+  "textOverlays": [
+    { "text": "Trending", "startUs": 0, "endUs": 3000000, "position": "top" }
+  ]
+}

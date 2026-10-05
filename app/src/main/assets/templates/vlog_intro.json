@@ -1,0 +1,20 @@
+{
+  "id": "vlog_intro",
+  "name": "Vlog Intro",
+  "aspectRatio": "16:9",
+  "durationUs": 15000000,
+  "clipSlots": [
+    { "order": 0, "durationUs": 3000000, "filter": "Cinematic", "effect": "vhs" },
+    { "order": 1, "durationUs": 4000000, "filter": "Vivid", "effect": null },
+    { "order": 2, "durationUs": 5000000, "filter": "Warm", "effect": "bloom" },
+    { "order": 3, "durationUs": 3000000, "filter": "Cinematic", "effect": "light_leak" }
+  ],
+  "transitions": ["fade", "slide_left", "dissolve"],
+  "effects": ["vhs", "bloom", "light_leak"],
+  "filters": ["Cinematic", "Vivid", "Warm"],
+  "musicUrl": null,
+  "textOverlays": [
+    { "text": "My Vlog", "startUs": 0, "endUs": 3000000, "position": "center" },
+    { "text": "Subscribe!", "startUs": 10000000, "endUs": 14000000, "position": "bottom" }
+  ]
+}

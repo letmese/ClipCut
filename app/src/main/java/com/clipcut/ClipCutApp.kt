@@ -4,20 +4,23 @@ import android.app.Application
 import com.clipcut.core.log.AppLog
 import com.clipcut.data.db.ClipCutDatabase
 
+/**
+ * Application entrypoint. Initializes logging and the SQLite database singleton
+ * before any Activity starts. AppLog.init must run first because every layer
+ * (data, core, ui) calls AppLog.d/i/e during construction.
+ */
 class ClipCutApp : Application() {
-
     override fun onCreate() {
         super.onCreate()
-        // Initialize logging first so all crashes and init steps are captured
+        instance = this
         AppLog.init(this)
-        AppLog.i("ClipCutApp", "Application starting...")
+        AppLog.i(TAG, "ClipCutApp.onCreate — Build 19")
+        ClipCutDatabase.getInstance(this) // warm the SQLiteOpenHelper
+    }
 
-        // Warm up Room DB
-        try {
-            ClipCutDatabase.getInstance(this)
-            AppLog.i("ClipCutApp", "Database initialized successfully.")
-        } catch (e: Exception) {
-            AppLog.e("ClipCutApp", "Failed to initialize database", e)
-        }
+    companion object {
+        private const val TAG = "ClipCutApp"
+        @Volatile lateinit var instance: ClipCutApp
+            private set
     }
 }

@@ -1,0 +1,23 @@
+{
+  "id": "cinematic_trailer",
+  "name": "Cinematic Trailer",
+  "aspectRatio": "21:9",
+  "durationUs": 60000000,
+  "clipSlots": [
+    { "order": 0, "durationUs": 8000000, "filter": "Cinematic", "effect": "halation" },
+    { "order": 1, "durationUs": 8000000, "filter": "Moody", "effect": "film_grain" },
+    { "order": 2, "durationUs": 8000000, "filter": "Cinematic", "effect": "vignette_pulse" },
+    { "order": 3, "durationUs": 8000000, "filter": "Retro", "effect": "old_film" },
+    { "order": 4, "durationUs": 8000000, "filter": "Cinematic", "effect": "light_leak" },
+    { "order": 5, "durationUs": 8000000, "filter": "Moody", "effect": "halation" },
+    { "order": 6, "durationUs": 8000000, "filter": "Cinematic", "effect": "bloom" }
+  ],
+  "transitions": ["dissolve", "fade", "fade", "dissolve", "fade", "dissolve"],
+  "effects": ["halation", "film_grain", "vignette_pulse", "old_film", "light_leak", "bloom"],
+  "filters": ["Cinematic", "Moody", "Retro"],
+  "musicUrl": null,
+  "textOverlays": [
+    { "text": "Coming soon", "startUs": 0, "endUs": 5000000, "position": "center" },
+    { "text": "Only in theaters", "startUs": 55000000, "endUs": 60000000, "position": "center" }
+  ]
+}

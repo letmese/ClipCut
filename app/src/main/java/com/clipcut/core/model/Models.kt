@@ -1,0 +1,248 @@
+package com.clipcut.core.model
+
+import java.util.UUID
+
+enum class MediaType { VIDEO, AUDIO, IMAGE }
+
+enum class FilterType(val displayName: String) {
+    NONE("Original"), BRIGHTNESS("Brightness"), CONTRAST("Contrast"),
+    SATURATION("Saturation"), TEMPERATURE("Temperature"),
+    VIGNETTE("Vignette"), GRAYSCALE("B&W"), SEPIA("Sepia")
+}
+
+data class FilterConfig(
+    val filterType: FilterType = FilterType.NONE,
+    val brightness: Float = 0.0f,
+    val contrast: Float = 1.0f,
+    val saturation: Float = 1.0f,
+    val temperature: Float = 0.0f
+)
+
+enum class TransitionType(val displayName: String) {
+    NONE("None"), FADE("Fade"), SLIDE_LEFT("Slide Left"),
+    SLIDE_RIGHT("Slide Right"), DISSOLVE("Dissolve")
+}
+
+enum class AspectRatio(val label: String, val wRatio: Float, val hRatio: Float, val description: String = "") {
+    ORIGINAL("Original", 0f, 0f, "Keep source"),
+    R_16_9("16:9", 16f, 9f, "Widescreen"),
+    R_9_16("9:16", 9f, 16f, "Vertical / TikTok"),
+    R_1_1("1:1", 1f, 1f, "Square / Instagram"),
+    R_4_5("4:5", 4f, 5f, "Portrait"),
+    R_4_3("4:3", 4f, 3f, "Classic"),
+    R_21_9("21:9", 21f, 9f, "Cinematic"),
+    FREE("Free", 0f, 0f, "Custom");
+
+    fun calculateExportDimensions(resolution: ExportResolution): Pair<Int, Int> {
+        if (this == ORIGINAL || this == FREE) return resolution.width to resolution.height
+        val longSide = maxOf(resolution.width, resolution.height)
+        val shortSide = minOf(resolution.width, resolution.height)
+        return if (wRatio >= hRatio) longSide to (longSide * hRatio / wRatio).toInt()
+        else (shortSide * wRatio / hRatio).toInt() to shortSide
+    }
+
+    companion object {
+        fun fromLabel(label: String): AspectRatio =
+            values().firstOrNull { it.label == label } ?: ORIGINAL
+    }
+}
+
+enum class FontFamilyOption(val label: String) {
+    DEFAULT("Default"), SERIF("Serif"), MONOSPACE("Mono"),
+    SANS_SERIF_CONDENSED("Condensed")
+}
+
+data class CropRect(
+    val left: Float = 0f, val top: Float = 0f,
+    val right: Float = 1f, val bottom: Float = 1f
+) {
+    val width: Float get() = (right - left).coerceIn(0f, 1f)
+    val height: Float get() = (bottom - top).coerceIn(0f, 1f)
+    val isValid: Boolean get() = width > 0.01f && height > 0.01f
+}
+
+data class SpeedKeyframe(
+    val id: String = UUID.randomUUID().toString(),
+    val timeOffsetUs: Long,
+    val speed: Float
+)
+
+data class SpeedRamp(val keyframes: List<SpeedKeyframe> = emptyList()) {
+    val isActive: Boolean get() = keyframes.size >= 2
+    fun speedAt(timeOffsetUs: Long): Float {
+        if (!isActive) return 1f
+        val sorted = keyframes.sortedBy { it.timeOffsetUs }
+        if (timeOffsetUs <= sorted.first().timeOffsetUs) return sorted.first().speed
+        if (timeOffsetUs >= sorted.last().timeOffsetUs) return sorted.last().speed
+        for (i in 0 until sorted.size - 1) {
+            val a = sorted[i]; val b = sorted[i + 1]
+            if (timeOffsetUs in a.timeOffsetUs..b.timeOffsetUs) {
+                val t = (timeOffsetUs - a.timeOffsetUs).toFloat() / (b.timeOffsetUs - a.timeOffsetUs).coerceAtLeast(1L)
+                return a.speed + (b.speed - a.speed) * t
+            }
+        }
+        return 1f
+    }
+}
+
+enum class MaskShape(val displayName: String) {
+    NONE("None"), LINEAR("Linear"), RADIAL("Radial"),
+    RECTANGLE("Rectangle"), OVAL("Oval")
+}
+
+data class MaskConfig(
+    val shape: MaskShape = MaskShape.NONE,
+    val centerX: Float = 0.5f,
+    val centerY: Float = 0.5f,
+    val width: Float = 0.6f,
+    val height: Float = 0.6f,
+    val rotation: Float = 0f,
+    val feather: Float = 0.05f,
+    val inverted: Boolean = false
+)
+
+enum class BlendMode(val displayName: String) {
+    NORMAL("Normal"), MULTIPLY("Multiply"), SCREEN("Screen"),
+    OVERLAY("Overlay"), SOFT_LIGHT("Soft Light"), HARD_LIGHT("Hard Light"),
+    COLOR_BURN("Color Burn"), COLOR_DODGE("Color Dodge"),
+    DARKEN("Darken"), LIGHTEN("Lighten"),
+    DIFFERENCE("Difference"), EXCLUSION("Exclusion")
+}
+
+data class LutConfig(
+    val id: String = UUID.randomUUID().toString(),
+    val uri: String = "",
+    val name: String = "Custom",
+    val intensity: Float = 1.0f
+)
+
+enum class TextAnimation(val displayName: String) {
+    NONE("None"), FADE_IN("Fade In"), TYPEWRITER("Typewriter"),
+    BOUNCE("Bounce"), SLIDE_LEFT("Slide Left"), SLIDE_UP("Slide Up"),
+    SCALE_IN("Scale In"), BLUR_IN("Blur In")
+}
+
+data class OverlayKeyframe(
+    val id: String = UUID.randomUUID().toString(),
+    val timeOffsetUs: Long,
+    val normalizedX: Float,
+    val normalizedY: Float,
+    val scale: Float,
+    val rotation: Float
+)
+
+data class OverlayItem(
+    val id: String = UUID.randomUUID().toString(),
+    val text: String = "",
+    val textColor: Long = 0xFFFFFFFFL,
+    val textSizeSp: Float = 28f,
+    val textBold: Boolean = true,
+    val textItalic: Boolean = false,
+    val fontFamily: FontFamilyOption = FontFamilyOption.DEFAULT,
+    val backgroundColor: Long = 0x00000000L,
+    val backgroundPaddingPx: Int = 16,
+    val imageUri: String? = null,
+    val normalizedX: Float = 0.5f,
+    val normalizedY: Float = 0.5f,
+    val scale: Float = 1.0f,
+    val rotation: Float = 0.0f,
+    val timelineStartUs: Long = 0L,
+    val timelineEndUs: Long = 5_000_000L,
+    val keyframes: List<OverlayKeyframe> = emptyList(),
+    val animation: TextAnimation = TextAnimation.NONE,
+    val animationDurationMs: Int = 500
+)
+
+data class PiPTrackItem(
+    val id: String = UUID.randomUUID().toString(),
+    val uri: String,
+    val timelineStartUs: Long = 0L,
+    val timelineEndUs: Long = 5_000_000L,
+    val trimStartUs: Long = 0L,
+    val trimEndUs: Long = 0L,
+    val normalizedX: Float = 0.75f,
+    val normalizedY: Float = 0.25f,
+    val scale: Float = 0.3f,
+    val volume: Float = 1.0f
+)
+
+data class BeatMarker(
+    val id: String = UUID.randomUUID().toString(),
+    val timeUs: Long,
+    val strength: Float = 1.0f
+)
+
+data class AudioTrackItem(
+    val id: String = UUID.randomUUID().toString(),
+    val uri: String,
+    val name: String = "Audio Track",
+    val sourceDurationUs: Long = 0L,
+    val timelineStartUs: Long = 0L,
+    val trimStartUs: Long = 0L,
+    val trimEndUs: Long = sourceDurationUs,
+    val volume: Float = 1.0f,
+    val fadeInMs: Int = 0,
+    val fadeOutMs: Int = 0
+) {
+    val effectiveDurationUs: Long get() = (trimEndUs - trimStartUs).coerceAtLeast(0L)
+}
+
+data class TimelineItem(
+    val id: String = UUID.randomUUID().toString(),
+    val uri: String,
+    val mediaType: MediaType = MediaType.VIDEO,
+    val sourceDurationUs: Long = 0L,
+    val trimStartUs: Long = 0L,
+    val trimEndUs: Long = sourceDurationUs,
+    val speed: Float = 1.0f,
+    val speedRamp: SpeedRamp = SpeedRamp(),
+    val volume: Float = 1.0f,
+    val rotationDegrees: Int = 0,
+    val flipHorizontal: Boolean = false,
+    val flipVertical: Boolean = false,
+    val cropRect: CropRect = CropRect(),
+    val fadeInMs: Int = 0,
+    val fadeOutMs: Int = 0,
+    val isReversed: Boolean = false,
+    val freezeAtUs: Long? = null,
+    val filterConfig: FilterConfig = FilterConfig(),
+    val lutConfig: LutConfig? = null,
+    val chromaKeyColor: FloatArray? = null,
+    val chromaKeyThreshold: Float = 0.15f,
+    val chromaKeySmoothness: Float = 0.05f,
+    val maskConfig: MaskConfig = MaskConfig(),
+    val blendMode: BlendMode = BlendMode.NORMAL,
+    val transitionType: TransitionType = TransitionType.NONE,
+    val transitionDurationUs: Long = 500_000L,
+    val effectId: String? = null,
+    val effectIntensity: Float = 0f
+) {
+    val trimmedDurationUs: Long get() = (trimEndUs - trimStartUs).coerceAtLeast(0L)
+    val effectiveDurationUs: Long get() = (trimmedDurationUs / speed.coerceAtLeast(0.1f)).toLong()
+}
+
+data class Project(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String = "Untitled Video",
+    val createdTime: Long = System.currentTimeMillis(),
+    val lastModifiedTime: Long = System.currentTimeMillis(),
+    val aspectRatio: AspectRatio = AspectRatio.R_16_9,
+    val videoClips: List<TimelineItem> = emptyList(),
+    val audioTracks: List<AudioTrackItem> = emptyList(),
+    val overlays: List<OverlayItem> = emptyList(),
+    val pipTracks: List<PiPTrackItem> = emptyList(),
+    val beatMarkers: List<BeatMarker> = emptyList(),
+    val originalVideoVolume: Float = 1.0f,
+    val backgroundMusicVolume: Float = 1.0f,
+    val audioDuckingEnabled: Boolean = false,
+    val audioDuckLevel: Float = 0.3f
+) {
+    val totalDurationUs: Long
+        get() {
+            val video = videoClips.sumOf { it.effectiveDurationUs }
+            val audio = audioTracks.maxOfOrNull { it.timelineStartUs + it.effectiveDurationUs } ?: 0L
+            val overlay = overlays.maxOfOrNull { it.timelineEndUs } ?: 0L
+            val pip = pipTracks.maxOfOrNull { it.timelineEndUs } ?: 0L
+            return maxOf(video, audio, overlay, pip)
+        }
+}

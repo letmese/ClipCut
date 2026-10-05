@@ -1,112 +1,130 @@
 package com.clipcut.core.gl
 
 import android.opengl.GLES20
-import android.opengl.Matrix
-import com.clipcut.core.log.AppLog
+import java.nio.FloatBuffer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.FloatBuffer
 
+/**
+ * GlUtil — minimal OpenGL ES 2.0 helpers used by every GlFilter.
+ * The API surface matches the public methods called by PipelineRenderer /
+ * ColorAdjustFilter / ChromaKeyFilter / MaskFilter / BlendFilter.
+ */
 object GlUtil {
+    val IDENTITY_MATRIX: FloatArray = floatArrayOf(
+        1f, 0f, 0f, 0f,
+        0f, 1f, 0f, 0f,
+        0f, 0f, 1f, 0f,
+        0f, 0f, 0f, 1f
+    )
+
     private const val TAG = "GlUtil"
 
-    val IDENTITY_MATRIX = FloatArray(16).apply {
-        Matrix.setIdentityM(this, 0)
-    }
-
     fun createProgram(vertexSource: String, fragmentSource: String): Int {
-        val vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, vertexSource)
-        if (vertexShader == 0) return 0
-
-        val pixelShader = loadShader(GLES20.GL_FRAGMENT_SHADER, fragmentSource)
-        if (pixelShader == 0) {
-            GLES20.glDeleteShader(vertexShader)
-            return 0
-        }
-
+        val vs = loadShader(GLES20.GL_VERTEX_SHADER, vertexSource)
+        val fs = loadShader(GLES20.GL_FRAGMENT_SHADER, fragmentSource)
         val program = GLES20.glCreateProgram()
         checkGlError("glCreateProgram")
-        if (program == 0) {
-            AppLog.e(TAG, "Could not create GL program")
-            return 0
-        }
-
-        GLES20.glAttachShader(program, vertexShader)
-        checkGlError("glAttachShader vertex")
-        GLES20.glAttachShader(program, pixelShader)
-        checkGlError("glAttachShader fragment")
+        GLES20.glAttachShader(program, vs)
+        GLES20.glAttachShader(program, fs)
         GLES20.glLinkProgram(program)
-
         val linkStatus = IntArray(1)
         GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, linkStatus, 0)
         if (linkStatus[0] != GLES20.GL_TRUE) {
             val log = GLES20.glGetProgramInfoLog(program)
-            AppLog.e(TAG, "Could not link program: $log")
             GLES20.glDeleteProgram(program)
-            return 0
+            error("Could not link program: $log")
         }
-
-        // Clean up individual shaders once linked
-        GLES20.glDeleteShader(vertexShader)
-        GLES20.glDeleteShader(pixelShader)
         return program
     }
 
-    private fun loadShader(shaderType: Int, source: String): Int {
-        var shader = GLES20.glCreateShader(shaderType)
-        checkGlError("glCreateShader type $shaderType")
+    private fun loadShader(type: Int, source: String): Int {
+        val shader = GLES20.glCreateShader(type)
         GLES20.glShaderSource(shader, source)
         GLES20.glCompileShader(shader)
-
         val compiled = IntArray(1)
         GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, compiled, 0)
-        if (compiled[0] == 0) {
+        if (compiled[0] != GLES20.GL_TRUE) {
             val log = GLES20.glGetShaderInfoLog(shader)
-            AppLog.e(TAG, "Could not compile shader $shaderType: $log")
             GLES20.glDeleteShader(shader)
-            shader = 0
+            error("Could not compile shader: $log")
         }
         return shader
     }
 
     fun checkGlError(op: String) {
-        val error = GLES20.glGetError()
-        if (error != GLES20.GL_NO_ERROR) {
-            val msg = "$op: glError 0x${Integer.toHexString(error)}"
-            AppLog.e(TAG, msg)
-            throw RuntimeException(msg)
+        val err = GLES20.glGetError()
+        if (err != GLES20.GL_NO_ERROR) {
+            error("$op: glError 0x${Integer.toHexString(err)}")
         }
     }
 
     fun checkLocation(location: Int, label: String) {
-        if (location < 0) {
-            AppLog.w(TAG, "Unable to locate uniform/attribute '$label' in program")
-        }
+        if (location < 0) error("Unable to locate $label in program")
     }
 
     fun createFloatBuffer(coords: FloatArray): FloatBuffer {
-        val bb = ByteBuffer.allocateDirect(coords.size * 4)
-        bb.order(ByteOrder.nativeOrder())
+        val bb = ByteBuffer.allocateDirect(coords.size * 4).order(ByteOrder.nativeOrder())
         val fb = bb.asFloatBuffer()
-        fb.put(coords)
-        fb.position(0)
+        fb.put(coords).position(0)
         return fb
     }
 
     fun generateTexture(target: Int): Int {
-        val textures = IntArray(1)
-        GLES20.glGenTextures(1, textures, 0)
-        checkGlError("glGenTextures")
-        val texId = textures[0]
-        GLES20.glBindTexture(target, texId)
-        checkGlError("glBindTexture $texId")
-
-        GLES20.glTexParameterf(target, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR.toFloat())
-        GLES20.glTexParameterf(target, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR.toFloat())
+        val tex = IntArray(1)
+        GLES20.glGenTextures(1, tex, 0)
+        GLES20.glBindTexture(target, tex[0])
+        GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-        checkGlError("glTexParameter")
+        checkGlError("generateTexture")
+        return tex[0]
+    }
 
-        return texId
+    /** Builds an offscreen FBO + RGBA texture of (w,h) and returns its GL name. */
+    fun createOffscreenTexture(width: Int, height: Int): Int {
+        val tex = generateTexture(GLES20.GL_TEXTURE_2D)
+        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, width, height, 0,
+            GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
+        return tex
     }
 }
+
+const val DEFAULT_VERTEX_SHADER = """
+uniform mat4 uMVPMatrix;
+uniform mat4 uTexMatrix;
+attribute vec4 aPosition;
+attribute vec4 aTextureCoord;
+varying vec2 vTexCoord;
+void main() {
+    gl_Position = uMVPMatrix * aPosition;
+    vTexCoord = (uTexMatrix * aTextureCoord).xy;
+}
+"""
+
+const val DEFAULT_FRAGMENT_SHADER = """
+precision mediump float;
+varying vec2 vTexCoord;
+uniform sampler2D sTexture;
+void main() {
+    gl_FragColor = texture2D(sTexture, vTexCoord);
+}
+"""
+
+const val OE_FRAGMENT_SHADER = """
+#extension GL_OES_EGL_image_external : require
+precision mediump float;
+varying vec2 vTexCoord;
+uniform samplerExternalOES sTexture;
+void main() {
+    gl_FragColor = texture2D(sTexture, vTexCoord);
+}
+"""
+
+val VERTEX_TRIANGLE = floatArrayOf(
+    -1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
+     1.0f, -1.0f, 0.0f, 1.0f, 0.0f,
+    -1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
+     1.0f,  1.0f, 0.0f, 1.0f, 1.0f
+)

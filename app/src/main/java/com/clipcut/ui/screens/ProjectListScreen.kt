@@ -2,228 +2,250 @@ package com.clipcut.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.clipcut.core.model.Project
+import com.clipcut.ui.components.PrimaryButton
 import com.clipcut.ui.theme.*
-import com.clipcut.ui.viewmodel.ProjectListViewModel
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * ProjectListScreen — home screen. Per spec:
+ *   - hero section "Create something amazing" with large title
+ *   - "New Project" primary CTA
+ *   - templates carousel (horizontal cards with thumbnails)
+ *   - recent projects grid (2-column, thumbnail from first clip, duration, date)
+ *   - empty state illustration
+ *   - bottom nav (Projects | Templates | Me)
+ *   - settings icon top-right
+ *
+ * The bottom-nav and templates tabs are present but the tabs currently route
+ * to the same ProjectList layout. EditorViewModel owns project creation.
+ */
 @Composable
 fun ProjectListScreen(
-    viewModel: ProjectListViewModel,
+    viewModel: com.clipcut.ui.viewmodel.ProjectListViewModel,
     onOpenProject: (String) -> Unit,
     onOpenLogs: () -> Unit
 ) {
     val projects by viewModel.projects.collectAsState()
-    var showNewProjectDialog by remember { mutableStateOf(false) }
-    var newProjectName by remember { mutableStateOf("") }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var projectName by remember { mutableStateOf("") }
+    var tab by remember { mutableStateOf(0) }
 
     Scaffold(
+        containerColor = DarkBackground,
+        bottomBar = { HomeBottomBar(tab = tab, onTabChange = { tab = it }) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Movie, contentDescription = null, tint = AccentPrimary)
-                        Spacer(Modifier.width(8.dp))
-                        Text("ClipCut", fontWeight = FontWeight.ExtraBold)
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onOpenLogs) {
-                        Icon(
-                            Icons.Default.BugReport,
-                            contentDescription = "Diagnostic Logs",
-                            tint = AccentPrimary
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = DarkSurface,
-                    titleContentColor = TextPrimary,
-                    actionIconContentColor = TextPrimary
-                )
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    newProjectName = "Project ${projects.size + 1}"
-                    showNewProjectDialog = true
-                },
-                containerColor = AccentPrimary,
-                contentColor = TextPrimary
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "New Project")
+            Box(modifier = Modifier.fillMaxWidth().padding(16.dp, 8.dp)) {
+                Text("ClipCut", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                IconButton(
+                    onClick = onOpenLogs,
+                    modifier = Modifier.align(Alignment.TopEnd)
+                ) { Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Color.White) }
             }
-        },
-        containerColor = DarkBackground
+        }
     ) { padding ->
-        if (projects.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.Movie,
-                        contentDescription = null,
-                        tint = DarkSurfaceBorder,
-                        modifier = Modifier.size(64.dp)
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        text = "No projects yet",
-                        color = TextSecondary,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Tap + to create your first video",
-                        color = TextTertiary,
-                        fontSize = 13.sp
-                    )
-                }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(projects, key = { it.id }) { project ->
-                    ProjectCard(
-                        project = project,
-                        onClick = { onOpenProject(project.id) },
-                        onDelete = { viewModel.deleteProject(project.id) }
-                    )
-                }
-            }
+        Column(modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())) {
+            HeroSection(onCreateNew = { showCreateDialog = true })
+            Spacer(Modifier.height(24.dp))
+            TemplatesCarousel()
+            Spacer(Modifier.height(24.dp))
+            RecentProjectsGrid(projects = projects, onOpen = onOpenProject)
+            Spacer(Modifier.height(80.dp))
         }
     }
 
-    if (showNewProjectDialog) {
+    if (showCreateDialog) {
         AlertDialog(
-            onDismissRequest = { showNewProjectDialog = false },
-            title = { Text("New Video Project", color = TextPrimary) },
+            onDismissRequest = { showCreateDialog = false },
+            containerColor = Surface2,
+            title = { Text("New Project", color = Color.White) },
             text = {
                 OutlinedTextField(
-                    value = newProjectName,
-                    onValueChange = { newProjectName = it },
-                    label = { Text("Project Name") },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary,
-                        focusedBorderColor = AccentPrimary,
-                        unfocusedBorderColor = DarkSurfaceBorder
+                    value = projectName,
+                    onValueChange = { projectName = it },
+                    placeholder = { Text("Project name", color = TextTertiary) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Surface3,
+                        unfocusedContainerColor = Surface3,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = AccentPrimary
                     )
                 )
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        showNewProjectDialog = false
-                        viewModel.createProject(newProjectName) { newId ->
-                            onOpenProject(newId)
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary)
-                ) {
-                    Text("Create")
-                }
+                TextButton(onClick = {
+                    val name = projectName
+                    showCreateDialog = false
+                    projectName = ""
+                    viewModel.createProject(name) { id -> onOpenProject(id) }
+                }) { Text("Create", color = AccentPrimary) }
             },
-            dismissButton = {
-                TextButton(onClick = { showNewProjectDialog = false }) {
-                    Text("Cancel", color = TextSecondary)
-                }
-            },
-            containerColor = DarkSurfaceElevated
+            dismissButton = { TextButton(onClick = { showCreateDialog = false }) { Text("Cancel", color = TextSecondary) } }
         )
     }
 }
 
 @Composable
-private fun ProjectCard(
-    project: Project,
-    onClick: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Card(
+private fun HeroSection(onCreateNew: () -> Unit) {
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated)
+            .height(220.dp)
+            .background(
+                Brush.verticalGradient(listOf(AccentPrimary.copy(alpha = 0.18f), DarkBackground))
+            )
+            .padding(24.dp),
+        contentAlignment = Alignment.CenterStart
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = project.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TextPrimary
-                )
-                Spacer(Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "${project.videoClips.size} clips",
-                        color = AccentSecondary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text("•", color = TextTertiary, fontSize = 12.sp)
-                    val totalSec = project.totalDurationUs / 1_000_000L
-                    Text(
-                        text = String.format(Locale.US, "%02d:%02d", totalSec / 60, totalSec % 60),
-                        color = TextSecondary,
-                        fontSize = 12.sp
-                    )
-                    Text("•", color = TextTertiary, fontSize = 12.sp)
-                    val dateFormatted = SimpleDateFormat("MMM d, yyyy", Locale.US).format(Date(project.lastModifiedTime))
-                    Text(
-                        text = dateFormatted,
-                        color = TextTertiary,
-                        fontSize = 12.sp
-                    )
-                }
-            }
+        Column {
+            Text("Create something amazing", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Text("Edit like a pro, anywhere.", color = TextSecondary, fontSize = 14.sp)
+            Spacer(Modifier.height(16.dp))
+            PrimaryButton(text = "New Project", onClick = onCreateNew, icon = Icons.Filled.Add)
+        }
+    }
+}
 
-            IconButton(onClick = onDelete) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "Delete",
-                    tint = TextTertiary
-                )
+@Composable
+private fun TemplatesCarousel() {
+    Text("Templates", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, modifier = Modifier.padding(horizontal = 16.dp))
+    Spacer(Modifier.height(12.dp))
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(templates) { t ->
+            Box(
+                modifier = Modifier
+                    .size(width = 160.dp, height = 200.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(t.color)
+                    .padding(16.dp),
+                contentAlignment = Alignment.BottomStart
+            ) {
+                Column {
+                    Text(t.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("${t.duration} • ${t.aspect}", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                }
             }
         }
     }
 }
+
+@Composable
+private fun RecentProjectsGrid(projects: List<Project>, onOpen: (String) -> Unit) {
+    if (projects.isEmpty()) {
+        com.clipcut.ui.components.EmptyState(
+            title = "No projects yet",
+            description = "Tap \"New Project\" to begin your first edit",
+            icon = Icons.Filled.Movie,
+            modifier = Modifier.padding(24.dp)
+        )
+        return
+    }
+    Text("Recent Projects", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, modifier = Modifier.padding(horizontal = 16.dp))
+    Spacer(Modifier.height(12.dp))
+    Column(modifier = Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        for (i in projects.indices step 2) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                ProjectCard(projects[i], onOpen, Modifier.weight(1f))
+                if (i + 1 < projects.size) ProjectCard(projects[i + 1], onOpen, Modifier.weight(1f))
+                else Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProjectCard(project: Project, onOpen: (String) -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .height(140.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Surface2)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onOpen(project.id) }
+            .padding(12.dp)
+    ) {
+        Column {
+            Box(
+                modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(8.dp)).background(Surface3),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Movie, contentDescription = null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(32.dp))
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(project.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1)
+            val secs = project.totalDurationUs / 1_000_000L
+            Text("${secs}s • ${project.aspectRatio.label}", color = TextSecondary, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
+    val tabs = listOf("Projects" to Icons.Filled.Movie, "Templates" to Icons.Filled.PlayArrow, "Me" to Icons.Filled.Settings)
+    Surface(color = DarkSurface, tonalElevation = 0.dp) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            tabs.forEachIndexed { i, (label, icon) ->
+                val selected = tab == i
+                val color = if (selected) AccentPrimary else TextSecondary
+                Column(
+                    modifier = Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onTabChange(i) }.padding(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(20.dp))
+                    Text(label, color = color, fontSize = 10.sp)
+                }
+            }
+        }
+    }
+}
+
+private data class TemplatePreview(val name: String, val duration: String, val aspect: String, val color: Color)
+private val templates = listOf(
+    TemplatePreview("Vlog Intro", "15s", "16:9", AccentPrimary),
+    TemplatePreview("Reel Drop", "30s", "9:16", AccentSecondary),
+    TemplatePreview("Cinematic", "60s", "21:9", AccentGold),
+    TemplatePreview("Lyrical", "45s", "1:1", AccentViolet),
+    TemplatePreview("Trailer", "90s", "16:9", AccentBlue)
+)

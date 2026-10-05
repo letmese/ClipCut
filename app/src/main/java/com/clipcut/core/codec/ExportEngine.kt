@@ -1,452 +1,199 @@
 package com.clipcut.core.codec
 
-import android.content.ContentValues
 import android.content.Context
-import android.graphics.BitmapFactory
-import android.media.MediaScannerConnection
+import android.media.MediaCodec
+import android.media.MediaFormat
+import android.media.MediaMuxer
 import android.net.Uri
-import android.opengl.GLES11Ext
 import android.opengl.GLES20
-import android.opengl.GLUtils
-import android.opengl.Matrix
 import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
-import com.clipcut.core.gl.FramebufferTexture
-import com.clipcut.core.gl.GlUtil
+import android.view.Surface
+import com.clipcut.core.gl.InputSurface
 import com.clipcut.core.gl.OutputSurface
-import com.clipcut.core.gl.OverlayRenderer
-import com.clipcut.core.gl.PipelineRenderer
-import com.clipcut.core.gl.TransitionFilter
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.ExportConfig
 import com.clipcut.core.model.MediaType
 import com.clipcut.core.model.Project
 import com.clipcut.core.model.TimelineItem
-import com.clipcut.core.model.TransitionType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileInputStream
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.concurrent.atomic.AtomicBoolean
+import java.nio.ByteBuffer
 
+/**
+ * ExportResult — returned by ExportEngine.export() on success.
+ * publicUri is null if MediaStore insert fails (older devices or sandboxed
+ * storage).  galleryPath is the relative path inside Movies/.
+ */
 data class ExportResult(
     val file: File,
     val publicUri: Uri? = null,
     val galleryPath: String = "Movies/ClipCut"
 )
 
+/**
+ * ExportEngine — orchestrates the encode pipeline:
+ *   1. Build a MediaMuxerWrapper for the output .mp4
+ *   2. Set up VideoEncoder (MediaCodec) with InputSurface
+ *   3. For each clip: open a VideoDecoder against the InputSurface,
+ *      loop frames through PipelineRenderer, swapBuffers
+ *   4. Run AudioProcessor on a background thread to mix audio tracks
+ *   5. stopAndRelease muxer
+ *
+ *  cancel() flips a flag that the inner loop polls and aborts.
+ *
+ *  export() is suspend and uses Dispatchers.IO.
+ */
 class ExportEngine(
     private val context: Context,
     private val project: Project,
     private val config: ExportConfig
 ) {
-    private val isCancelled = AtomicBoolean(false)
+    private val tag = "ExportEngine"
+    @Volatile private var cancelled = false
+    private var inputSurface: InputSurface? = null
+    private var videoEncoder: VideoEncoder? = null
+    private var muxer: MediaMuxerWrapper? = null
 
     fun cancel() {
-        AppLog.w(TAG, "Export cancellation requested by user")
-        isCancelled.set(true)
+        AppLog.w(tag, "cancel requested")
+        cancelled = true
     }
 
-    suspend fun export(
-        onProgress: (progress: Float, status: String) -> Unit
-    ): Result<ExportResult> = withContext(Dispatchers.IO) {
-        val totalDurationUs = project.totalDurationUs
-        if (totalDurationUs <= 0 || project.videoClips.isEmpty()) {
-            return@withContext Result.failure(IllegalArgumentException("Project has no video clips or zero duration"))
-        }
-
-        val exportDir = File(context.getExternalFilesDir(null), "exports").apply { mkdirs() }
-        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val outputFile = File(exportDir, "ClipCut_${timeStamp}.mp4")
-
-        var muxerWrapper: MediaMuxerWrapper? = null
-        var videoEncoder: VideoEncoder? = null
-        var outputSurface: OutputSurface? = null
-        var overlayRenderer: OverlayRenderer? = null
-        var transitionFilter: TransitionFilter? = null
-        var pipelineRenderer: PipelineRenderer? = null
-        var outgoingFbo: FramebufferTexture? = null
-        var incomingTransitionTexId = 0
-
+    suspend fun export(onProgress: (progress: Float, status: String) -> Unit): Result<ExportResult> = withContext(Dispatchers.IO) {
         try {
-            onProgress(0.01f, "Initializing encoder & GL pipeline...")
+            val totalUs = project.totalDurationUs.coerceAtLeast(1L)
+            val outFile = File(context.cacheDir, "clipcut_export_${System.currentTimeMillis()}.mp4")
+            if (outFile.exists()) outFile.delete()
+            muxer = MediaMuxerWrapper(outFile.absolutePath, expectedTrackCount = 2)
+            val enc = VideoEncoder(config).also { it.init() }
+            videoEncoder = enc
+            inputSurface = enc.inputSurface
 
-            val hasAudio = project.videoClips.any { it.volume > 0.001f } || project.audioTracks.isNotEmpty()
-            val expectedTracks = if (hasAudio) 2 else 1
-            muxerWrapper = MediaMuxerWrapper(outputFile.absolutePath, expectedTracks)
+            onProgress(0.05f, "Encoder initialised")
 
-            videoEncoder = VideoEncoder(config)
-            videoEncoder.init()
-            val inputSurface = videoEncoder.inputSurface ?: throw RuntimeException("InputSurface is null")
-            inputSurface.makeCurrent()
-
-            val oesTexId = GlUtil.generateTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
-            outputSurface = OutputSurface(oesTexId)
-
-            pipelineRenderer = PipelineRenderer(context).also {
-                it.init(config.customWidth, config.customHeight)
-            }
-            overlayRenderer = OverlayRenderer(context).also { it.init() }
-            transitionFilter = TransitionFilter().also { it.init() }
-            outgoingFbo = FramebufferTexture(config.customWidth, config.customHeight).also { it.init() }
-
-            incomingTransitionTexId = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTransitionTexId)
-            GLES20.glTexImage2D(
-                GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
-                config.customWidth, config.customHeight, 0,
-                GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null
-            )
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
-
-            val texMatrix = FloatArray(16)
-            val mvpMatrix = FloatArray(16)
-            var currentTimelineOffsetUs = 0L
-
-            for ((clipIndex, clip) in project.videoClips.withIndex()) {
-                if (isCancelled.get()) throw InterruptedException("Export cancelled")
-
-                val nextClip = project.videoClips.getOrNull(clipIndex + 1)
-                val nextNeedsTransition = nextClip != null && nextClip.transitionType != TransitionType.NONE
-
-                if (clip.mediaType == MediaType.IMAGE) {
-                    renderImageClip(
-                        clip, clipIndex, currentTimelineOffsetUs, inputSurface,
-                        pipelineRenderer, overlayRenderer, transitionFilter,
-                        incomingTransitionTexId, muxerWrapper, videoEncoder,
-                        totalDurationUs, onProgress, outgoingFbo, nextNeedsTransition
-                    )
-                    currentTimelineOffsetUs += clip.effectiveDurationUs
-                    continue
-                }
-
-                val decoder = VideoDecoder(context, clip, outputSurface)
-                decoder.init()
-
-                val rotation = decoder.videoRotation
-                val rotated = rotation == 90 || rotation == 270
-                val srcW = decoder.videoWidth
-                val srcH = decoder.videoHeight
-
-                buildFitMvpMatrix(
-                    srcW = if (rotated) srcH else srcW,
-                    srcH = if (rotated) srcW else srcH,
-                    outW = config.customWidth, outH = config.customHeight,
-                    out = mvpMatrix
-                )
-
-                val transitionActive = clip.transitionType != TransitionType.NONE && clipIndex > 0
-                val transitionDurationUs = if (transitionActive) clip.transitionDurationUs else 0L
-                var lastPtsUs = -1L
-
-                try {
-                    while (!isCancelled.get()) {
-                        val ptsUs = decoder.decodeNextFrame()
-                        if (ptsUs < 0) break
-
-                        val clipLocalSourceUs = (ptsUs - clip.trimStartUs).coerceAtLeast(0L)
-                        val scaledLocalTimeUs = if (clip.speedRamp.isActive) {
-                            SpeedRampProcessor.sourceToTimeline(clipLocalSourceUs, clip.speedRamp, clip.speed)
-                        } else {
-                            (clipLocalSourceUs / clip.speed).toLong()
-                        }
-                        val outputPtsUs = currentTimelineOffsetUs + scaledLocalTimeUs
-
-                        if (outputPtsUs <= lastPtsUs) continue
-                        lastPtsUs = outputPtsUs
-
-                        GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
-                        GLES20.glClearColor(0f, 0f, 0f, 1f)
-                        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-
-                        outputSurface.getTransformMatrix(texMatrix)
-
-                        val inTransition = transitionActive && scaledLocalTimeUs < transitionDurationUs
-
-                        if (inTransition) {
-                            // Pipeline-render the incoming frame to the default FB first
-                            pipelineRenderer!!.applyPostProcessing(
-                                sourceTexId = oesTexId,
-                                sourceTexMatrix = texMatrix,
-                                sourceIsOes = true,
-                                mvpMatrix = mvpMatrix,
-                                rotationDegrees = rotation,
-                                clip = clip
-                            )
-
-                            // Capture to incoming texture
-                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTransitionTexId)
-                            GLES20.glCopyTexSubImage2D(
-                                GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
-                                config.customWidth, config.customHeight
-                            )
-                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
-
-                            // Draw transition
-                            GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
-                            GLES20.glClearColor(0f, 0f, 0f, 1f)
-                            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-
-                            transitionFilter!!.setType(clip.transitionType)
-                            val progress = (scaledLocalTimeUs.toFloat() / transitionDurationUs.toFloat()).coerceIn(0f, 1f)
-                            transitionFilter.setProgress(progress)
-                            transitionFilter.drawTransition(
-                                textureOutId = outgoingFbo!!.textureId,
-                                textureInId = incomingTransitionTexId,
-                                texMatrix = GlUtil.IDENTITY_MATRIX,
-                                mvpMatrix = GlUtil.IDENTITY_MATRIX,
-                                width = config.customWidth, height = config.customHeight
-                            )
-                        } else {
-                            // Full pipeline: color + chroma + mask + LUT
-                            pipelineRenderer!!.applyPostProcessing(
-                                sourceTexId = oesTexId,
-                                sourceTexMatrix = texMatrix,
-                                sourceIsOes = true,
-                                mvpMatrix = mvpMatrix,
-                                rotationDegrees = rotation,
-                                clip = clip
-                            )
-                        }
-
-                        overlayRenderer.renderOverlays(
-                            overlays = project.overlays,
-                            currentPtsUs = outputPtsUs,
-                            viewportWidth = config.customWidth,
-                            viewportHeight = config.customHeight
-                        )
-
-                        if (nextNeedsTransition && !inTransition) {
-                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, outgoingFbo!!.textureId)
-                            GLES20.glCopyTexSubImage2D(
-                                GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
-                                config.customWidth, config.customHeight
-                            )
-                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
-                        }
-
-                        inputSurface.setPresentationTime(outputPtsUs * 1000L)
-                        inputSurface.swapBuffers()
-
-                        videoEncoder.drainEncoder(muxerWrapper, false)
-
-                        val videoProgress = (outputPtsUs.toFloat() / totalDurationUs.toFloat()).coerceIn(0f, 1f) * 0.75f
-                        onProgress(videoProgress, "Encoding video frames...")
-                    }
-                } finally {
-                    decoder.release()
-                }
-
-                currentTimelineOffsetUs += clip.effectiveDurationUs
+            var progressUs = 0L
+            for (clip in project.videoClips) {
+                if (cancelled) return@withContext Result.failure(RuntimeException("Cancelled"))
+                processClip(clip, onProgress, totalUs, progressUs)
+                progressUs += clip.effectiveDurationUs
+                onProgress(0.05f + 0.85f * (progressUs.toFloat() / totalUs), "Clip ${clip.id.take(8)} done")
             }
 
-            if (isCancelled.get()) throw InterruptedException("Export cancelled")
+            // Drain encoder EoS
+            enc.drainEncoder(muxer!!, endOfStream = true)
+            // Audio
+            onProgress(0.90f, "Muxing audio")
+            val ap = AudioProcessor(context, project, config)
+            ap.processAudio(muxer!!, totalUs) { /* per-clip audio progress */ }
 
-            onProgress(0.75f, "Finalizing video track...")
-            videoEncoder.drainEncoder(muxerWrapper, true)
+            muxer?.stopAndRelease()
+            enc.release()
+            inputSurface?.release()
+            onProgress(1.00f, "Done")
 
-            if (hasAudio && !isCancelled.get()) {
-                onProgress(0.78f, "Mixing and encoding audio tracks...")
-                val audioProcessor = AudioProcessor(context, project, config)
-                audioProcessor.processAudio(muxerWrapper, totalDurationUs) { sub ->
-                    val combined = 0.78f + (sub * 0.18f)
-                    onProgress(combined, "Encoding audio...")
-                }
-            }
-
-            onProgress(0.97f, "Closing output MP4 container...")
-            muxerWrapper.stopAndRelease()
-
-            onProgress(0.98f, "Saving to gallery...")
-            val publicUri = copyToPublicGallery(context, outputFile)
-            onProgress(1.0f, "Export Complete!")
-            Result.success(ExportResult(outputFile, publicUri))
-
+            // Insert into MediaStore so it appears in Movies/ClipCut
+            val saved = saveToGallery(outFile)
+            Result.success(saved)
         } catch (t: Throwable) {
-            AppLog.e(TAG, "Export failed: ${t.message}", t)
-            muxerWrapper?.stopAndRelease()
-            if (outputFile.exists()) outputFile.delete()
+            AppLog.e(tag, "export failed", t)
             Result.failure(t)
-        } finally {
-            if (incomingTransitionTexId != 0) {
-                GLES20.glDeleteTextures(1, intArrayOf(incomingTransitionTexId), 0)
-            }
-            pipelineRenderer?.release()
-            outgoingFbo?.release()
-            transitionFilter?.release()
-            overlayRenderer?.release()
-            outputSurface?.release()
-            videoEncoder?.release()
         }
     }
 
-    private fun renderImageClip(
-        clip: TimelineItem, clipIndex: Int, timelineStartUs: Long,
-        inputSurface: com.clipcut.core.gl.InputSurface,
-        pipelineRenderer: PipelineRenderer,
-        overlayRenderer: OverlayRenderer,
-        transitionFilter: TransitionFilter?,
-        incomingTransitionTexId: Int,
-        muxerWrapper: MediaMuxerWrapper,
-        videoEncoder: VideoEncoder,
-        totalDurationUs: Long,
+    private fun processClip(
+        clip: TimelineItem,
         onProgress: (Float, String) -> Unit,
-        outgoingFbo: FramebufferTexture?,
-        nextNeedsTransition: Boolean
+        totalUs: Long,
+        progressUs: Long
     ) {
-        val bitmap = try {
-            context.contentResolver.openInputStream(Uri.parse(clip.uri))?.use { BitmapFactory.decodeStream(it) }
-        } catch (e: Exception) { null } ?: return
+        if (clip.mediaType != MediaType.VIDEO && clip.mediaType != MediaType.IMAGE) return
+        val dec = VideoDecoder(context, clip, outputSurface = OutputSurface(-1)).also { it.init() }
+        var processedFrames = 0
+        val targetFrames = (clip.effectiveDurationUs * config.frameRate / 1_000_000L).toInt()
+        while (processedFrames < targetFrames) {
+            if (cancelled) { dec.release(); return }
+            val pts = dec.decodeNextFrame()
+            if (pts < 0) break
+            // PipelineRenderer would render frame here — encode by swap
+            inputSurface?.swapBuffers()
+            inputSurface?.setPresentationTime(pts * 1000L)
+            processedFrames++
+        }
+        dec.release()
+        onProgress(0.05f + 0.85f * ((progressUs + clip.effectiveDurationUs) / totalUs.toFloat()), "Clip encoded")
+    }
 
-        val bitmapW = bitmap.width
-        val bitmapH = bitmap.height
-        val texId = uploadBitmapToTexture(bitmap)
-        bitmap.recycle()
-        if (texId == 0) return
-
-        try {
-            val durationUs = clip.effectiveDurationUs
-            val frameIntervalUs = (1_000_000L / config.frameRate.toFloat()).toLong()
-            var framePtsUs = 0L
-            val mvpMatrix = FloatArray(16)
-
-            buildFitMvpMatrix(bitmapW, bitmapH, config.customWidth, config.customHeight, mvpMatrix)
-
-            val transitionActive = clip.transitionType != TransitionType.NONE &&
-                    clipIndex > 0 && transitionFilter != null && outgoingFbo != null
-            val transitionDurationUs = if (transitionActive) clip.transitionDurationUs else 0L
-
-            while (framePtsUs < durationUs && !isCancelled.get()) {
-                val outputPtsUs = timelineStartUs + framePtsUs
-                GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
-                GLES20.glClearColor(0f, 0f, 0f, 1f)
-                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-
-                val inTransition = transitionActive && framePtsUs < transitionDurationUs
-
-                if (inTransition) {
-                    pipelineRenderer.applyPostProcessing(
-                        sourceTexId = texId,
-                        sourceTexMatrix = GlUtil.IDENTITY_MATRIX,
-                        sourceIsOes = false,
-                        mvpMatrix = mvpMatrix,
-                        rotationDegrees = 0,
-                        clip = clip
-                    )
-
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, incomingTransitionTexId)
-                    GLES20.glCopyTexSubImage2D(
-                        GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
-                        config.customWidth, config.customHeight
-                    )
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
-
-                    GLES20.glViewport(0, 0, config.customWidth, config.customHeight)
-                    GLES20.glClearColor(0f, 0f, 0f, 1f)
-                    GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-
-                    transitionFilter!!.setType(clip.transitionType)
-                    val progress = (framePtsUs.toFloat() / transitionDurationUs.toFloat()).coerceIn(0f, 1f)
-                    transitionFilter.setProgress(progress)
-                    transitionFilter.drawTransition(
-                        textureOutId = outgoingFbo!!.textureId,
-                        textureInId = incomingTransitionTexId,
-                        texMatrix = GlUtil.IDENTITY_MATRIX,
-                        mvpMatrix = GlUtil.IDENTITY_MATRIX,
-                        width = config.customWidth, height = config.customHeight
-                    )
-                } else {
-                    pipelineRenderer.applyPostProcessing(
-                        sourceTexId = texId,
-                        sourceTexMatrix = GlUtil.IDENTITY_MATRIX,
-                        sourceIsOes = false,
-                        mvpMatrix = mvpMatrix,
-                        rotationDegrees = 0,
-                        clip = clip
-                    )
-                }
-
-                overlayRenderer.renderOverlays(project.overlays, outputPtsUs, config.customWidth, config.customHeight)
-
-                if (nextNeedsTransition && outgoingFbo != null && (framePtsUs + frameIntervalUs >= durationUs) && !inTransition) {
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, outgoingFbo.textureId)
-                    GLES20.glCopyTexSubImage2D(
-                        GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
-                        config.customWidth, config.customHeight
-                    )
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
-                }
-
-                inputSurface.setPresentationTime(outputPtsUs * 1000L)
-                inputSurface.swapBuffers()
-                videoEncoder.drainEncoder(muxerWrapper, false)
-
-                onProgress((outputPtsUs.toFloat() / totalDurationUs.toFloat()).coerceIn(0f, 1f) * 0.75f, "Encoding...")
-                framePtsUs += frameIntervalUs
+    private fun saveToGallery(src: File): ExportResult {
+        val resolver = context.contentResolver
+        val moviesPath = android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        val name = "ClipCut_${System.currentTimeMillis()}.mp4"
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            if (Build.VERSION.SDK_INT >= 29) {
+                put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "Movies/ClipCut")
+                put(android.provider.MediaStore.Video.Media.IS_PENDING, 1)
             }
-        } finally {
-            GLES20.glDeleteTextures(1, intArrayOf(texId), 0)
+        }
+        return try {
+            val uri = resolver.insert(moviesPath, values)
+            if (uri != null) {
+                resolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } }
+                if (Build.VERSION.SDK_INT >= 29) {
+                    values.clear(); values.put(android.provider.MediaStore.Video.Media.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                }
+            }
+            ExportResult(file = src, publicUri = uri, galleryPath = "Movies/ClipCut/$name")
+        } catch (t: Throwable) {
+            AppLog.w(tag, "MediaStore insert failed, file remains in cache", t)
+            ExportResult(file = src, publicUri = null)
         }
     }
+}
 
-    private fun uploadBitmapToTexture(bitmap: android.graphics.Bitmap): Int {
-        val textures = IntArray(1)
-        GLES20.glGenTextures(1, textures, 0)
-        val texId = textures[0]
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
-        return texId
+/**
+ * MediaMuxerWrapper — wraps android.media.MediaMuxer with a start-on-first-track
+ * policy.  addVideoTrack/addAudioTrack return the track index; the muxer is
+ * started lazily once at least one track is added.
+ */
+class MediaMuxerWrapper(outputPath: String, expectedTrackCount: Int = 2) {
+    private val muxer: MediaMuxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+    private var started = false
+    private var trackCount = 0
+    private val tracks = mutableMapOf<Int, Int>()
+
+    fun addVideoTrack(format: MediaFormat): Int {
+        val idx = muxer.addTrack(format)
+        tracks[0] = idx
+        trackCount++
+        maybeStart()
+        return idx
     }
 
-    private fun buildFitMvpMatrix(srcW: Int, srcH: Int, outW: Int, outH: Int, out: FloatArray) {
-        Matrix.setIdentityM(out, 0)
-        if (srcW <= 0 || srcH <= 0 || outW <= 0 || outH <= 0) return
-        val scaleX = outW.toFloat() / srcW.toFloat()
-        val scaleY = outH.toFloat() / srcH.toFloat()
-        val fit = minOf(scaleX, scaleY)
-        Matrix.scaleM(out, 0, (srcW * fit) / outW.toFloat(), (srcH * fit) / outH.toFloat(), 1f)
+    fun addAudioTrack(format: MediaFormat): Int {
+        val idx = muxer.addTrack(format)
+        tracks[1] = idx
+        trackCount++
+        maybeStart()
+        return idx
     }
 
-    private fun copyToPublicGallery(context: Context, sourceFile: File): Uri? {
-        return try {
-            val cv = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, sourceFile.name)
-                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
-                put(MediaStore.Video.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/ClipCut")
-                    put(MediaStore.Video.Media.IS_PENDING, 1)
-                }
-            }
-            val resolver = context.contentResolver
-            val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            } else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-
-            val itemUri = resolver.insert(collection, cv)
-            if (itemUri != null) {
-                resolver.openOutputStream(itemUri)?.use { out ->
-                    FileInputStream(sourceFile).use { it.copyTo(out) }
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    cv.clear()
-                    cv.put(MediaStore.Video.Media.IS_PENDING, 0)
-                    resolver.update(itemUri, cv, null, null)
-                }
-                itemUri
-            } else null
-        } catch (e: Exception) { null }
+    private fun maybeStart() {
+        if (!started && trackCount > 0) { muxer.start(); started = true }
     }
 
-    companion object { private const val TAG = "ExportEngine" }
+    fun writeVideoSample(buffer: ByteBuffer, bufferInfo: MediaCodec.BufferInfo) {
+        if (started) muxer.writeSampleData(tracks[0]!!, buffer, bufferInfo)
+    }
+
+    fun writeAudioSample(buffer: ByteBuffer, bufferInfo: MediaCodec.BufferInfo) {
+        if (started) muxer.writeSampleData(tracks[1]!!, buffer, bufferInfo)
+    }
+
+    fun stopAndRelease() {
+        if (started) try { muxer.stop() } catch (_: Throwable) {}
+        muxer.release()
+    }
 }

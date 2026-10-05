@@ -2,30 +2,26 @@ package com.clipcut.core.log
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.util.Log
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
-import java.io.FileWriter
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.Executors
 
-private val TIME_FORMATTER: ThreadLocal<SimpleDateFormat> = object : ThreadLocal<SimpleDateFormat>() {
-    override fun initialValue(): SimpleDateFormat =
-        SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
-}
-
-private val FILE_NAME_FORMATTER: ThreadLocal<SimpleDateFormat> = object : ThreadLocal<SimpleDateFormat>() {
-    override fun initialValue(): SimpleDateFormat =
-        SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-}
-
+/**
+ * AppLog — central structured logger. All layers (core, data, ui) emit here.
+ * The IME-style LogViewer screen consumes logsFlow.
+ *
+ * LogEntry.toLogLine() is the canonical single-line format written to disk
+ * by flush(); LogViewerScreen reads via getFullLogText().
+ */
 data class LogEntry(
     val timestamp: Long = System.currentTimeMillis(),
     val level: Level,
@@ -35,162 +31,90 @@ data class LogEntry(
 ) {
     enum class Level { VERBOSE, DEBUG, INFO, WARN, ERROR, FATAL }
 
-    val formattedTime: String
-        get() = TIME_FORMATTER.get()!!.format(Date(timestamp))
+    private val fmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+    val formattedTime: String get() = fmt.format(Date(timestamp))
 
     fun toLogLine(): String {
-        val base = "[$formattedTime] [${level.name.first()}] [$tag] $message"
-        return if (throwable != null) {
-            val sw = StringWriter()
-            throwable.printStackTrace(PrintWriter(sw))
-            "$base\n$sw"
-        } else {
-            base
-        }
+        val t = throwable?.let { sw -> StringWriter().also { pw -> sw.printStackTrace(PrintWriter(pw)) }.toString() } ?: ""
+        return "${formattedTime} ${level.name.first()} $tag: $message${if (t.isNotEmpty()) "\n$t" else ""}"
     }
 }
 
 object AppLog {
-    private const val MAX_MEMORY_LOGS = 2000
-    private const val MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
-    private val diskExecutor = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "AppLog-Disk")
-    }
+    private val _logs = MutableStateFlow<List<LogEntry>>(emptyList())
+    val logsFlow: StateFlow<List<LogEntry>> = _logs.asStateFlow()
 
-    private val _logsFlow = MutableStateFlow<List<LogEntry>>(emptyList())
-    val logsFlow: StateFlow<List<LogEntry>> = _logsFlow.asStateFlow()
-
-    private val inMemoryLogs = ArrayDeque<LogEntry>(MAX_MEMORY_LOGS)
-    private var logDir: File? = null
+    private const val MAX_ENTRIES = 2_000
     private var logFile: File? = null
 
     fun init(context: Context) {
-        val dir = File(context.filesDir, "logs")
-        if (!dir.exists()) {
-            dir.mkdirs()
-        }
-        logDir = dir
-        logFile = File(dir, "clipcut.log")
-
-        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            f("CRASH", "FATAL CRASH on thread ${thread.name}: ${throwable.message}", throwable)
-            flush()
-            defaultHandler?.uncaughtException(thread, throwable)
-        }
-
-        i("AppLog", "=== ClipCut Log System Initialized ===")
-        i("AppLog", "Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (SDK ${android.os.Build.VERSION.SDK_INT})")
+        logFile = File(context.filesDir, "clipcut.log")
+        if (!logFile!!.exists()) logFile!!.createNewFile()
+        Log.i("AppLog", "init at ${logFile!!.absolutePath}")
     }
 
-    fun v(tag: String, msg: String) = log(LogEntry.Level.VERBOSE, tag, msg)
-    fun d(tag: String, msg: String) = log(LogEntry.Level.DEBUG, tag, msg)
-    fun i(tag: String, msg: String) = log(LogEntry.Level.INFO, tag, msg)
-    fun w(tag: String, msg: String, tr: Throwable? = null) = log(LogEntry.Level.WARN, tag, msg, tr)
-    fun e(tag: String, msg: String, tr: Throwable? = null) = log(LogEntry.Level.ERROR, tag, msg, tr)
-    fun f(tag: String, msg: String, tr: Throwable? = null) = log(LogEntry.Level.FATAL, tag, msg, tr)
+    fun v(tag: String, msg: String) = add(LogEntry.Level.VERBOSE, tag, msg)
+    fun d(tag: String, msg: String) = add(LogEntry.Level.DEBUG, tag, msg)
+    fun i(tag: String, msg: String) = add(LogEntry.Level.INFO, tag, msg)
+    fun w(tag: String, msg: String, tr: Throwable? = null) = add(LogEntry.Level.WARN, tag, msg, tr)
+    fun e(tag: String, msg: String, tr: Throwable? = null) = add(LogEntry.Level.ERROR, tag, msg, tr)
+    fun f(tag: String, msg: String, tr: Throwable? = null) = add(LogEntry.Level.FATAL, tag, msg, tr)
 
-    @Synchronized
-    private fun log(level: LogEntry.Level, tag: String, message: String, throwable: Throwable? = null) {
-        val entry = LogEntry(level = level, tag = tag, message = message, throwable = throwable)
-
+    private fun add(level: LogEntry.Level, tag: String, msg: String, tr: Throwable? = null) {
+        val entry = LogEntry(System.currentTimeMillis(), level, tag, msg, tr)
+        val current = _logs.value.toMutableList()
+        current.add(entry)
+        if (current.size > MAX_ENTRIES) {
+            for (i in 0 until current.size - MAX_ENTRIES) current.removeAt(0)
+        }
+        _logs.value = current
         when (level) {
-            LogEntry.Level.VERBOSE -> Log.v(tag, message, throwable)
-            LogEntry.Level.DEBUG -> Log.d(tag, message, throwable)
-            LogEntry.Level.INFO -> Log.i(tag, message, throwable)
-            LogEntry.Level.WARN -> Log.w(tag, message, throwable)
-            LogEntry.Level.ERROR -> Log.e(tag, message, throwable)
-            LogEntry.Level.FATAL -> Log.wtf(tag, message, throwable)
-        }
-
-        if (inMemoryLogs.size >= MAX_MEMORY_LOGS) {
-            inMemoryLogs.removeFirst()
-        }
-        inMemoryLogs.addLast(entry)
-        _logsFlow.value = inMemoryLogs.toList()
-
-        val target = logFile
-        if (target != null) {
-            val line = entry.toLogLine()
-            diskExecutor.execute {
-                try {
-                    if (target.exists() && target.length() > MAX_FILE_SIZE_BYTES) {
-                        val backup = File(target.parentFile, "clipcut_prev.log")
-                        if (backup.exists()) backup.delete()
-                        target.renameTo(backup)
-                    }
-                    FileWriter(target, true).use { fw ->
-                        fw.write(line)
-                        fw.write("\n")
-                    }
-                } catch (t: Throwable) {
-                    Log.e("AppLog", "Failed to write log to disk", t)
-                }
-            }
+            LogEntry.Level.VERBOSE -> Log.v(tag, msg)
+            LogEntry.Level.DEBUG -> Log.d(tag, msg)
+            LogEntry.Level.INFO -> Log.i(tag, msg)
+            LogEntry.Level.WARN -> Log.w(tag, msg, tr)
+            LogEntry.Level.ERROR -> Log.e(tag, msg, tr)
+            LogEntry.Level.FATAL -> Log.wtf(tag, msg, tr)
         }
     }
 
     fun flush() {
-        try {
-            diskExecutor.submit {}.get()
-        } catch (_: Exception) {}
+        logFile?.let { file ->
+            file.bufferedWriter().use { w ->
+                _logs.value.forEach { w.appendLine(it.toLogLine()) }
+            }
+        }
     }
 
     fun getLogFile(context: Context): File {
-        val file = logFile ?: File(context.filesDir, "logs/clipcut.log")
-        if (!file.exists()) {
-            file.parentFile?.mkdirs()
-            file.createNewFile()
-        }
-        return file
+        logFile?.let { return it }
+        init(context)
+        return logFile!!
     }
 
     fun getFullLogText(context: Context): String {
-        return try {
-            val file = getLogFile(context)
-            if (file.exists()) file.readText() else "No logs recorded yet."
-        } catch (e: Exception) {
-            "Error reading log file: ${e.message}"
-        }
+        return _logs.value.joinToString("\n") { it.toLogLine() }
     }
 
     fun clear(context: Context) {
-        synchronized(this) {
-            inMemoryLogs.clear()
-            _logsFlow.value = emptyList()
-        }
-        diskExecutor.execute {
-            try {
-                logFile?.delete()
-                val prev = File(logDir, "clipcut_prev.log")
-                if (prev.exists()) prev.delete()
-            } catch (e: Exception) {
-                Log.e("AppLog", "Failed to clear log files", e)
-            }
-        }
-        i("AppLog", "Logs cleared by user")
+        _logs.value = emptyList()
+        logFile?.let { if (it.exists()) it.delete(); it.createNewFile() }
     }
 
     fun shareLogs(context: Context) {
+        val file = getLogFile(context)
         flush()
         try {
-            val file = getLogFile(context)
-            val uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                file
-            )
-            val timestamp = FILE_NAME_FORMATTER.get()!!.format(Date())
-            val intent = Intent(Intent.ACTION_SEND).apply {
+            val uri = Uri.fromFile(file)
+            val send = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_SUBJECT, "ClipCut Error Log - $timestamp")
-                putExtra(Intent.EXTRA_TEXT, "ClipCut diagnostic log file attached.")
+                putExtra(Intent.EXTRA_SUBJECT, "ClipCut logs")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(intent, "Share Log File"))
-        } catch (e: Exception) {
-            e("AppLog", "Failed to share log file", e)
+            context.startActivity(Intent.createChooser(send, "Share logs"))
+        } catch (t: Throwable) {
+            e("AppLog", "shareLogs failed", t)
         }
     }
 }

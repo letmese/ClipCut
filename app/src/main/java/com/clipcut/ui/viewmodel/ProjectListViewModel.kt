@@ -7,34 +7,54 @@ import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.Project
 import com.clipcut.data.db.ClipCutDatabase
 import com.clipcut.data.db.ProjectEntity
-import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class ProjectListViewModel(application: Application) : AndroidViewModel(application) {
+    private val dao = ClipCutDatabase.getInstance(application).projectDao()
 
-    private val db = ClipCutDatabase.getInstance(application)
-    private val dao = db.projectDao()
+    private val _projects = MutableStateFlow<List<Project>>(emptyList())
+    val projects: StateFlow<List<Project>> = _projects.asStateFlow()
 
-    val projects: StateFlow<List<Project>> = dao.getAllProjectsFlow()
-        .map { entities -> entities.map { it.toDomain() } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    init { refresh() }
+
+    fun refresh() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val list = dao.getProjectById("")?.let { listOf(it.toDomain()) } ?: emptyList()
+            // The Flow-based getAllProjectsFlow returns immediately; refresh manually
+            val helper = ClipCutDatabase.getInstance(getApplication())
+            val db = helper.readableDatabase
+            val cursor = db.query("projects", null, null, null, null, null, "lastModifiedTime DESC")
+            val out = mutableListOf<Project>()
+            cursor.use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getString(c.getColumnIndexOrThrow("id"))
+                    dao.getProjectById(id)?.let { out.add(it.toDomain()) }
+                }
+            }
+            _projects.value = out
+        }
+    }
 
     fun createProject(name: String, onCreated: (String) -> Unit) {
-        viewModelScope.launch {
-            val project = Project(name = name.ifBlank { "New Video" })
-            dao.insertProject(ProjectEntity.fromDomain(project))
-            AppLog.i("ProjectListVM", "Created project: ${project.name} (${project.id})")
-            onCreated(project.id)
+        viewModelScope.launch(Dispatchers.IO) {
+            val p = Project(name = name.ifBlank { "Untitled Video" })
+            dao.insertProject(ProjectEntity.fromDomain(p))
+            AppLog.i(TAG, "createProject ${p.id} name=${p.name}")
+            refresh()
+            onCreated(p.id)
         }
     }
 
     fun deleteProject(id: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             dao.deleteProjectById(id)
-            AppLog.i("ProjectListVM", "Deleted project $id")
+            refresh()
         }
     }
+
+    companion object { private const val TAG = "ProjectListVM" }
 }
