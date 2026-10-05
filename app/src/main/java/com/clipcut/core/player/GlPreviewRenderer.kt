@@ -183,7 +183,7 @@ class GlPreviewRenderer(private val context: Context) {
             if (overId != -1) {
                 GLES20.glEnable(GLES20.GL_BLEND)
                 GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-                overlayFilter?.draw(overId, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, viewportWidth, viewportHeight)
+                overlayFilter?.draw(overId, GlUtil.FLIP_Y_MATRIX, GlUtil.IDENTITY_MATRIX, viewportWidth, viewportHeight)
                 GLES20.glDisable(GLES20.GL_BLEND)
             }
         }

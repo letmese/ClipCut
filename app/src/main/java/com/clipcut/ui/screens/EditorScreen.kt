@@ -28,9 +28,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.BorderStroke
+import com.clipcut.core.model.AspectRatio
 import com.clipcut.core.model.ExportConfig
 import com.clipcut.core.model.MediaType
+import com.clipcut.ui.theme.HairlineBorder
 import com.clipcut.ui.components.EditorToolbar
 import com.clipcut.ui.components.EditorTool
 import com.clipcut.ui.components.PrimaryButton
@@ -94,7 +96,11 @@ fun EditorScreen(
 
     val ctx = LocalContext.current
     val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri != null) viewModel.importMedia(uri, MediaType.VIDEO)
+        if (uri != null) {
+            val type = ctx.contentResolver.getType(uri) ?: ""
+            val mediaType = if (type.startsWith("image/")) MediaType.IMAGE else MediaType.VIDEO
+            viewModel.importMedia(uri, mediaType)
+        }
     }
 
     LaunchedEffect(projectId) { viewModel.loadProject(projectId) }
@@ -106,7 +112,9 @@ fun EditorScreen(
                 onBack = onNavigateBack,
                 onLogs = onOpenLogs,
                 onExport = { showExportDialog = true },
-                title = project?.name ?: "Loading…"
+                title = project?.name ?: "Loading…",
+                currentAspectRatio = project?.aspectRatio ?: AspectRatio.R_16_9,
+                onSelectAspectRatio = { ar -> viewModel.setProjectAspectRatio(ar) }
             )
         },
         bottomBar = {
@@ -358,7 +366,9 @@ private fun EditorTopBar(
     onBack: () -> Unit,
     onLogs: () -> Unit,
     onExport: () -> Unit,
-    title: String
+    title: String,
+    currentAspectRatio: AspectRatio,
+    onSelectAspectRatio: (AspectRatio) -> Unit
 ) {
     Surface(color = Surface1, tonalElevation = 0.dp) {
         Row(
@@ -369,6 +379,34 @@ private fun EditorTopBar(
                 Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
             }
             Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+
+            var showAspectRatioMenu by remember { mutableStateOf(false) }
+            Box(modifier = Modifier.padding(end = 4.dp)) {
+                OutlinedButton(
+                    onClick = { showAspectRatioMenu = true },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    modifier = Modifier.height(32.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(1.dp, HairlineBorder)
+                ) {
+                    Text(currentAspectRatio.label, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                }
+                DropdownMenu(
+                    expanded = showAspectRatioMenu,
+                    onDismissRequest = { showAspectRatioMenu = false }
+                ) {
+                    AspectRatio.values().forEach { ar ->
+                        DropdownMenuItem(
+                            text = { Text("${ar.label} (${ar.description})") },
+                            onClick = {
+                                onSelectAspectRatio(ar)
+                                showAspectRatioMenu = false
+                            }
+                        )
+                    }
+                }
+            }
+
             IconButton(onClick = onLogs) {
                 Icon(Icons.Filled.BugReport, contentDescription = "Logs", tint = Color.White.copy(alpha = 0.7f))
             }

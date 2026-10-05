@@ -18,6 +18,13 @@ object GlUtil {
         0f, 0f, 0f, 1f
     )
 
+    val FLIP_Y_MATRIX: FloatArray = floatArrayOf(
+        1f,  0f, 0f, 0f,
+        0f, -1f, 0f, 0f,
+        0f,  0f, 1f, 0f,
+        0f,  1f, 0f, 1f
+    )
+
     private const val TAG = "GlUtil"
 
     fun createProgram(vertexSource: String, fragmentSource: String): Int {

@@ -45,7 +45,9 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
             dao.insertProject(ProjectEntity.fromDomain(p))
             AppLog.i(TAG, "createProject ${p.id} name=${p.name}")
             refresh()
-            onCreated(p.id)
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                onCreated(p.id)
+            }
         }
     }
 
@@ -57,7 +59,9 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
             dao.insertProject(ProjectEntity.fromDomain(configured))
             AppLog.i(TAG, "createProjectFromTemplate ${configured.id} name=${configured.name}")
             refresh()
-            onCreated(configured.id)
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                onCreated(configured.id)
+            }
         }
     }
 

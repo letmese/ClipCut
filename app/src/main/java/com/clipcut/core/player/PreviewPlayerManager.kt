@@ -57,7 +57,15 @@ class PreviewPlayerManager(private val context: Context) {
         }
     }
 
-    fun setVideoSurface(surface: android.view.Surface?) {
+    private fun runOnMainThread(block: () -> Unit) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            block()
+        } else {
+            android.os.Handler(android.os.Looper.getMainLooper()).post { block() }
+        }
+    }
+
+    fun setVideoSurface(surface: android.view.Surface?) = runOnMainThread {
         player?.setVideoSurface(surface)
     }
 
@@ -79,25 +87,41 @@ class PreviewPlayerManager(private val context: Context) {
         totalUs = project.totalDurationUs
         _totalDurationUs.value = totalUs
         AppLog.d(TAG, "syncWithProject: clips=${project.videoClips.size} total=${totalUs}us")
-        // For full preview we set up a MediaItem list with the first clip — the
-        // rest of the timeline composition is rendered through GlPreviewRenderer.
-        val p = player ?: return
-        if (project.videoClips.isEmpty()) { p.clearMediaItems(); return }
-        p.clearMediaItems()
-        for (clip in project.videoClips) {
-            val mi = MediaItem.Builder()
-                .setUri(clip.uri)
-                .build()
-            p.addMediaItem(mi)
+
+        runOnMainThread {
+            val p = player ?: return@runOnMainThread
+            if (project.videoClips.isEmpty()) {
+                p.clearMediaItems()
+            } else {
+                p.clearMediaItems()
+                for (clip in project.videoClips) {
+                    try {
+                        val mi = MediaItem.Builder()
+                            .setUri(clip.uri)
+                            .build()
+                        p.addMediaItem(mi)
+                    } catch (t: Throwable) {
+                        AppLog.e(TAG, "Failed adding clip: ${clip.uri}", t)
+                    }
+                }
+                val firstSpeed = project.videoClips.firstOrNull()?.speed ?: 1f
+                p.playbackParameters = androidx.media3.common.PlaybackParameters(firstSpeed)
+                p.prepare()
+            }
         }
-        p.prepare()
     }
 
-    fun play() = player?.play()
-    fun pause() = player?.pause()
+    fun play() = runOnMainThread {
+        player?.play()
+    }
+
+    fun pause() = runOnMainThread {
+        player?.pause()
+    }
+
     fun togglePlayPause() { if (_isPlaying.value) pause() else play() }
 
-    fun seekToUs(targetTimelineUs: Long) {
+    fun seekToUs(targetTimelineUs: Long) = runOnMainThread {
         val ms = targetTimelineUs / 1000L
         player?.seekTo(ms.coerceAtLeast(0L))
         _positionUs.value = targetTimelineUs
@@ -108,7 +132,7 @@ class PreviewPlayerManager(private val context: Context) {
         seekToUs((_positionUs.value + deltaUs).coerceAtLeast(0L))
     }
 
-    fun release() {
+    fun release() = runOnMainThread {
         scope.cancel()
         player?.release()
         player = null

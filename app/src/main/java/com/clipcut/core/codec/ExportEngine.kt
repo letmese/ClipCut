@@ -203,7 +203,7 @@ class ExportEngine(
                     overlayRenderer.renderOverlays(project.overlays, timelinePtsUs, config.width, config.height)
                     GLES20.glEnable(GLES20.GL_BLEND)
                     GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-                    passthrough.draw(overlayRenderer.textureId, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, config.width, config.height)
+                    passthrough.draw(overlayRenderer.textureId, GlUtil.FLIP_Y_MATRIX, GlUtil.IDENTITY_MATRIX, config.width, config.height)
                     GLES20.glDisable(GLES20.GL_BLEND)
                 }
 
@@ -258,7 +258,7 @@ class ExportEngine(
                         overlayRenderer.renderOverlays(project.overlays, timelinePtsUs, config.width, config.height)
                         GLES20.glEnable(GLES20.GL_BLEND)
                         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-                        passthrough.draw(overlayRenderer.textureId, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, config.width, config.height)
+                        passthrough.draw(overlayRenderer.textureId, GlUtil.FLIP_Y_MATRIX, GlUtil.IDENTITY_MATRIX, config.width, config.height)
                         GLES20.glDisable(GLES20.GL_BLEND)
                     }
 

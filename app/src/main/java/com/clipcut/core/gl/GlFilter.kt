@@ -68,7 +68,7 @@ abstract class GlFilter(
         vertexCoords.position(0)
         GLES20.glVertexAttribPointer(maPositionHandle, 3, GLES20.GL_FLOAT, false, 20, vertexCoords)
         GLES20.glEnableVertexAttribArray(maTextureHandle)
-        texCoords.position(2)
+        texCoords.position(3)
         GLES20.glVertexAttribPointer(maTextureHandle, 2, GLES20.GL_FLOAT, false, 20, texCoords)
 
         onSetCustomUniforms(width, height)

@@ -51,6 +51,13 @@ object AppLog {
         logFile = File(context.filesDir, "clipcut.log")
         if (!logFile!!.exists()) logFile!!.createNewFile()
         Log.i("AppLog", "init at ${logFile!!.absolutePath}")
+
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            f("CrashHandler", "FATAL CRASH on thread ${thread.name}: ${throwable.message}", throwable)
+            flush()
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
     }
 
     fun v(tag: String, msg: String) = add(LogEntry.Level.VERBOSE, tag, msg)

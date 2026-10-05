@@ -87,9 +87,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             val e = dao.getProjectById(projectId) ?: return@launch
             val p = e.toDomain()
-            _project.value = p
-            playerManager.syncWithProject(p)
-            previewRenderer.setProject(p)
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                _project.value = p
+                playerManager.syncWithProject(p)
+                previewRenderer.setProject(p)
+            }
             AppLog.i(TAG, "loadProject $projectId clips=${p.videoClips.size}")
         }
     }
@@ -119,10 +121,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun importMedia(uri: Uri, mediaType: MediaType) = mutate { p ->
-        val duration = mediaDurationUs(uri, mediaType)
-        val clip = TimelineItem(uri = uri.toString(), mediaType = mediaType, sourceDurationUs = duration,
-            trimStartUs = 0L, trimEndUs = duration, rotationDegrees = 0)
-        AppLog.i(TAG, "importMedia ${uri} ${mediaType} dur=${duration}")
+        val (duration, rotation) = if (mediaType == MediaType.VIDEO) extractMediaInfo(uri) else Pair(5_000_000L, 0)
+        val clip = TimelineItem(
+            uri = uri.toString(),
+            mediaType = mediaType,
+            sourceDurationUs = duration,
+            trimStartUs = 0L,
+            trimEndUs = duration,
+            rotationDegrees = rotation
+        )
+        AppLog.i(TAG, "importMedia ${uri} ${mediaType} dur=${duration} rot=${rotation}")
         p.copy(videoClips = p.videoClips + clip)
     }
 
@@ -279,21 +287,22 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun mediaDurationUs(uri: Uri, mediaType: MediaType): Long {
-        return try {
-            val ctx = getApplication<Application>()
-            val ext = android.media.MediaExtractor().apply { setDataSource(ctx, uri, null) }
-            for (i in 0 until ext.trackCount) {
-                val fmt = ext.getTrackFormat(i)
-                if (fmt.containsKey(android.media.MediaFormat.KEY_DURATION)) {
-                    val d = fmt.getLong(android.media.MediaFormat.KEY_DURATION)
-                    ext.release(); return d
-                }
-            }
-            ext.release(); 5_000_000L
+    private fun extractMediaInfo(uri: Uri): Pair<Long, Int> {
+        val ctx = getApplication<Application>()
+        var duration = 5_000_000L
+        var rotation = 0
+        try {
+            val retriever = android.media.MediaMetadataRetriever()
+            retriever.setDataSource(ctx, uri)
+            val durStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+            if (durStr != null) duration = durStr.toLong() * 1000L
+            val rotStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+            if (rotStr != null) rotation = rotStr.toIntOrNull() ?: 0
+            retriever.release()
         } catch (t: Throwable) {
-            AppLog.w(TAG, "mediaDurationUs fallback: ${t.message}"); 5_000_000L
+            AppLog.w(TAG, "extractMediaInfo fallback: ${t.message}")
         }
+        return Pair(duration, rotation)
     }
 
     override fun onCleared() {
