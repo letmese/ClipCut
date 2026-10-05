@@ -271,7 +271,13 @@ fun EditorScreen(
                 },
                 onDismiss = { selectedTool = null }
             )
-            EditorTool.FILTER -> FilterSheet(
+            EditorTool.TRIM -> TrimSheet(
+                startUs = clip?.trimStartUs ?: 0L,
+                endUs = clip?.trimEndUs ?: (clip?.sourceDurationUs ?: 5_000_000L),
+                onApply = { s, e -> sid?.let { viewModel.trimClip(it, s, e) } },
+                onDismiss = { selectedTool = null }
+            )
+            EditorTool.FILTER, EditorTool.ADJUST -> FilterSheet(
                 initialConfig = clip?.filterConfig ?: com.clipcut.core.model.FilterConfig(),
                 onApplyFilter = { fc -> sid?.let { viewModel.setClipFilter(it, fc) } },
                 onDismiss = { selectedTool = null }
