@@ -8,6 +8,8 @@ import android.opengl.EGLDisplay
 import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES20
+import android.os.Handler
+import android.os.HandlerThread
 import android.view.Surface
 import com.clipcut.core.log.AppLog
 
@@ -127,7 +129,9 @@ class InputSurface(val surface: Surface) {
 }
 
 class OutputSurface(val textureId: Int) : SurfaceTexture.OnFrameAvailableListener {
-    private val surfaceTexture = SurfaceTexture(textureId).also { it.setOnFrameAvailableListener(this) }
+    private val handlerThread = HandlerThread("OutputSurfaceThread").apply { start() }
+    private val handler = Handler(handlerThread.looper)
+    private val surfaceTexture = SurfaceTexture(textureId).also { it.setOnFrameAvailableListener(this, handler) }
     val surface: Surface = Surface(surfaceTexture)
 
     @Volatile private var frameAvailable = false
@@ -165,6 +169,7 @@ class OutputSurface(val textureId: Int) : SurfaceTexture.OnFrameAvailableListene
         try { surfaceTexture.setOnFrameAvailableListener(null) } catch (_: Throwable) {}
         try { surface.release() } catch (_: Throwable) {}
         try { surfaceTexture.release() } catch (_: Throwable) {}
+        try { handlerThread.quitSafely() } catch (_: Throwable) {}
     }
 }
 

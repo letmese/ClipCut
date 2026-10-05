@@ -64,6 +64,26 @@ class ExportEngine(
         cancelled = true
     }
 
+    private fun hasAudioTrack(uriStr: String): Boolean {
+        return try {
+            val ext = android.media.MediaExtractor().apply {
+                setDataSource(context, Uri.parse(uriStr), null)
+            }
+            var found = false
+            for (i in 0 until ext.trackCount) {
+                val mime = ext.getTrackFormat(i).getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    found = true
+                    break
+                }
+            }
+            ext.release()
+            found
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     suspend fun export(onProgress: (progress: Float, status: String) -> Unit): Result<ExportResult> = withContext(Dispatchers.IO) {
         var pipeline: PipelineRenderer? = null
         var overlayRenderer: OverlayRenderer? = null
@@ -77,7 +97,9 @@ class ExportEngine(
             val outFile = File(context.cacheDir, "clipcut_export_${System.currentTimeMillis()}.mp4")
             if (outFile.exists()) outFile.delete()
 
-            val hasAudio = project.audioTracks.isNotEmpty() || project.videoClips.any { it.mediaType == MediaType.VIDEO && it.volume > 0f }
+            val hasAudio = project.audioTracks.isNotEmpty() || project.videoClips.any { clip ->
+                clip.mediaType == MediaType.VIDEO && clip.volume > 0f && hasAudioTrack(clip.uri)
+            }
             val expectedTracks = if (hasAudio) 2 else 1
             mux = MediaMuxerWrapper(outFile.absolutePath, expectedTrackCount = expectedTracks)
             muxer = mux

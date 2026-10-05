@@ -65,8 +65,13 @@ class VideoDecoder(context: Context, clip: TimelineItem, outputSurface: OutputSu
 
     fun decodeNextFrame(timeoutUs: Long = 10_000L): Long {
         val dec = decoder ?: return -1L
-        var info = MediaCodec.BufferInfo()
+        val info = MediaCodec.BufferInfo()
+        val startMs = System.currentTimeMillis()
         while (true) {
+            if (System.currentTimeMillis() - startMs > 3000L) {
+                AppLog.w("VideoDecoder", "decodeNextFrame timed out (3000ms budget exceeded)")
+                return -1L
+            }
             val inIdx = dec.dequeueInputBuffer(timeoutUs)
             if (inIdx >= 0) {
                 val buf = dec.getInputBuffer(inIdx) ?: continue
@@ -130,11 +135,16 @@ class VideoEncoder(private val config: ExportConfig) {
         val enc = encoder ?: return
         if (endOfStream) enc.signalEndOfInputStream()
         val info = MediaCodec.BufferInfo()
+        var tryAgainCount = 0
         while (true) {
             val outIdx = enc.dequeueOutputBuffer(info, if (endOfStream) 10_000L else 0L)
             if (outIdx == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                if (!endOfStream) break else continue
+                if (!endOfStream) break
+                tryAgainCount++
+                if (tryAgainCount > 20) break
+                continue
             }
+            tryAgainCount = 0
             if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 muxerWrapper.addVideoTrack(enc.outputFormat)
                 continue
@@ -229,9 +239,21 @@ class AudioProcessor(
             onProgress(processedUs / totalDurationUs.coerceAtLeast(1L).toFloat())
         }
 
-        enc.signalEndOfInputStream()
+        var eosQueued = false
+        var attempts = 0
+        while (!eosQueued && attempts < 20) {
+            val inIdx = enc.dequeueInputBuffer(10_000)
+            if (inIdx >= 0) {
+                enc.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                eosQueued = true
+            } else {
+                drainAudioEnc(enc, muxerWrapper, endOfStream = false)
+                attempts++
+            }
+        }
         drainAudioEnc(enc, muxerWrapper, endOfStream = true)
-        enc.stop(); enc.release()
+        try { enc.stop() } catch (_: Throwable) {}
+        try { enc.release() } catch (_: Throwable) {}
         onProgress(1f)
     }
 
@@ -311,6 +333,7 @@ class AudioProcessor(
 
     private fun drainAudioEnc(enc: MediaCodec, muxer: MediaMuxerWrapper?, endOfStream: Boolean) {
         val info = MediaCodec.BufferInfo()
+        var tryAgainCount = 0
         while (true) {
             val outIdx = enc.dequeueOutputBuffer(info, if (endOfStream) 10_000 else 0L)
             if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
@@ -319,8 +342,12 @@ class AudioProcessor(
                 continue
             }
             if (outIdx == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                if (!endOfStream) break else continue
+                if (!endOfStream) break
+                tryAgainCount++
+                if (tryAgainCount > 20) break
+                continue
             }
+            tryAgainCount = 0
             if (outIdx >= 0) {
                 val buf = enc.getOutputBuffer(outIdx) ?: continue
                 if (info.size > 0 && muxer != null) {

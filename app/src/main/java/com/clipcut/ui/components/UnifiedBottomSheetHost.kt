@@ -45,7 +45,7 @@ fun UnifiedBottomSheetHost(
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { SheetDragHandle() }
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp).navigationBarsPadding()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,

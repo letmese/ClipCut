@@ -85,14 +85,18 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun loadProject(projectId: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val e = dao.getProjectById(projectId) ?: return@launch
-            val p = e.toDomain()
-            kotlinx.coroutines.withContext(Dispatchers.Main) {
-                _project.value = p
-                playerManager.syncWithProject(p)
-                previewRenderer.setProject(p)
+            try {
+                val e = dao.getProjectById(projectId) ?: return@launch
+                val p = e.toDomain()
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    _project.value = p
+                    playerManager.syncWithProject(p)
+                    previewRenderer.setProject(p)
+                }
+                AppLog.i(TAG, "loadProject $projectId clips=${p.videoClips.size}")
+            } catch (t: Throwable) {
+                AppLog.e(TAG, "loadProject failed for $projectId", t)
             }
-            AppLog.i(TAG, "loadProject $projectId clips=${p.videoClips.size}")
         }
     }
 
@@ -235,18 +239,48 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun addAudioTrack(item: AudioTrackItem) = mutate { it.copy(audioTracks = it.audioTracks + item) }
+    fun addAudioTrack(uri: Uri) {
+        val durationUs = try {
+            val retriever = android.media.MediaMetadataRetriever()
+            retriever.setDataSource(getApplication(), uri)
+            val durStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+            retriever.release()
+            (durStr?.toLongOrNull() ?: 5_000L) * 1000L
+        } catch (t: Throwable) {
+            AppLog.w(TAG, "extract audio duration failed: ${t.message}")
+            _project.value?.totalDurationUs?.coerceAtLeast(5_000_000L) ?: 5_000_000L
+        }
+        val item = AudioTrackItem(
+            uri = uri.toString(),
+            name = "Music Track",
+            sourceDurationUs = durationUs,
+            timelineStartUs = 0L,
+            trimStartUs = 0L,
+            trimEndUs = (_project.value?.totalDurationUs ?: durationUs).coerceAtLeast(1_000_000L).coerceAtMost(durationUs)
+        )
+        addAudioTrack(item)
+    }
     fun removeAudioTrack(id: String) = mutate { it.copy(audioTracks = it.audioTracks.filterNot { a -> a.id == id }) }
 
     fun startExport(config: ExportConfig) {
+        if (currentExport != null) {
+            AppLog.w(TAG, "startExport ignored — export already running")
+            return
+        }
         val p = _project.value ?: return
         val ctx = getApplication<Application>()
         currentExport = ExportEngine(ctx, p, config).also { eng ->
             _exportState.value = ExportState.Progress(0f, "Starting")
             viewModelScope.launch {
-                val res = eng.export { prog, status -> _exportState.value = ExportState.Progress(prog, status) }
-                res.onSuccess { _exportState.value = ExportState.Success(it.file, it.publicUri, it.galleryPath) }
-                    .onFailure { _exportState.value = ExportState.Error(it.message ?: "Unknown") }
-                currentExport = null
+                try {
+                    val res = eng.export { prog, status -> _exportState.value = ExportState.Progress(prog, status) }
+                    res.onSuccess { _exportState.value = ExportState.Success(it.file, it.publicUri, it.galleryPath) }
+                        .onFailure { _exportState.value = ExportState.Error(it.message ?: "Unknown") }
+                } catch (t: Throwable) {
+                    _exportState.value = ExportState.Error(t.message ?: "Unknown export error")
+                } finally {
+                    currentExport = null
+                }
             }
         }
     }

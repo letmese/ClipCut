@@ -62,7 +62,7 @@ fun ProjectListScreen(
         containerColor = DarkBackground,
         bottomBar = { HomeBottomBar(tab = tab, onTabChange = { tab = it }) },
         topBar = {
-            Box(modifier = Modifier.fillMaxWidth().padding(16.dp, 8.dp)) {
+            Box(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text("ClipCut", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 IconButton(
                     onClick = onOpenLogs,
@@ -248,7 +248,7 @@ private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
     val tabs = listOf("Projects" to Icons.Filled.Movie, "Templates" to Icons.Filled.PlayArrow, "Me" to Icons.Filled.Settings)
     Surface(color = DarkSurface, tonalElevation = 0.dp) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxWidth().height(64.dp).navigationBarsPadding().padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {

@@ -33,6 +33,7 @@ class PipelineRenderer(private val context: Context) {
     private var blend: BlendFilter? = null
     private var transition: TransitionFilter? = null
     private var lut: LutFilter? = null
+    private var currentLutUri: String? = null
     private var effectFilter: EffectFilter? = null
     private var currentEffectId: String? = null
 
@@ -134,13 +135,18 @@ class PipelineRenderer(private val context: Context) {
 
         // Step 2: LUT
         if (lutConfig != null && lutConfig.uri.isNotEmpty()) {
+            if (lut == null || currentLutUri != lutConfig.uri) {
+                lut?.release()
+                lut = LutFilter(context, lutConfig.uri, lutConfig.intensity).also { it.init() }
+                currentLutUri = lutConfig.uri
+            }
+            lut?.intensity = lutConfig.intensity
             val target = nextTarget()
-            val lt = LutFilter(context, lutConfig.uri, lutConfig.intensity).also { it.init() }
             target?.bind()
-            lt.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
+            GLES20.glViewport(0, 0, width, height)
+            lut?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
             target?.unbind()
             currentTex = target?.textureId ?: currentTex
-            lt.release()
         }
 
         // Step 3: Mask
@@ -224,6 +230,8 @@ class PipelineRenderer(private val context: Context) {
         blend?.release()
         transition?.release()
         lut?.release()
+        lut = null
+        currentLutUri = null
         effectFilter?.release()
         effectFilter = null
         currentEffectId = null

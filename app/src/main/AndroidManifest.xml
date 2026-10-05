@@ -48,6 +48,12 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name="androidx.media3.session.MediaSessionService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false"
+            tools:ignore="Instantiatable" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

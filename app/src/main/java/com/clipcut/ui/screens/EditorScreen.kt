@@ -102,6 +102,11 @@ fun EditorScreen(
             viewModel.importMedia(uri, mediaType)
         }
     }
+    val pickAudio = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.addAudioTrack(uri)
+        }
+    }
 
     LaunchedEffect(projectId) { viewModel.loadProject(projectId) }
 
@@ -200,7 +205,7 @@ fun EditorScreen(
                 onSelectClip = { viewModel.selectClip(it) },
                 onSeek = { viewModel.playerManager.seekToUs(it) },
                 onAddMediaClick = { pickMedia.launch("video/*") },
-                modifier = Modifier.fillMaxWidth().height(180.dp)
+                modifier = Modifier.fillMaxWidth().wrapContentHeight()
             )
         }
     }
@@ -244,7 +249,7 @@ fun EditorScreen(
                     backgroundMusicVolume = project?.backgroundMusicVolume ?: 1f,
                     hasMusicTrack = (project?.audioTracks?.isNotEmpty() == true),
                     onVolumesChanged = { o, m -> viewModel.setVolumes(o, m) },
-                    onPickMusicClick = { /* wired to picker */ },
+                    onPickMusicClick = { pickAudio.launch("audio/*") },
                     onVoiceoverClick = { activeSpecialSheet = "voiceover" },
                     onDismiss = { selectedTool = null }
                 )
@@ -381,7 +386,11 @@ private fun EditorTopBar(
     currentAspectRatio: AspectRatio,
     onSelectAspectRatio: (AspectRatio) -> Unit
 ) {
-    Surface(color = Surface1, tonalElevation = 0.dp) {
+    Surface(
+        color = Surface1,
+        tonalElevation = 0.dp,
+        modifier = Modifier.fillMaxWidth().statusBarsPadding()
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically

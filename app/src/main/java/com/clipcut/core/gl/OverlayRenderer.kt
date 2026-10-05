@@ -25,6 +25,8 @@ class OverlayRenderer(private val context: Context) {
 
     private var reusableBitmap: Bitmap? = null
     private var reusableCanvas: Canvas? = null
+    private var flippedBitmap: Bitmap? = null
+    private val flipMatrix = android.graphics.Matrix().apply { preScale(1f, -1f) }
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -46,7 +48,7 @@ class OverlayRenderer(private val context: Context) {
         viewportWidth: Int,
         viewportHeight: Int
     ) {
-        if (overlays.isEmpty() || overlayTexId == -1) return
+        if (overlayTexId == -1) return
 
         if (width != viewportWidth || height != viewportHeight || reusableBitmap == null) {
             width = viewportWidth.coerceAtLeast(1)
@@ -55,11 +57,19 @@ class OverlayRenderer(private val context: Context) {
             val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             reusableBitmap = bmp
             reusableCanvas = Canvas(bmp)
+            flippedBitmap?.recycle()
+            flippedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         }
         val bmp = reusableBitmap ?: return
         val canvas = reusableCanvas ?: return
 
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+
+        if (overlays.isEmpty()) {
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
+            return
+        }
 
         overlays.filter { currentPtsUs in it.timelineStartUs..it.timelineEndUs }.forEach { o ->
             val (x, y, scale, rot) = interpolatedTransform(o, currentPtsUs)
@@ -101,11 +111,17 @@ class OverlayRenderer(private val context: Context) {
         // Upload: GLUtils.texImage2D stores row 0 at texture V=0 (bottom).
         // Canvas row 0 is visual top. Flip bitmap once vertically so texture V=0
         // corresponds to visual top. Now every caller uses IDENTITY tex-matrix!
+        if (flippedBitmap == null || flippedBitmap?.width != width || flippedBitmap?.height != height) {
+            flippedBitmap?.recycle()
+            flippedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        }
+        val dst = flippedBitmap ?: return
+        val dstCanvas = Canvas(dst)
+        dstCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        dstCanvas.drawBitmap(bmp, flipMatrix, null)
+
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
-        val matrix = android.graphics.Matrix().apply { preScale(1f, -1f) }
-        val flipped = Bitmap.createBitmap(bmp, 0, 0, width, height, matrix, false)
-        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, flipped, 0)
-        flipped.recycle()
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, dst, 0)
     }
 
     private fun interpolatedTransform(o: OverlayItem, ptsUs: Long): FloatArray {
@@ -148,6 +164,8 @@ class OverlayRenderer(private val context: Context) {
         reusableBitmap?.recycle()
         reusableBitmap = null
         reusableCanvas = null
+        flippedBitmap?.recycle()
+        flippedBitmap = null
         if (overlayTexId != -1) {
             GLES20.glDeleteTextures(1, intArrayOf(overlayTexId), 0)
             overlayTexId = -1

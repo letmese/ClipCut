@@ -43,7 +43,11 @@ fun LogViewerScreen(onNavigateBack: () -> Unit) {
     Scaffold(
         containerColor = DarkBackground,
         topBar = {
-            Surface(color = Surface1, tonalElevation = 0.dp) {
+            Surface(
+                color = Surface1,
+                tonalElevation = 0.dp,
+                modifier = Modifier.fillMaxWidth().statusBarsPadding()
+            ) {
                 Row(modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onNavigateBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White) }
                     Text("Logs (${logs.size})", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, modifier = Modifier.weight(1f))

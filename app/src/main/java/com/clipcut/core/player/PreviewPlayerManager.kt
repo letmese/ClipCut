@@ -46,7 +46,9 @@ class PreviewPlayerManager(private val context: Context) {
             while (isActive) {
                 val p = player
                 if (p != null && _isPlaying.value) {
-                    _positionUs.value = p.currentPosition * 1000L
+                    try {
+                        _positionUs.value = p.currentPosition * 1000L
+                    } catch (_: IllegalStateException) {}
                 }
                 delay(16)
             }
