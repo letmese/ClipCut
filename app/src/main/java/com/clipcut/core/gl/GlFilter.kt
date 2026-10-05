@@ -423,16 +423,102 @@ class TransitionFilter : GlFilter(
         uniform float uProgress;
         uniform int uType;
         void main() {
-            vec4 a = texture2D(sOut, vTexCoord);
-            vec4 b = texture2D(sIn, vTexCoord);
+            vec2 uv = vTexCoord;
             float p = uProgress;
-            vec4 r;
-            if (uType == 0) { r = a; }
-            else if (uType == 1) { r = mix(a, b, p); }                                  // FADE
-            else if (uType == 2) { r = mix(a, b, step(vTexCoord.x, p)); }                // SLIDE_LEFT
-            else if (uType == 3) { r = mix(a, b, step(1.0 - vTexCoord.x, p)); }          // SLIDE_RIGHT
-            else if (uType == 4) { r = mix(a, b, smoothstep(0.0, 1.0, p)); }              // DISSOLVE
-            else r = mix(a, b, p);
+            vec4 a = texture2D(sOut, uv);
+            vec4 b = texture2D(sIn, uv);
+            vec4 r = a;
+
+            if (uType == 0) { // NONE
+                r = a;
+            } else if (uType == 1) { // FADE
+                r = mix(a, b, p);
+            } else if (uType == 2) { // SLIDE_LEFT
+                r = (uv.x < 1.0 - p) ? texture2D(sOut, uv + vec2(p, 0.0)) : texture2D(sIn, uv - vec2(1.0 - p, 0.0));
+            } else if (uType == 3) { // SLIDE_RIGHT
+                r = (uv.x > p) ? texture2D(sOut, uv - vec2(p, 0.0)) : texture2D(sIn, uv + vec2(1.0 - p, 0.0));
+            } else if (uType == 4) { // SLIDE_UP
+                r = (uv.y < 1.0 - p) ? texture2D(sOut, uv + vec2(0.0, p)) : texture2D(sIn, uv - vec2(0.0, 1.0 - p));
+            } else if (uType == 5) { // SLIDE_DOWN
+                r = (uv.y > p) ? texture2D(sOut, uv - vec2(0.0, p)) : texture2D(sIn, uv + vec2(0.0, 1.0 - p));
+            } else if (uType == 6) { // DISSOLVE
+                r = mix(a, b, smoothstep(0.0, 1.0, p));
+            } else if (uType == 7) { // WIPE_LEFT
+                r = mix(a, b, step(1.0 - p, uv.x));
+            } else if (uType == 8) { // WIPE_RIGHT
+                r = mix(a, b, step(uv.x, p));
+            } else if (uType == 9) { // WIPE_UP
+                r = mix(a, b, step(1.0 - p, uv.y));
+            } else if (uType == 10) { // WIPE_DOWN
+                r = mix(a, b, step(uv.y, p));
+            } else if (uType == 11) { // CIRCLE_CROP
+                float dist = distance(uv, vec2(0.5));
+                r = mix(a, b, step(dist, p * 0.7071));
+            } else if (uType == 12) { // CIRCLE_CLOSE
+                float dist = distance(uv, vec2(0.5));
+                r = mix(b, a, step(dist, (1.0 - p) * 0.7071));
+            } else if (uType == 13) { // CROSS_ZOOM
+                vec2 center = vec2(0.5);
+                vec2 uvA = (uv - center) * (1.0 + p * 0.5) + center;
+                vec2 uvB = (uv - center) * (1.5 - p * 0.5) + center;
+                r = mix(texture2D(sOut, uvA), texture2D(sIn, uvB), p);
+            } else if (uType == 14) { // ZOOM_IN
+                vec2 center = vec2(0.5);
+                vec2 uvA = (uv - center) * (1.0 - p * 0.3) + center;
+                r = mix(texture2D(sOut, uvA), b, p);
+            } else if (uType == 15) { // ZOOM_OUT
+                vec2 center = vec2(0.5);
+                vec2 uvB = (uv - center) * (0.7 + p * 0.3) + center;
+                r = mix(a, texture2D(sIn, uvB), p);
+            } else if (uType == 16) { // FLASH_WHITE
+                vec4 flashColor = vec4(1.0);
+                r = (p < 0.5) ? mix(a, flashColor, p * 2.0) : mix(flashColor, b, (p - 0.5) * 2.0);
+            } else if (uType == 17) { // FLASH_BLACK
+                vec4 blackColor = vec4(0.0, 0.0, 0.0, 1.0);
+                r = (p < 0.5) ? mix(a, blackColor, p * 2.0) : mix(blackColor, b, (p - 0.5) * 2.0);
+            } else if (uType == 18) { // GLITCH
+                float offset = sin(uv.y * 30.0 + p * 20.0) * 0.03 * (1.0 - abs(p - 0.5) * 2.0);
+                vec4 ga = texture2D(sOut, vec2(uv.x + offset, uv.y));
+                vec4 gb = texture2D(sIn, vec2(uv.x - offset, uv.y));
+                r = mix(ga, gb, p);
+            } else if (uType == 19) { // PIXELATE
+                float d = 1.0 + 30.0 * sin(p * 3.14159);
+                vec2 coord = floor(uv * d) / d;
+                r = mix(texture2D(sOut, coord), texture2D(sIn, coord), p);
+            } else if (uType == 20) { // BLUR
+                float blurAmt = sin(p * 3.14159) * 0.02;
+                vec4 blurA = (texture2D(sOut, uv) + texture2D(sOut, uv + vec2(blurAmt, 0.0)) + texture2D(sOut, uv - vec2(blurAmt, 0.0))) / 3.0;
+                vec4 blurB = (texture2D(sIn, uv) + texture2D(sIn, uv + vec2(blurAmt, 0.0)) + texture2D(sIn, uv - vec2(blurAmt, 0.0))) / 3.0;
+                r = mix(blurA, blurB, p);
+            } else if (uType == 21) { // ROTATE
+                float angle = p * 3.14159 * 0.5;
+                float cosA = cos(angle);
+                float sinA = sin(angle);
+                vec2 center = vec2(0.5);
+                vec2 rotUV = vec2(cosA * (uv.x - center.x) - sinA * (uv.y - center.y) + center.x,
+                                  sinA * (uv.x - center.x) + cosA * (uv.y - center.y) + center.y);
+                r = mix(texture2D(sOut, rotUV), b, p);
+            } else if (uType == 22) { // RIPPLE
+                vec2 dir = uv - vec2(0.5);
+                float dist = length(dir);
+                vec2 offset = dir * (sin(dist * 20.0 - p * 15.0) * 0.03 * (1.0 - p));
+                r = mix(texture2D(sOut, uv + offset), texture2D(sIn, uv), p);
+            } else if (uType == 23) { // HEART
+                vec2 q = (uv - vec2(0.5, 0.4)) * 2.0;
+                float heart = q.x*q.x + pow(q.y - sqrt(abs(q.x)), 2.0);
+                r = mix(a, b, step(heart, p * 2.5));
+            } else if (uType == 24) { // STAR
+                vec2 st = (uv - vec2(0.5)) * 2.0;
+                float l = length(st);
+                float angle = atan(st.y, st.x);
+                float starShape = 0.5 + 0.3 * cos(angle * 5.0);
+                r = mix(a, b, step(l / starShape, p * 2.0));
+            } else if (uType == 25) { // CURTAIN
+                float distCenter = abs(uv.x - 0.5);
+                r = (distCenter > (1.0 - p) * 0.5) ? b : a;
+            } else {
+                r = mix(a, b, p);
+            }
             gl_FragColor = r;
         }
     """
@@ -444,14 +530,8 @@ class TransitionFilter : GlFilter(
 
     fun setType(type: TransitionType) {
         GLES20.glUseProgram(programHandle)
-        val t = when (type) {
-            TransitionType.NONE -> 0
-            TransitionType.FADE -> 1
-            TransitionType.SLIDE_LEFT -> 2
-            TransitionType.SLIDE_RIGHT -> 3
-            TransitionType.DISSOLVE -> 4
-        }
-        GLES20.glUniform1i(uType, t)
+        val idx = TransitionType.values().indexOf(type).coerceAtLeast(0)
+        GLES20.glUniform1i(uType, idx)
     }
 
     fun setProgress(p: Float) {

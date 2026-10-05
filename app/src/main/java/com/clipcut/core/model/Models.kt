@@ -20,7 +20,14 @@ data class FilterConfig(
 
 enum class TransitionType(val displayName: String) {
     NONE("None"), FADE("Fade"), SLIDE_LEFT("Slide Left"),
-    SLIDE_RIGHT("Slide Right"), DISSOLVE("Dissolve")
+    SLIDE_RIGHT("Slide Right"), SLIDE_UP("Slide Up"), SLIDE_DOWN("Slide Down"),
+    DISSOLVE("Dissolve"), WIPE_LEFT("Wipe Left"), WIPE_RIGHT("Wipe Right"),
+    WIPE_UP("Wipe Up"), WIPE_DOWN("Wipe Down"), CIRCLE_CROP("Circle Open"),
+    CIRCLE_CLOSE("Circle Close"), CROSS_ZOOM("Cross Zoom"), ZOOM_IN("Zoom In"),
+    ZOOM_OUT("Zoom Out"), FLASH_WHITE("Flash White"), FLASH_BLACK("Flash Black"),
+    GLITCH("Glitch"), PIXELATE("Pixelate"), BLUR("Blur"),
+    ROTATE("Rotate"), RIPPLE("Ripple"), HEART("Heart"),
+    STAR("Star"), CURTAIN("Curtain")
 }
 
 enum class AspectRatio(val label: String, val wRatio: Float, val hRatio: Float, val description: String = "") {

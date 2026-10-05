@@ -88,6 +88,7 @@ fun AudioSheet(
     hasMusicTrack: Boolean,
     onVolumesChanged: (Float, Float) -> Unit,
     onPickMusicClick: () -> Unit,
+    onVoiceoverClick: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
@@ -101,6 +102,8 @@ fun AudioSheet(
         } else {
             Text("1 music track loaded", color = TextSecondary, fontSize = 12.sp)
         }
+        Spacer(Modifier.height(8.dp))
+        SecondaryButton("Record Voiceover", onClick = onVoiceoverClick, modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -340,6 +343,7 @@ fun OverlaySheet(
     onAddOverlay: (OverlayItem) -> Unit,
     onDeleteOverlay: (String) -> Unit = {},
     onSeekPreview: (Long) -> Unit = {},
+    onOpenPiP: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
@@ -371,6 +375,8 @@ fun OverlaySheet(
                 text = ""
             }
         }, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(8.dp))
+        SecondaryButton("Add PiP Video/Image", onClick = onOpenPiP, modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -538,7 +544,11 @@ fun TrimSheet(startUs: Long, endUs: Long, onApply: (Long, Long) -> Unit, onDismi
 }
 
 @Composable
-fun TextSheet(onApply: (OverlayItem) -> Unit, onDismiss: () -> Unit) {
+fun TextSheet(
+    onApply: (OverlayItem) -> Unit,
+    onOpenCaptions: () -> Unit = {},
+    onDismiss: () -> Unit
+) {
     var text by remember { mutableStateOf("") }
     var size by remember { mutableStateOf(28f) }
     var bold by remember { mutableStateOf(true) }
@@ -564,6 +574,8 @@ fun TextSheet(onApply: (OverlayItem) -> Unit, onDismiss: () -> Unit) {
         PrimaryButton("Add", onClick = {
             if (text.isNotBlank()) onApply(OverlayItem(text = text, textSizeSp = size, textBold = bold))
         }, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(8.dp))
+        SecondaryButton("Auto Captions", onClick = onOpenCaptions, modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -613,33 +625,159 @@ fun StickerSheet(onPick: (String) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-fun CaptionSheet(onDismiss: () -> Unit) {
-    Column {
+fun CaptionSheet(
+    onApplyCaptions: (List<OverlayItem>) -> Unit = {},
+    onDismiss: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val generator = remember { com.clipcut.core.feature.CaptionGenerator() }
+    val segments by generator.segments.collectAsState()
+    val partial by generator.partial.collectAsState()
+    var isTranscribing by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (isTranscribing) {
+                generator.stop()
+            }
+        }
+    }
+
+    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         SheetHeader("Auto Captions", onDismiss)
         Spacer(Modifier.height(12.dp))
-        Text("Captions are generated on-device using SpeechRecognizer. After generation you can edit each segment, style the text, and export as .srt or burn-in.", color = TextSecondary, fontSize = 12.sp)
+        Text(
+            "Captions are generated on-device using SpeechRecognizer. Tap Start Transcription to listen.",
+            color = TextSecondary,
+            fontSize = 12.sp
+        )
         Spacer(Modifier.height(12.dp))
-        PrimaryButton("Start Transcription", onClick = {}, modifier = Modifier.fillMaxWidth())
+
+        if (partial.isNotBlank()) {
+            Surface(
+                color = Surface3,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            ) {
+                Text(
+                    text = partial,
+                    color = AccentPrimary,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+
+        if (segments.isNotEmpty()) {
+            Text("Generated Segments (${segments.size}):", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Spacer(Modifier.height(6.dp))
+            segments.forEachIndexed { idx, seg ->
+                Text(
+                    "${idx + 1}. \"${seg.text}\"",
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(vertical = 2.dp)
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            PrimaryButton(
+                text = if (isTranscribing) "Stop" else "Start Transcription",
+                onClick = {
+                    if (isTranscribing) {
+                        generator.stop()
+                        isTranscribing = false
+                    } else {
+                        generator.start(context)
+                        isTranscribing = true
+                    }
+                },
+                modifier = Modifier.weight(1f)
+            )
+            if (segments.isNotEmpty()) {
+                SecondaryButton(
+                    text = "Apply to Timeline",
+                    onClick = {
+                        val overlays = segments.map { s ->
+                            OverlayItem(
+                                text = s.text,
+                                timelineStartUs = s.startTimeUs,
+                                timelineEndUs = s.endTimeUs,
+                                normalizedX = 0.5f,
+                                normalizedY = 0.85f,
+                                textSizeSp = 24f,
+                                backgroundColor = 0x80000000L
+                            )
+                        }
+                        onApplyCaptions(overlays)
+                        onDismiss()
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
     }
 }
 
 @Composable
-fun VoiceoverSheet(onDismiss: () -> Unit) {
-    var recording by remember { mutableStateOf(false) }
+fun VoiceoverSheet(
+    playheadUs: Long = 0L,
+    onVoiceoverRecorded: (com.clipcut.core.model.AudioTrackItem) -> Unit = {},
+    onDismiss: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val recorder = remember { com.clipcut.core.feature.VoiceoverRecorder(context) }
+    val isRecording by recorder.isRecording.collectAsState()
+    val amplitude by recorder.amplitude.collectAsState()
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (recorder.isRecording.value) {
+                recorder.stop()
+            }
+        }
+    }
+
     Column {
         SheetHeader("Voiceover", onDismiss)
         Spacer(Modifier.height(12.dp))
         Text("Record AAC m4a into the audio track at the playhead.", color = TextSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(16.dp))
+
+        if (isRecording) {
+            LinearProgressIndicator(
+                progress = { amplitude },
+                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                color = AccentPrimary,
+                trackColor = Surface3
+            )
+            Spacer(Modifier.height(12.dp))
+        }
+
         Button(
-            onClick = { recording = !recording },
-            colors = ButtonDefaults.buttonColors(containerColor = if (recording) AccentPrimary else AccentSecondary, contentColor = Color.White),
+            onClick = {
+                if (isRecording) {
+                    val item = recorder.stop()
+                    if (item != null) {
+                        onVoiceoverRecorded(item.copy(timelineStartUs = playheadUs))
+                        onDismiss()
+                    }
+                } else {
+                    recorder.start()
+                }
+            },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isRecording) AccentPrimary else AccentSecondary,
+                contentColor = Color.White
+            ),
             modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(10.dp)
         ) {
-            Icon(if (recording) Icons.Filled.Stop else Icons.Filled.Mic, contentDescription = null, modifier = Modifier.size(20.dp))
+            Icon(if (isRecording) Icons.Filled.Stop else Icons.Filled.Mic, contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
-            Text(if (recording) "Stop" else "Record")
+            Text(if (isRecording) "Stop & Save" else "Record")
         }
     }
 }
@@ -679,13 +817,34 @@ fun KeyframeSheet(
 }
 
 @Composable
-fun PiPPanel(onAdd: (PiPTrackItem) -> Unit, onDismiss: () -> Unit) {
+fun PiPPanel(
+    playheadUs: Long = 0L,
+    onAdd: (PiPTrackItem) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        if (uri != null) {
+            val item = PiPTrackItem(
+                uri = uri.toString(),
+                timelineStartUs = playheadUs,
+                timelineEndUs = playheadUs + 5_000_000L,
+                scale = 0.35f,
+                normalizedX = 0.75f,
+                normalizedY = 0.25f
+            )
+            onAdd(item)
+            onDismiss()
+        }
+    }
+
     Column {
         SheetHeader("PiP Layer", onDismiss)
         Spacer(Modifier.height(12.dp))
         Text("Add a video or image as a Picture-in-Picture overlay layer. Drag to position, pinch to scale, two-finger rotate on the preview canvas.", color = TextSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(12.dp))
-        PrimaryButton("Pick Media", onClick = { onAdd(PiPTrackItem(uri = "")) }, modifier = Modifier.fillMaxWidth())
+        PrimaryButton("Pick Media", onClick = { launcher.launch("video/*") }, modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -724,11 +883,6 @@ fun TransitionsSheet(
     Column {
         SheetHeader("Transitions", onDismiss)
         Spacer(Modifier.height(12.dp))
-        // Extended transition types beyond the 5 in the API reference
-        val all = TransitionType.values().toList() + listOf("Zoom","Blur","Glitch","Light Leak","Film Burn","Page Turn","Cube","Flip","Heart","Star","Circle","Clock Wipe","Cross Zoom","Radial","Pixelate").map {
-            // create pseudo enum entries — these would be added to TransitionType via APPEND_TO file
-            TransitionType.DISSOLVE
-        }.distinct()
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(TransitionType.values().toList()) { t ->
                 EditorFilterChip(t.displayName, sel == t) { sel = t }

@@ -89,6 +89,7 @@ fun EditorScreen(
     val positionUs by viewModel.playerManager.currentPositionUs.collectAsState()
 
     var selectedTool by remember { mutableStateOf<EditorTool?>(null) }
+    var activeSpecialSheet by remember { mutableStateOf<String?>(null) }
     var showExportDialog by remember { mutableStateOf(false) }
 
     val ctx = LocalContext.current
@@ -187,20 +188,44 @@ fun EditorScreen(
     val sid = selectedClipId
     val clip = project?.videoClips?.firstOrNull { it.id == sid }
     UnifiedBottomSheetHost(
-        title = tool?.label ?: "",
-        onDone = { selectedTool = null },
-        onDismiss = { selectedTool = null },
-        visible = tool != null
+        title = when (activeSpecialSheet) {
+            "voiceover" -> "Voiceover"
+            "captions" -> "Auto Captions"
+            "pip" -> "PiP Layer"
+            else -> tool?.label ?: ""
+        },
+        onDone = { selectedTool = null; activeSpecialSheet = null },
+        onDismiss = { selectedTool = null; activeSpecialSheet = null },
+        visible = tool != null || activeSpecialSheet != null
     ) {
-        when (tool) {
-            EditorTool.AUDIO -> AudioSheet(
-                originalVideoVolume = project?.originalVideoVolume ?: 1f,
-                backgroundMusicVolume = project?.backgroundMusicVolume ?: 1f,
-                hasMusicTrack = (project?.audioTracks?.isNotEmpty() == true),
-                onVolumesChanged = { o, m -> viewModel.setVolumes(o, m) },
-                onPickMusicClick = { /* wired to picker */ },
-                onDismiss = { selectedTool = null }
-            )
+        if (activeSpecialSheet != null) {
+            when (activeSpecialSheet) {
+                "voiceover" -> VoiceoverSheet(
+                    playheadUs = positionUs,
+                    onVoiceoverRecorded = { viewModel.addAudioTrack(it) },
+                    onDismiss = { activeSpecialSheet = null }
+                )
+                "captions" -> CaptionSheet(
+                    onApplyCaptions = { it.forEach { ov -> viewModel.addOverlay(ov) } },
+                    onDismiss = { activeSpecialSheet = null }
+                )
+                "pip" -> PiPPanel(
+                    playheadUs = positionUs,
+                    onAdd = { viewModel.addPipTrack(it) },
+                    onDismiss = { activeSpecialSheet = null }
+                )
+            }
+        } else {
+            when (tool) {
+                EditorTool.AUDIO -> AudioSheet(
+                    originalVideoVolume = project?.originalVideoVolume ?: 1f,
+                    backgroundMusicVolume = project?.backgroundMusicVolume ?: 1f,
+                    hasMusicTrack = (project?.audioTracks?.isNotEmpty() == true),
+                    onVolumesChanged = { o, m -> viewModel.setVolumes(o, m) },
+                    onPickMusicClick = { /* wired to picker */ },
+                    onVoiceoverClick = { activeSpecialSheet = "voiceover" },
+                    onDismiss = { selectedTool = null }
+                )
             EditorTool.EFFECTS -> EffectsSheet(
                 currentEffectId = clip?.effectId,
                 currentIntensity = clip?.effectIntensity ?: 0f,
@@ -269,6 +294,7 @@ fun EditorScreen(
             )
             EditorTool.TEXT -> TextSheet(
                 onApply = { overlay -> viewModel.addOverlay(overlay) },
+                onOpenCaptions = { activeSpecialSheet = "captions" },
                 onDismiss = { selectedTool = null }
             )
             EditorTool.STICKER -> StickerSheet(
@@ -291,6 +317,7 @@ fun EditorScreen(
                 onAddOverlay = { o -> viewModel.addOverlay(o) },
                 onDeleteOverlay = { id -> viewModel.removeOverlay(id) },
                 onSeekPreview = { us -> viewModel.playerManager.seekToUs(us) },
+                onOpenPiP = { activeSpecialSheet = "pip" },
                 onDismiss = { selectedTool = null }
             )
             EditorTool.KEYFRAMES -> KeyframeSheet(
@@ -309,6 +336,7 @@ fun EditorScreen(
             else -> { /* default */ }
         }
     }
+}
 
     if (showExportDialog) {
         ExportDialog(

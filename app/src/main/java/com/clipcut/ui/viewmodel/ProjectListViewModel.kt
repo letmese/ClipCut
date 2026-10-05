@@ -49,6 +49,18 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    fun createProjectFromTemplate(template: com.clipcut.core.templates.Template, onCreated: (String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val registry = com.clipcut.core.templates.TemplateRegistry(getApplication())
+            val base = Project(name = template.name)
+            val configured = registry.applyToProject(template, base, emptyList())
+            dao.insertProject(ProjectEntity.fromDomain(configured))
+            AppLog.i(TAG, "createProjectFromTemplate ${configured.id} name=${configured.name}")
+            refresh()
+            onCreated(configured.id)
+        }
+    }
+
     fun deleteProject(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
             dao.deleteProjectById(id)

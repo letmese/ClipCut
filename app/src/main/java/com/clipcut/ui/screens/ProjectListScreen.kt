@@ -74,7 +74,9 @@ fun ProjectListScreen(
         Column(modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())) {
             HeroSection(onCreateNew = { showCreateDialog = true })
             Spacer(Modifier.height(24.dp))
-            TemplatesCarousel()
+            TemplatesCarousel(onOpenTemplate = { t ->
+                viewModel.createProjectFromTemplate(t) { id -> onOpenProject(id) }
+            })
             Spacer(Modifier.height(24.dp))
             RecentProjectsGrid(projects = projects, onOpen = onOpenProject)
             Spacer(Modifier.height(80.dp))
@@ -137,25 +139,52 @@ private fun HeroSection(onCreateNew: () -> Unit) {
 }
 
 @Composable
-private fun TemplatesCarousel() {
+private fun TemplatesCarousel(onOpenTemplate: (com.clipcut.core.templates.Template) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val registry = remember { com.clipcut.core.templates.TemplateRegistry(context) }
+    val loadedTemplates = remember { registry.listTemplates() }
+
     Text("Templates", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, modifier = Modifier.padding(horizontal = 16.dp))
     Spacer(Modifier.height(12.dp))
     LazyRow(
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        items(templates) { t ->
-            Box(
-                modifier = Modifier
-                    .size(width = 160.dp, height = 200.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(t.color)
-                    .padding(16.dp),
-                contentAlignment = Alignment.BottomStart
-            ) {
-                Column {
-                    Text(t.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Text("${t.duration} • ${t.aspect}", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+        if (loadedTemplates.isNotEmpty()) {
+            val colors = listOf(AccentPrimary, AccentSecondary, AccentGold, AccentViolet, AccentBlue)
+            items(loadedTemplates.size) { idx ->
+                val t = loadedTemplates[idx]
+                val color = colors[idx % colors.size]
+                Box(
+                    modifier = Modifier
+                        .size(width = 160.dp, height = 200.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(color)
+                        .clickable { onOpenTemplate(t) }
+                        .padding(16.dp),
+                    contentAlignment = Alignment.BottomStart
+                ) {
+                    Column {
+                        Text(t.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        val secs = t.durationUs / 1_000_000L
+                        Text("${secs}s • ${t.aspectRatio}", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                    }
+                }
+            }
+        } else {
+            items(templates) { t ->
+                Box(
+                    modifier = Modifier
+                        .size(width = 160.dp, height = 200.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(t.color)
+                        .padding(16.dp),
+                    contentAlignment = Alignment.BottomStart
+                ) {
+                    Column {
+                        Text(t.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text("${t.duration} • ${t.aspect}", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                    }
                 }
             }
         }

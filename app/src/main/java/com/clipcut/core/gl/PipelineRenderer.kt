@@ -40,6 +40,8 @@ class PipelineRenderer(private val context: Context) {
     private var blend: BlendFilter? = null
     private var transition: TransitionFilter? = null
     private var lut: LutFilter? = null
+    private var effectFilter: EffectFilter? = null
+    private var currentEffectId: String? = null
 
     private var initialised = false
 
@@ -83,7 +85,9 @@ class PipelineRenderer(private val context: Context) {
         lutConfig: LutConfig?,
         maskConfig: MaskConfig,
         blendMode: BlendMode,
-        baseLayerTexId: Int?
+        baseLayerTexId: Int?,
+        effectId: String? = null,
+        effectIntensity: Float = 0f
     ) {
         if (!initialised) return
 
@@ -147,6 +151,7 @@ class PipelineRenderer(private val context: Context) {
         }
 
         // Step 4: Chroma key
+        // Step 4: Chroma key
         if (chromaKeyColor != null) {
             val target = nextTarget()
             chroma?.keyColor = chromaKeyColor
@@ -156,6 +161,28 @@ class PipelineRenderer(private val context: Context) {
             chroma?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
             target?.unbind()
             currentTex = target?.textureId ?: currentTex
+        }
+
+        // Step 4b: EffectFilter
+        if (effectId != null && effectIntensity > 0f) {
+            val desc = com.clipcut.core.effects.EffectRegistry.byId(effectId)
+            if (desc != null) {
+                if (effectFilter == null || currentEffectId != effectId) {
+                    effectFilter?.release()
+                    effectFilter = EffectFilter(desc.fragmentShader).also { it.init() }
+                    currentEffectId = effectId
+                }
+                val ef = effectFilter
+                if (ef != null) {
+                    ef.intensity = effectIntensity
+                    ef.timeSeconds = (System.currentTimeMillis() % 100_000L) / 1000f
+                    val target = nextTarget()
+                    target?.bind()
+                    ef.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
+                    target?.unbind()
+                    currentTex = target?.textureId ?: currentTex
+                }
+            }
         }
 
         // Step 5: Blend with base layer (PiP compositing) or final blit
@@ -181,7 +208,8 @@ class PipelineRenderer(private val context: Context) {
             sourceTexId, sourceTexMatrix, sourceIsOes, mvpMatrix, rotationDegrees,
             clip.filterConfig, clip.cropRect, clip.flipHorizontal, clip.flipVertical,
             clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySmoothness,
-            clip.lutConfig, clip.maskConfig, clip.blendMode, null
+            clip.lutConfig, clip.maskConfig, clip.blendMode, null,
+            clip.effectId, clip.effectIntensity
         )
     }
 
@@ -194,8 +222,32 @@ class PipelineRenderer(private val context: Context) {
         blend?.release()
         transition?.release()
         lut?.release()
+        effectFilter?.release()
+        effectFilter = null
+        currentEffectId = null
         fbo?.release()
         fbo2?.release()
         initialised = false
+    }
+}
+
+class EffectFilter(fragmentShaderSource: String) : GlFilter(DEFAULT_VERTEX_SHADER, fragmentShaderSource) {
+    private var uIntensity = -1
+    private var uTime = -1
+    private var uResolution = -1
+
+    var intensity: Float = 0.5f
+    var timeSeconds: Float = 0f
+
+    override fun onInitCustomUniforms() {
+        uIntensity = GLES20.glGetUniformLocation(programHandle, "uIntensity")
+        uTime = GLES20.glGetUniformLocation(programHandle, "uTime")
+        uResolution = GLES20.glGetUniformLocation(programHandle, "uResolution")
+    }
+
+    override fun onSetCustomUniforms(width: Int, height: Int) {
+        if (uIntensity >= 0) GLES20.glUniform1f(uIntensity, intensity)
+        if (uTime >= 0) GLES20.glUniform1f(uTime, timeSeconds)
+        if (uResolution >= 0) GLES20.glUniform2f(uResolution, width.toFloat(), height.toFloat())
     }
 }
