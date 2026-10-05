@@ -8,8 +8,12 @@ import android.net.Uri
 import android.opengl.GLES20
 import android.os.Build
 import android.view.Surface
+import com.clipcut.core.gl.GlUtil
 import com.clipcut.core.gl.InputSurface
 import com.clipcut.core.gl.OutputSurface
+import com.clipcut.core.gl.OverlayRenderer
+import com.clipcut.core.gl.PassthroughFilter
+import com.clipcut.core.gl.PipelineRenderer
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.ExportConfig
 import com.clipcut.core.model.MediaType
@@ -61,35 +65,69 @@ class ExportEngine(
     }
 
     suspend fun export(onProgress: (progress: Float, status: String) -> Unit): Result<ExportResult> = withContext(Dispatchers.IO) {
+        var pipeline: PipelineRenderer? = null
+        var overlayRenderer: OverlayRenderer? = null
+        var passthrough: PassthroughFilter? = null
+        var enc: VideoEncoder? = null
+        var surface: InputSurface? = null
+        var mux: MediaMuxerWrapper? = null
+
         try {
             val totalUs = project.totalDurationUs.coerceAtLeast(1L)
             val outFile = File(context.cacheDir, "clipcut_export_${System.currentTimeMillis()}.mp4")
             if (outFile.exists()) outFile.delete()
-            muxer = MediaMuxerWrapper(outFile.absolutePath, expectedTrackCount = 2)
-            val enc = VideoEncoder(config).also { it.init() }
+
+            val hasAudio = project.audioTracks.isNotEmpty() || project.videoClips.any { it.mediaType == MediaType.VIDEO && it.volume > 0f }
+            val expectedTracks = if (hasAudio) 2 else 1
+            mux = MediaMuxerWrapper(outFile.absolutePath, expectedTrackCount = expectedTracks)
+            muxer = mux
+
+            enc = VideoEncoder(config).also { it.init() }
             videoEncoder = enc
-            inputSurface = enc.inputSurface
+            surface = enc.inputSurface ?: throw IllegalStateException("InputSurface is null")
+            inputSurface = surface
+            surface.makeCurrent()
+
+            pipeline = PipelineRenderer(context).also { it.init(config.width, config.height) }
+            overlayRenderer = OverlayRenderer(context).also { it.init() }
+            passthrough = PassthroughFilter().also { it.init() }
 
             onProgress(0.05f, "Encoder initialised")
 
             var progressUs = 0L
+            var lastPtsNs = -1L
             for (clip in project.videoClips) {
                 if (cancelled) return@withContext Result.failure(RuntimeException("Cancelled"))
-                processClip(clip, onProgress, totalUs, progressUs)
+                lastPtsNs = processClip(
+                    clip = clip,
+                    pipeline = pipeline,
+                    overlayRenderer = overlayRenderer,
+                    passthrough = passthrough,
+                    onProgress = onProgress,
+                    totalUs = totalUs,
+                    progressUs = progressUs,
+                    lastPtsNs = lastPtsNs
+                )
                 progressUs += clip.effectiveDurationUs
                 onProgress(0.05f + 0.85f * (progressUs.toFloat() / totalUs), "Clip ${clip.id.take(8)} done")
             }
 
             // Drain encoder EoS
-            enc.drainEncoder(muxer!!, endOfStream = true)
-            // Audio
-            onProgress(0.90f, "Muxing audio")
-            val ap = AudioProcessor(context, project, config)
-            ap.processAudio(muxer!!, totalUs) { /* per-clip audio progress */ }
+            enc.drainEncoder(mux, endOfStream = true)
 
-            muxer?.stopAndRelease()
+            // Audio
+            if (hasAudio && !cancelled) {
+                onProgress(0.90f, "Muxing audio")
+                val ap = AudioProcessor(context, project, config)
+                ap.processAudio(mux, totalUs) { /* per-clip audio progress */ }
+            }
+
+            mux.stopAndRelease()
             enc.release()
-            inputSurface?.release()
+            surface.release()
+            pipeline.release()
+            passthrough.release()
+
             onProgress(1.00f, "Done")
 
             // Insert into MediaStore so it appears in Movies/ClipCut
@@ -97,31 +135,145 @@ class ExportEngine(
             Result.success(saved)
         } catch (t: Throwable) {
             AppLog.e(tag, "export failed", t)
+            try { pipeline?.release() } catch (_: Throwable) {}
+            try { passthrough?.release() } catch (_: Throwable) {}
+            try { enc?.release() } catch (_: Throwable) {}
+            try { surface?.release() } catch (_: Throwable) {}
+            try { mux?.stopAndRelease() } catch (_: Throwable) {}
             Result.failure(t)
         }
     }
 
     private fun processClip(
         clip: TimelineItem,
+        pipeline: PipelineRenderer,
+        overlayRenderer: OverlayRenderer,
+        passthrough: PassthroughFilter,
         onProgress: (Float, String) -> Unit,
         totalUs: Long,
-        progressUs: Long
-    ) {
-        if (clip.mediaType != MediaType.VIDEO && clip.mediaType != MediaType.IMAGE) return
-        val dec = VideoDecoder(context, clip, outputSurface = OutputSurface(-1)).also { it.init() }
-        var processedFrames = 0
-        val targetFrames = (clip.effectiveDurationUs * config.frameRate / 1_000_000L).toInt()
-        while (processedFrames < targetFrames) {
-            if (cancelled) { dec.release(); return }
-            val pts = dec.decodeNextFrame()
-            if (pts < 0) break
-            // PipelineRenderer would render frame here — encode by swap
-            inputSurface?.swapBuffers()
-            inputSurface?.setPresentationTime(pts * 1000L)
-            processedFrames++
+        progressUs: Long,
+        lastPtsNs: Long
+    ): Long {
+        if (clip.mediaType != MediaType.VIDEO && clip.mediaType != MediaType.IMAGE) return lastPtsNs
+        val surface = inputSurface ?: return lastPtsNs
+        val enc = videoEncoder ?: return lastPtsNs
+        val mux = muxer ?: return lastPtsNs
+
+        var currentLastPtsNs = lastPtsNs
+
+        if (clip.mediaType == MediaType.VIDEO) {
+            val oesTexId = GlUtil.generateTexture(android.opengl.GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
+            val outputSurface = OutputSurface(oesTexId)
+            val dec = VideoDecoder(context, clip, outputSurface = outputSurface).also { it.init() }
+
+            val trimStart = clip.trimStartUs.coerceAtLeast(0L)
+            val trimEnd = if (clip.trimEndUs > trimStart) clip.trimEndUs else (if (dec.durationUs > 0) dec.durationUs else Long.MAX_VALUE)
+            if (trimStart > 0) {
+                dec.seekTo(trimStart)
+            }
+
+            val texMatrix = FloatArray(16)
+
+            while (true) {
+                if (cancelled) break
+                val pts = dec.decodeNextFrame(timeoutUs = 20_000L)
+                if (pts < 0) break
+                if (!outputSurface.awaitNewImage(timeoutMs = 500)) continue
+
+                if (pts < trimStart) continue
+                if (pts > trimEnd) break
+
+                val sourceOffsetUs = (pts - trimStart).coerceAtLeast(0L)
+                val timelineOffsetUs = SpeedRampProcessor.sourceToTimeline(sourceOffsetUs, clip.speedRamp, clip.speed)
+                val timelinePtsUs = progressUs + timelineOffsetUs
+
+                outputSurface.getTransformMatrix(texMatrix)
+
+                pipeline.applyPostProcessing(
+                    sourceTexId = oesTexId,
+                    sourceTexMatrix = texMatrix,
+                    sourceIsOes = true,
+                    mvpMatrix = GlUtil.IDENTITY_MATRIX,
+                    rotationDegrees = clip.rotationDegrees,
+                    clip = clip
+                )
+
+                val activeOverlays = project.overlays.filter { timelinePtsUs in it.timelineStartUs..it.timelineEndUs }
+                if (activeOverlays.isNotEmpty()) {
+                    overlayRenderer.renderOverlays(project.overlays, timelinePtsUs, config.width, config.height)
+                    GLES20.glEnable(GLES20.GL_BLEND)
+                    GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+                    passthrough.draw(overlayRenderer.textureId, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, config.width, config.height)
+                    GLES20.glDisable(GLES20.GL_BLEND)
+                }
+
+                val ptsNs = timelinePtsUs * 1000L
+                currentLastPtsNs = if (ptsNs > currentLastPtsNs) ptsNs else currentLastPtsNs + 1_000L
+                surface.setPresentationTime(currentLastPtsNs)
+                surface.swapBuffers()
+
+                enc.drainEncoder(mux, endOfStream = false)
+            }
+
+            dec.release()
+            outputSurface.release()
+            GLES20.glDeleteTextures(1, intArrayOf(oesTexId), 0)
+        } else if (clip.mediaType == MediaType.IMAGE) {
+            val bmp = try {
+                if (clip.uri.startsWith("content://") || clip.uri.startsWith("file://")) {
+                    context.contentResolver.openInputStream(Uri.parse(clip.uri))?.use {
+                        android.graphics.BitmapFactory.decodeStream(it)
+                    }
+                } else {
+                    android.graphics.BitmapFactory.decodeFile(clip.uri)
+                }
+            } catch (t: Throwable) {
+                AppLog.w(tag, "failed to decode image for export: ${clip.uri}", t)
+                null
+            }
+
+            if (bmp != null) {
+                val imgTexId = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, imgTexId)
+                android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
+                bmp.recycle()
+
+                val totalFrames = (clip.effectiveDurationUs * config.frameRate / 1_000_000L).toInt().coerceAtLeast(1)
+                for (i in 0 until totalFrames) {
+                    if (cancelled) break
+                    val timelineOffsetUs = (i * 1_000_000L / config.frameRate)
+                    val timelinePtsUs = progressUs + timelineOffsetUs
+
+                    pipeline.applyPostProcessing(
+                        sourceTexId = imgTexId,
+                        sourceTexMatrix = GlUtil.IDENTITY_MATRIX,
+                        sourceIsOes = false,
+                        mvpMatrix = GlUtil.IDENTITY_MATRIX,
+                        rotationDegrees = clip.rotationDegrees,
+                        clip = clip
+                    )
+
+                    val activeOverlays = project.overlays.filter { timelinePtsUs in it.timelineStartUs..it.timelineEndUs }
+                    if (activeOverlays.isNotEmpty()) {
+                        overlayRenderer.renderOverlays(project.overlays, timelinePtsUs, config.width, config.height)
+                        GLES20.glEnable(GLES20.GL_BLEND)
+                        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+                        passthrough.draw(overlayRenderer.textureId, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, config.width, config.height)
+                        GLES20.glDisable(GLES20.GL_BLEND)
+                    }
+
+                    val ptsNs = timelinePtsUs * 1000L
+                    currentLastPtsNs = if (ptsNs > currentLastPtsNs) ptsNs else currentLastPtsNs + 1_000L
+                    surface.setPresentationTime(currentLastPtsNs)
+                    surface.swapBuffers()
+
+                    enc.drainEncoder(mux, endOfStream = false)
+                }
+                GLES20.glDeleteTextures(1, intArrayOf(imgTexId), 0)
+            }
         }
-        dec.release()
-        onProgress(0.05f + 0.85f * ((progressUs + clip.effectiveDurationUs) / totalUs.toFloat()), "Clip encoded")
+
+        return currentLastPtsNs
     }
 
     private fun saveToGallery(src: File): ExportResult {
@@ -154,46 +306,110 @@ class ExportEngine(
 }
 
 /**
- * MediaMuxerWrapper — wraps android.media.MediaMuxer with a start-on-first-track
- * policy.  addVideoTrack/addAudioTrack return the track index; the muxer is
- * started lazily once at least one track is added.
+ * MediaMuxerWrapper — wraps android.media.MediaMuxer with a thread-safe
+ * start-when-ready policy. Waits for BOTH video and audio tracks (when expected)
+ * before calling muxer.start(). Samples arriving prior to muxer.start() are
+ * buffered in pendingSamples and flushed immediately upon start.
  */
-class MediaMuxerWrapper(outputPath: String, expectedTrackCount: Int = 2) {
+class MediaMuxerWrapper(outputPath: String, private val expectedTrackCount: Int = 2) {
     private val muxer: MediaMuxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
     private var started = false
     private var trackCount = 0
-    private val tracks = mutableMapOf<Int, Int>()
+    private val tracks = mutableMapOf<Int, Int>() // 0: Video, 1: Audio
+    private val lock = Any()
 
-    fun addVideoTrack(format: MediaFormat): Int {
+    private class PendingSample(val trackKey: Int, val buffer: ByteBuffer, val info: MediaCodec.BufferInfo)
+    private val pendingSamples = mutableListOf<PendingSample>()
+
+    fun addVideoTrack(format: MediaFormat): Int = synchronized(lock) {
         val idx = muxer.addTrack(format)
         tracks[0] = idx
         trackCount++
-        maybeStart()
+        checkStartMuxerLocked()
         return idx
     }
 
-    fun addAudioTrack(format: MediaFormat): Int {
+    fun addAudioTrack(format: MediaFormat): Int = synchronized(lock) {
         val idx = muxer.addTrack(format)
         tracks[1] = idx
         trackCount++
-        maybeStart()
+        checkStartMuxerLocked()
         return idx
     }
 
-    private fun maybeStart() {
-        if (!started && trackCount > 0) { muxer.start(); started = true }
+    fun checkStartMuxerLocked() {
+        if (!started && trackCount >= expectedTrackCount) {
+            muxer.start()
+            started = true
+            flushPendingSamplesLocked()
+        }
+    }
+
+    private fun flushPendingSamplesLocked() {
+        for (sample in pendingSamples) {
+            val trackIdx = tracks[sample.trackKey] ?: continue
+            muxer.writeSampleData(trackIdx, sample.buffer, sample.info)
+        }
+        pendingSamples.clear()
     }
 
     fun writeVideoSample(buffer: ByteBuffer, bufferInfo: MediaCodec.BufferInfo) {
-        if (started) muxer.writeSampleData(tracks[0]!!, buffer, bufferInfo)
+        synchronized(lock) {
+            if (started) {
+                val trackIdx = tracks[0] ?: return@synchronized
+                muxer.writeSampleData(trackIdx, buffer, bufferInfo)
+            } else {
+                val copy = ByteBuffer.allocateDirect(bufferInfo.size)
+                buffer.position(bufferInfo.offset)
+                buffer.limit(bufferInfo.offset + bufferInfo.size)
+                copy.put(buffer)
+                copy.flip()
+                val infoCopy = MediaCodec.BufferInfo().apply {
+                    set(0, bufferInfo.size, bufferInfo.presentationTimeUs, bufferInfo.flags)
+                }
+                pendingSamples.add(PendingSample(0, copy, infoCopy))
+            }
+        }
     }
 
     fun writeAudioSample(buffer: ByteBuffer, bufferInfo: MediaCodec.BufferInfo) {
-        if (started) muxer.writeSampleData(tracks[1]!!, buffer, bufferInfo)
+        synchronized(lock) {
+            if (started) {
+                val trackIdx = tracks[1] ?: return@synchronized
+                muxer.writeSampleData(trackIdx, buffer, bufferInfo)
+            } else {
+                val copy = ByteBuffer.allocateDirect(bufferInfo.size)
+                buffer.position(bufferInfo.offset)
+                buffer.limit(bufferInfo.offset + bufferInfo.size)
+                copy.put(buffer)
+                copy.flip()
+                val infoCopy = MediaCodec.BufferInfo().apply {
+                    set(0, bufferInfo.size, bufferInfo.presentationTimeUs, bufferInfo.flags)
+                }
+                pendingSamples.add(PendingSample(1, copy, infoCopy))
+            }
+        }
     }
 
     fun stopAndRelease() {
-        if (started) try { muxer.stop() } catch (_: Throwable) {}
-        muxer.release()
+        synchronized(lock) {
+            if (!started && trackCount > 0) {
+                try {
+                    muxer.start()
+                    started = true
+                    flushPendingSamplesLocked()
+                } catch (t: Throwable) {
+                    AppLog.w("MediaMuxerWrapper", "forced muxer.start() failed", t)
+                }
+            }
+            if (started) {
+                try { muxer.stop() } catch (t: Throwable) {
+                    AppLog.w("MediaMuxerWrapper", "muxer.stop() failed", t)
+                }
+            }
+            try { muxer.release() } catch (t: Throwable) {
+                AppLog.w("MediaMuxerWrapper", "muxer.release() failed", t)
+            }
+        }
     }
 }

@@ -178,7 +178,22 @@ class AudioProcessor(
         totalDurationUs: Long,
         onProgress: (Float) -> Unit
     ) {
-        if (project.audioTracks.isEmpty()) {
+        val tracksToMix = if (project.audioTracks.isNotEmpty()) {
+            project.audioTracks
+        } else {
+            project.videoClips.filter { it.mediaType == com.clipcut.core.model.MediaType.VIDEO && it.volume > 0f }.map { clip ->
+                com.clipcut.core.model.AudioTrackItem(
+                    uri = clip.uri,
+                    name = "Clip Audio",
+                    sourceDurationUs = clip.sourceDurationUs,
+                    timelineStartUs = 0L,
+                    trimStartUs = clip.trimStartUs,
+                    trimEndUs = if (clip.trimEndUs > clip.trimStartUs) clip.trimEndUs else clip.sourceDurationUs,
+                    volume = clip.volume * project.originalVideoVolume
+                )
+            }
+        }
+        if (tracksToMix.isEmpty()) {
             onProgress(1f); return
         }
         // Setup AAC encoder
@@ -194,7 +209,7 @@ class AudioProcessor(
 
         // Per-track decode loop
         var processedUs = 0L
-        for (track in project.audioTracks) {
+        for (track in tracksToMix) {
             if (track.uri.isEmpty()) continue
             try {
                 val ext = MediaExtractor().apply { setDataSource(context, android.net.Uri.parse(track.uri), null) }
@@ -253,7 +268,7 @@ class AudioProcessor(
                     // Apply volume by scaling 16-bit PCM samples
                     applyVolume(buf, track.volume)
                     // Encode to AAC
-                    feedToEncoder(enc, buf, info.presentationTimeUs)
+                    feedToEncoder(enc, muxer, buf, info.presentationTimeUs)
                 }
                 dec.releaseOutputBuffer(outIdx, false)
                 if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
@@ -274,7 +289,7 @@ class AudioProcessor(
     }
 
     private var encFormatChanged = false
-    private fun feedToEncoder(enc: MediaCodec, input: ByteBuffer, ptsUs: Long) {
+    private fun feedToEncoder(enc: MediaCodec, muxer: MediaMuxerWrapper, input: ByteBuffer, ptsUs: Long) {
         val inIdx = enc.dequeueInputBuffer(10_000)
         if (inIdx >= 0) {
             val out = enc.getInputBuffer(inIdx)!!
@@ -282,7 +297,7 @@ class AudioProcessor(
             out.put(input.duplicate())
             enc.queueInputBuffer(inIdx, 0, out.position(), ptsUs, 0)
         }
-        drainAudioEnc(enc, null, endOfStream = false)
+        drainAudioEnc(enc, muxer, endOfStream = false)
     }
 
     private fun drainAudioEnc(enc: MediaCodec, muxer: MediaMuxerWrapper?, endOfStream: Boolean) {
