@@ -108,6 +108,22 @@ fun EditorScreen(
                 onExport = { showExportDialog = true },
                 title = project?.name ?: "Loading…"
             )
+        },
+        bottomBar = {
+            EditorToolbar(
+                selected = selectedTool,
+                onSelect = { tool ->
+                    when (tool) {
+                        EditorTool.UNDO -> viewModel.undo()
+                        EditorTool.REDO -> viewModel.redo()
+                        EditorTool.SPLIT -> viewModel.splitClipAtPlayhead()
+                        else -> selectedTool = tool
+                    }
+                },
+                canUndo = canUndo,
+                canRedo = canRedo,
+                modifier = Modifier.navigationBarsPadding()
+            )
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -115,7 +131,7 @@ fun EditorScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(220.dp)
+                    .weight(1f)
                     .background(Surface2),
                 contentAlignment = Alignment.Center
             ) {
@@ -164,21 +180,8 @@ fun EditorScreen(
                 totalDurationUs = project?.totalDurationUs ?: 0L,
                 onSelectClip = { viewModel.selectClip(it) },
                 onSeek = { viewModel.playerManager.seekToUs(it) },
-                onAddMediaClick = { pickMedia.launch("video/*") }
-            )
-            // Toolbar
-            EditorToolbar(
-                selected = selectedTool,
-                onSelect = { tool ->
-                    when (tool) {
-                        EditorTool.UNDO -> viewModel.undo()
-                        EditorTool.REDO -> viewModel.redo()
-                        EditorTool.SPLIT -> viewModel.splitClipAtPlayhead()
-                        else -> selectedTool = tool
-                    }
-                },
-                canUndo = canUndo,
-                canRedo = canRedo
+                onAddMediaClick = { pickMedia.launch("video/*") },
+                modifier = Modifier.fillMaxWidth().height(180.dp)
             )
         }
     }

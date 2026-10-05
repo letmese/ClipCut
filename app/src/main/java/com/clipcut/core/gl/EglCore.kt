@@ -130,7 +130,7 @@ class InputSurface(val surface: Surface) {
  * The texture is created by an external caller and passed in.
  */
 class OutputSurface(val textureId: Int) : SurfaceTexture.OnFrameAvailableListener {
-    private val surfaceTexture = SurfaceTexture(textureId, true).also { it.setOnFrameAvailableListener(this) }
+    private val surfaceTexture = SurfaceTexture(textureId).also { it.setOnFrameAvailableListener(this) }
     val surface: Surface = Surface(surfaceTexture)
 
     @Volatile private var frameAvailable = false
@@ -149,15 +149,23 @@ class OutputSurface(val textureId: Int) : SurfaceTexture.OnFrameAvailableListene
             if (!frameAvailable) return false
             frameAvailable = false
         }
-        surfaceTexture.updateTexImage()
-        return true
+        return try {
+            surfaceTexture.updateTexImage()
+            true
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     fun getTransformMatrix(mtx: FloatArray) = surfaceTexture.getTransformMatrix(mtx)
 
     fun release() {
-        surface.release()
-        surfaceTexture.release()
+        try {
+            surface.release()
+        } catch (_: Throwable) {}
+        try {
+            surfaceTexture.release()
+        } catch (_: Throwable) {}
     }
 }
 

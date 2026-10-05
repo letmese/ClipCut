@@ -51,6 +51,7 @@ class GlPreviewRenderer(private val context: Context) {
     private val texMatrix = FloatArray(16)
     @Volatile private var isRunning = false
     @Volatile private var isDirty = true
+    @Volatile private var hasReceivedFirstFrame = false
     private var renderThread: Thread? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -58,6 +59,7 @@ class GlPreviewRenderer(private val context: Context) {
         this.surface = surface
         this.viewportWidth = width
         this.viewportHeight = height
+        this.hasReceivedFirstFrame = false
         AppLog.d(TAG, "onSurfaceCreated ${width}x${height}")
 
         stopRenderThread()
@@ -76,6 +78,11 @@ class GlPreviewRenderer(private val context: Context) {
     }
 
     fun onSurfaceDestroyed() {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            playerManager?.setVideoSurface(null)
+        } else {
+            mainHandler.post { playerManager?.setVideoSurface(null) }
+        }
         stopRenderThread()
         surface = null
     }
@@ -134,10 +141,21 @@ class GlPreviewRenderer(private val context: Context) {
         val pipe = pipeline ?: return
 
         val newFrame = outSurface.awaitNewImage(10)
+        if (newFrame) {
+            hasReceivedFirstFrame = true
+        }
         if (!newFrame && !isDirty) {
             return
         }
         isDirty = false
+
+        if (!hasReceivedFirstFrame) {
+            GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
+            GLES20.glClearColor(0.08f, 0.08f, 0.08f, 1f)
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+            core.swapBuffers(eSurface)
+            return
+        }
 
         outSurface.getTransformMatrix(texMatrix)
         val posUs = positionProvider?.invoke() ?: 0L
@@ -186,24 +204,42 @@ class GlPreviewRenderer(private val context: Context) {
     }
 
     private fun cleanUpGl() {
-        mainHandler.post {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
             playerManager?.setVideoSurface(null)
+        } else {
+            mainHandler.post {
+                playerManager?.setVideoSurface(null)
+            }
         }
-        overlayFilter?.release()
+        try {
+            overlayFilter?.release()
+        } catch (_: Throwable) {}
         overlayFilter = null
-        overlayRenderer?.release()
+        try {
+            overlayRenderer?.release()
+        } catch (_: Throwable) {}
         overlayRenderer = null
-        pipeline?.release()
+        try {
+            pipeline?.release()
+        } catch (_: Throwable) {}
         pipeline = null
-        outputSurface?.release()
+        try {
+            outputSurface?.release()
+        } catch (_: Throwable) {}
         outputSurface = null
         if (oesTextureId != -1) {
-            GLES20.glDeleteTextures(1, intArrayOf(oesTextureId), 0)
+            try {
+                GLES20.glDeleteTextures(1, intArrayOf(oesTextureId), 0)
+            } catch (_: Throwable) {}
             oesTextureId = -1
         }
-        eglSurface?.let { eglCore?.destroySurface(it) }
+        eglSurface?.let {
+            try { eglCore?.destroySurface(it) } catch (_: Throwable) {}
+        }
         eglSurface = null
-        eglCore?.release()
+        try {
+            eglCore?.release()
+        } catch (_: Throwable) {}
         eglCore = null
     }
 
