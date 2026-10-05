@@ -6,6 +6,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.Project
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,7 +42,27 @@ class PreviewPlayerManager(private val context: Context) {
 
     var onSeek: ((Long) -> Unit)? = null
 
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob())
+
+    init {
+        initialize()
+        scope.launch {
+            while (isActive) {
+                val p = player
+                if (p != null && _isPlaying.value) {
+                    _positionUs.value = p.currentPosition * 1000L
+                }
+                kotlinx.coroutines.delay(16)
+            }
+        }
+    }
+
+    fun setVideoSurface(surface: android.view.Surface?) {
+        player?.setVideoSurface(surface)
+    }
+
     fun initialize(): ExoPlayer {
+        if (player != null) return player!!
         val p = ExoPlayer.Builder(context).build()
         p.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { _isPlaying.value = playing }
@@ -50,7 +71,6 @@ class PreviewPlayerManager(private val context: Context) {
                 if (state == Player.STATE_READY) _totalDurationUs.value = p.duration.coerceAtLeast(0L) * 1000L
             }
         })
-        // Poll position via a coroutine-aware runnable
         player = p
         return p
     }
@@ -89,6 +109,7 @@ class PreviewPlayerManager(private val context: Context) {
     }
 
     fun release() {
+        scope.cancel()
         player?.release()
         player = null
     }

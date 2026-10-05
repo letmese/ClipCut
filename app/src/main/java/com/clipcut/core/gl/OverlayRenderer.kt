@@ -24,6 +24,7 @@ class OverlayRenderer(private val context: Context) {
     private var width: Int = 1920
     private var height: Int = 1080
     private var overlayTexId: Int = -1
+    val textureId: Int get() = overlayTexId
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)

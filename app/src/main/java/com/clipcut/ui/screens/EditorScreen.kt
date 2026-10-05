@@ -3,6 +3,7 @@ package com.clipcut.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.AndroidExternalSurface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -124,7 +125,19 @@ fun EditorScreen(
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
-                    Text("${project!!.videoClips.size} clips loaded", color = Color.White.copy(alpha = 0.7f))
+                    AndroidExternalSurface(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        onSurface { surface, width, height ->
+                            viewModel.previewRenderer.onSurfaceCreated(surface, width, height)
+                            surface.onDestroyed {
+                                viewModel.previewRenderer.onSurfaceDestroyed()
+                            }
+                            surface.onChanged { newWidth, newHeight ->
+                                viewModel.previewRenderer.onSurfaceChanged(newWidth, newHeight)
+                            }
+                        }
+                    }
                 }
                 // Play/pause overlay
                 IconButton(

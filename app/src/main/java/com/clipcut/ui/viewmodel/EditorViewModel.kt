@@ -60,6 +60,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     val playerManager: PreviewPlayerManager = PreviewPlayerManager(application)
     val previewRenderer: GlPreviewRenderer = GlPreviewRenderer(application)
 
+    init {
+        previewRenderer.playerManager = playerManager
+        previewRenderer.positionProvider = { playerManager.currentPositionUs.value }
+    }
+
     private val _project = MutableStateFlow<Project?>(null)
     val project: StateFlow<Project?> = _project.asStateFlow()
 

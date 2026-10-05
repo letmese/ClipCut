@@ -90,6 +90,9 @@ class PassthroughFilter : GlFilter() {
     }
 }
 
+/** Samples from an external OES texture into a 2D surface. */
+class OesFilter : GlFilter(fragmentShaderSource = OE_FRAGMENT_SHADER)
+
 /**
  * ColorAdjustFilter — combines brightness/contrast/saturation/temperature +
  * crop + flip + B&W/Sepia/Vignette into a single fragment pass to minimise
