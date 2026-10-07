@@ -37,6 +37,9 @@ class PipelineRenderer(private val context: Context) {
     private var effectFilter: EffectFilter? = null
     private var currentEffectId: String? = null
 
+    var lastDecoratedTexId: Int = -1
+        private set
+
     private var initialised = false
 
     fun init(width: Int, height: Int) {
@@ -81,7 +84,10 @@ class PipelineRenderer(private val context: Context) {
         blendMode: BlendMode,
         baseLayerTexId: Int?,
         effectId: String? = null,
-        effectIntensity: Float = 0f
+        effectIntensity: Float = 0f,
+        transitionProgress: Float = 0f,
+        transitionType: com.clipcut.core.model.TransitionType = com.clipcut.core.model.TransitionType.NONE,
+        prevClipTexId: Int? = null
     ) {
         if (!initialised) return
 
@@ -193,6 +199,20 @@ class PipelineRenderer(private val context: Context) {
             }
         }
 
+        // Step 4c: Transition from previous clip if active
+        if (prevClipTexId != null && transitionType != com.clipcut.core.model.TransitionType.NONE && transitionProgress in 0.0f..0.999f) {
+            val target = nextTarget()
+            transition?.setType(transitionType)
+            transition?.setProgress(transitionProgress)
+            target?.bind()
+            GLES20.glViewport(0, 0, width, height)
+            transition?.drawTransition(prevClipTexId, currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
+            target?.unbind()
+            currentTex = target?.textureId ?: currentTex
+        }
+
+        lastDecoratedTexId = currentTex
+
         // Step 5: Blend with base layer (PiP compositing) or final blit
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
         GLES20.glViewport(0, 0, width, height)
@@ -210,14 +230,18 @@ class PipelineRenderer(private val context: Context) {
         sourceIsOes: Boolean,
         mvpMatrix: FloatArray,
         rotationDegrees: Int,
-        clip: TimelineItem
+        clip: TimelineItem,
+        transitionProgress: Float = 0f,
+        prevClipTexId: Int? = null,
+        baseLayerTexId: Int? = null
     ) {
         renderFrame(
             sourceTexId, sourceTexMatrix, sourceIsOes, mvpMatrix, rotationDegrees,
             clip.filterConfig, clip.cropRect, clip.flipHorizontal, clip.flipVertical,
             clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySmoothness,
-            clip.lutConfig, clip.maskConfig, clip.blendMode, null,
-            clip.effectId, clip.effectIntensity
+            clip.lutConfig, clip.maskConfig, clip.blendMode, baseLayerTexId,
+            clip.effectId, clip.effectIntensity,
+            transitionProgress, clip.transitionType, prevClipTexId
         )
     }
 
@@ -237,6 +261,7 @@ class PipelineRenderer(private val context: Context) {
         currentEffectId = null
         fbo?.release()
         fbo2?.release()
+        lastDecoratedTexId = -1
         initialised = false
     }
 }

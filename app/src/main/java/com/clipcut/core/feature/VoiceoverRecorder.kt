@@ -79,7 +79,8 @@ class VoiceoverRecorder(private val context: Context) {
             timelineStartUs = 0L,
             trimStartUs = 0L,
             trimEndUs = durationMs * 1000L,
-            volume = 1.0f
+            volume = 1.0f,
+            isVoiceover = true
         )
         return item
     }

@@ -202,9 +202,10 @@ class ColorAdjustFilter : GlFilter(
             FilterType.SEPIA -> 2f
             else -> 0f
         }
-        GLES20.glUniform1f(uEffectMode, mode)
-        GLES20.glUniform2f(uCropOrigin, cropLeft, cropTop)
-        GLES20.glUniform2f(uCropSize, cropRight - cropLeft, cropBottom - cropTop)
+        val glCropY = 1.0f - cropBottom
+        val glCropHeight = (cropBottom - cropTop).coerceAtLeast(0.01f)
+        GLES20.glUniform2f(uCropOrigin, cropLeft, glCropY)
+        GLES20.glUniform2f(uCropSize, (cropRight - cropLeft).coerceAtLeast(0.01f), glCropHeight)
         GLES20.glUniform1i(uFlipH, if (flipHorizontal) 1 else 0)
         GLES20.glUniform1i(uFlipV, if (flipVertical) 1 else 0)
     }
@@ -530,7 +531,34 @@ class TransitionFilter : GlFilter(
 
     fun setType(type: TransitionType) {
         GLES20.glUseProgram(programHandle)
-        val idx = TransitionType.values().indexOf(type).coerceAtLeast(0)
+        val idx = when (type) {
+            TransitionType.NONE -> 0
+            TransitionType.FADE -> 1
+            TransitionType.SLIDE_LEFT -> 2
+            TransitionType.SLIDE_RIGHT -> 3
+            TransitionType.SLIDE_UP -> 4
+            TransitionType.SLIDE_DOWN -> 5
+            TransitionType.DISSOLVE -> 6
+            TransitionType.WIPE_LEFT -> 7
+            TransitionType.WIPE_RIGHT -> 8
+            TransitionType.WIPE_UP -> 9
+            TransitionType.WIPE_DOWN -> 10
+            TransitionType.CIRCLE_CROP -> 11
+            TransitionType.CIRCLE_CLOSE -> 12
+            TransitionType.CROSS_ZOOM -> 13
+            TransitionType.ZOOM_IN -> 14
+            TransitionType.ZOOM_OUT -> 15
+            TransitionType.FLASH_WHITE -> 16
+            TransitionType.FLASH_BLACK -> 17
+            TransitionType.GLITCH -> 18
+            TransitionType.PIXELATE -> 19
+            TransitionType.BLUR -> 20
+            TransitionType.ROTATE -> 21
+            TransitionType.RIPPLE -> 22
+            TransitionType.HEART -> 23
+            TransitionType.STAR -> 24
+            TransitionType.CURTAIN -> 25
+        }
         GLES20.glUniform1i(uType, idx)
     }
 

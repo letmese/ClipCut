@@ -12,6 +12,10 @@ import com.clipcut.core.gl.GlFilter
 import com.clipcut.core.gl.GlUtil
 import com.clipcut.core.gl.OutputSurface
 import com.clipcut.core.gl.OverlayRenderer
+import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import android.opengl.Matrix
 import com.clipcut.core.gl.PassthroughFilter
 import com.clipcut.core.gl.PipelineRenderer
 import com.clipcut.core.log.AppLog
@@ -22,6 +26,7 @@ class GlPreviewRenderer(private val context: Context) {
 
     private var pipeline: PipelineRenderer? = null
     @Volatile private var project: Project? = null
+    private val pipRetrievers = mutableMapOf<String, MediaMetadataRetriever>()
     @Volatile private var viewportWidth = 0
     @Volatile private var viewportHeight = 0
     @Volatile private var paused = false
@@ -41,8 +46,12 @@ class GlPreviewRenderer(private val context: Context) {
 
     private val texMatrix = FloatArray(16)
     @Volatile private var isRunning = false
-    @Volatile private var isDirty = true
+    @Volatile var isDirty = true
     @Volatile private var hasReceivedFirstFrame = false
+    @Volatile var activeEditingOverlayId: String? = null
+    @Volatile var activeEditingPipId: String? = null
+
+    fun requestRender() { isDirty = true }
 
     private val threadLock = Any()
     private var renderThread: Thread? = null
@@ -126,7 +135,7 @@ class GlPreviewRenderer(private val context: Context) {
                     requestResize = false
                     pipe.resizeIfNeeded(resizeW, resizeH)
                 }
-                if (!paused) {
+                if (!paused || isDirty) {
                     renderOnce(core, eSurface, outSurface, pipe, over, filter, oesTex)
                 } else {
                     Thread.sleep(16)
@@ -151,6 +160,17 @@ class GlPreviewRenderer(private val context: Context) {
             oesTextureId = -1
         }
     }
+
+    private class PipFrameCache(
+        val uri: String,
+        @Volatile var timestampBucket: Long = -1L,
+        @Volatile var textureId: Int = -1,
+        @Volatile var hasValidTexture: Boolean = false,
+        @Volatile var pendingBitmap: android.graphics.Bitmap? = null,
+        @Volatile var isDecoding: Boolean = false
+    )
+    private val pipCaches = java.util.concurrent.ConcurrentHashMap<String, PipFrameCache>()
+    private val pipDecodeExecutor = java.util.concurrent.Executors.newFixedThreadPool(2)
 
     private fun renderOnce(
         core: EglCore, eSurface: EGLSurface, out: OutputSurface,
@@ -193,19 +213,147 @@ class GlPreviewRenderer(private val context: Context) {
         }
 
         val proj = project
-        if (proj != null && proj.overlays.isNotEmpty()) {
-            over.renderOverlays(proj.overlays, posUs, w, h)
-            val overId = over.textureId
-            if (overId != -1) {
-                GLES20.glEnable(GLES20.GL_BLEND)
-                GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-                filter.draw(overId, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, w, h)
-                GLES20.glDisable(GLES20.GL_BLEND)
+        if (proj != null) {
+            // Render PiP Layers
+            for (pip in proj.pipTracks) {
+                if (posUs in pip.timelineStartUs..pip.timelineEndUs && pip.uri.isNotEmpty()) {
+                    if (pip.id == activeEditingPipId) continue
+                    try {
+                        val relTime = (posUs - pip.timelineStartUs) + pip.trimStartUs
+                        val isVideo = pip.uri.contains("video", ignoreCase = true) || pip.uri.endsWith(".mp4", ignoreCase = true) || pip.uri.endsWith(".mkv", ignoreCase = true)
+                        val bucket = if (isVideo) (relTime / 100_000L).coerceAtLeast(0L) else 0L
+
+                        val cache = pipCaches.getOrPut(pip.uri) { PipFrameCache(pip.uri) }
+
+                        // Check if a newly decoded bitmap is ready to upload to OpenGL texture
+                        val readyBmp = cache.pendingBitmap
+                        if (readyBmp != null && !readyBmp.isRecycled) {
+                            cache.pendingBitmap = null
+                            val texId = if (cache.textureId != -1) {
+                                cache.textureId
+                            } else {
+                                GlUtil.generateTexture(GLES20.GL_TEXTURE_2D).also { cache.textureId = it }
+                            }
+                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId)
+                            android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, readyBmp, 0)
+                            cache.hasValidTexture = true
+                            readyBmp.recycle()
+                        }
+
+                        // If bucket changed and not currently decoding, submit async decode task
+                        if (cache.timestampBucket != bucket && !cache.isDecoding) {
+                            cache.isDecoding = true
+                            val decodeUri = pip.uri
+                            val targetBucket = bucket
+                            val targetRelTime = relTime
+                            pipDecodeExecutor.execute {
+                                try {
+                                    val bmp = if (decodeUri.startsWith("content://")) {
+                                        val retr = getPipRetriever(decodeUri)
+                                        val videoFrame = try {
+                                            retr?.getFrameAtTime(targetRelTime, MediaMetadataRetriever.OPTION_CLOSEST)
+                                        } catch (_: Throwable) { null }
+                                        videoFrame ?: run {
+                                            try {
+                                                context.contentResolver.openInputStream(Uri.parse(decodeUri))?.use {
+                                                    BitmapFactory.decodeStream(it)
+                                                }
+                                            } catch (_: Throwable) { null }
+                                        }
+                                    } else {
+                                        val filePath = if (decodeUri.startsWith("file://")) Uri.parse(decodeUri).path ?: decodeUri.removePrefix("file://") else decodeUri
+                                        val retr = getPipRetriever(filePath)
+                                        val videoFrame = try {
+                                            retr?.getFrameAtTime(targetRelTime, MediaMetadataRetriever.OPTION_CLOSEST)
+                                        } catch (_: Throwable) { null }
+                                        videoFrame ?: BitmapFactory.decodeFile(filePath)
+                                    }
+
+                                    val targetCache = pipCaches[decodeUri]
+                                    if (targetCache != null) {
+                                        targetCache.pendingBitmap?.recycle()
+                                        targetCache.pendingBitmap = bmp
+                                        targetCache.timestampBucket = targetBucket
+                                        // Request a render pass so the new bitmap is immediately uploaded and drawn
+                                        isDirty = true
+                                    } else {
+                                        bmp?.recycle()
+                                    }
+                                } catch (t: Throwable) {
+                                    AppLog.w(TAG, "Async PiP frame decode failed: ${t.message}")
+                                } finally {
+                                    pipCaches[decodeUri]?.isDecoding = false
+                                }
+                            }
+                        }
+
+                        val pipTexId = cache.textureId
+                        // Only draw if we have successfully uploaded a valid decoded frame texture
+                        if (pipTexId != -1 && cache.hasValidTexture) {
+                            val pipMvp = FloatArray(16)
+                            Matrix.setIdentityM(pipMvp, 0)
+                            val tx = (pip.normalizedX * 2f) - 1f
+                            val ty = 1f - (pip.normalizedY * 2f)
+                            Matrix.translateM(pipMvp, 0, tx, ty, 0f)
+                            if (pip.rotation != 0f) {
+                                Matrix.rotateM(pipMvp, 0, -pip.rotation, 0f, 0f, 1f)
+                            }
+                            Matrix.scaleM(pipMvp, 0, pip.scale, pip.scale, 1f)
+
+                            GLES20.glEnable(GLES20.GL_BLEND)
+                            GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+                            // Apply FLIP_Y_MATRIX to texture matrix so the bitmap renders right-side up!
+                            filter.draw(pipTexId, GlUtil.FLIP_Y_MATRIX, pipMvp, w, h)
+                            GLES20.glDisable(GLES20.GL_BLEND)
+                        }
+                    } catch (t: Throwable) {
+                        AppLog.w(TAG, "PiP preview frame error: ${t.message}")
+                    }
+                }
+            }
+
+            // Render Overlays / Text
+            if (proj.overlays.isNotEmpty()) {
+                val editingId = activeEditingOverlayId
+                val overlaysToRender = if (editingId != null) {
+                    proj.overlays.filter { it.id != editingId }
+                } else {
+                    proj.overlays
+                }
+                if (overlaysToRender.isNotEmpty()) {
+                    over.renderOverlays(overlaysToRender, posUs, w, h)
+                    val overId = over.textureId
+                    if (overId != -1) {
+                        GLES20.glEnable(GLES20.GL_BLEND)
+                        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+                        filter.draw(overId, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, w, h)
+                        GLES20.glDisable(GLES20.GL_BLEND)
+                    }
+                } else if (over.textureId != -1) {
+                    over.renderOverlays(emptyList(), posUs, w, h)
+                }
             }
         }
 
         core.swapBuffers(eSurface)
-        Thread.sleep(16)
+    }
+
+    private fun getPipRetriever(uriStr: String): MediaMetadataRetriever? {
+        return pipRetrievers.getOrPut(uriStr) {
+            MediaMetadataRetriever().apply {
+                try {
+                    if (uriStr.startsWith("file://")) {
+                        setDataSource(Uri.parse(uriStr).path)
+                    } else if (uriStr.startsWith("/")) {
+                        setDataSource(uriStr)
+                    } else {
+                        setDataSource(context, Uri.parse(uriStr))
+                    }
+                } catch (t: Throwable) {
+                    AppLog.w(TAG, "Failed to setDataSource for PiP: $uriStr", t)
+                }
+            }
+        }
     }
 
     private fun findClipAt(timelineUs: Long): TimelineItem? {
@@ -224,7 +372,22 @@ class GlPreviewRenderer(private val context: Context) {
     fun pause() { paused = true }
     fun resume() { paused = false; isDirty = true }
     fun seekTo(@Suppress("UNUSED_PARAMETER") timelineUs: Long) { isDirty = true }
-    fun release() { onSurfaceDestroyed() }
+    fun release() {
+        onSurfaceDestroyed()
+        pipRetrievers.values.forEach {
+            try { it.release() } catch (_: Throwable) {}
+        }
+        pipRetrievers.clear()
+        for (it in pipCaches.values) {
+            if (it.textureId != -1) {
+                try { GLES20.glDeleteTextures(1, intArrayOf(it.textureId), 0) } catch (_: Throwable) {}
+            }
+            it.pendingBitmap?.recycle()
+            it.pendingBitmap = null
+        }
+        pipCaches.clear()
+        try { pipDecodeExecutor.shutdownNow() } catch (_: Throwable) {}
+    }
 
     companion object { private const val TAG = "GlPreviewRenderer" }
 }

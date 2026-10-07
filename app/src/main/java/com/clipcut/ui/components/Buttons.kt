@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.clipcut.ui.theme.AccentPrimary
 import com.clipcut.ui.theme.DarkSurfaceElevated
 import com.clipcut.ui.theme.HairlineBorder
@@ -39,21 +40,21 @@ fun PrimaryButton(
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.height(48.dp),
+        modifier = modifier.height(52.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = AccentPrimary,
             contentColor = Color.White,
             disabledContainerColor = AccentPrimary.copy(alpha = 0.4f),
             disabledContentColor = Color.White.copy(alpha = 0.6f)
         ),
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(12.dp),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 0.dp)
     ) {
         if (icon != null) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(8.dp))
         }
-        Text(text, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold))
+        Text(text, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 15.sp))
     }
 }
 
@@ -68,8 +69,8 @@ fun SecondaryButton(
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.height(44.dp),
-        shape = RoundedCornerShape(10.dp),
+        modifier = modifier.height(48.dp),
+        shape = RoundedCornerShape(12.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, HairlineBorder),
         colors = ButtonDefaults.outlinedButtonColors(
             containerColor = DarkSurfaceElevated,
@@ -79,10 +80,10 @@ fun SecondaryButton(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp)
     ) {
         if (icon != null) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(6.dp))
         }
-        Text(text, style = MaterialTheme.typography.labelLarge)
+        Text(text, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium, fontSize = 14.sp))
     }
 }
 

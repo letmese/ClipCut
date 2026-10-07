@@ -46,17 +46,21 @@ class CaptionGenerator {
     private val _partial = MutableStateFlow("")
     val partial: StateFlow<String> = _partial.asStateFlow()
 
-    private var startMs: Long = 0L
+    private var sessionStartMs: Long = 0L
+    private var segmentStartMs: Long = 0L
 
     fun start(context: Context) {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             AppLog.w(TAG, "SpeechRecognizer not available on this device")
             return
         }
+
         sr = SpeechRecognizer.createSpeechRecognizer(context).apply {
             setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {}
-                override fun onBeginningOfSpeech() {}
+                override fun onBeginningOfSpeech() {
+                    segmentStartMs = System.currentTimeMillis()
+                }
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {}
@@ -73,17 +77,19 @@ class CaptionGenerator {
                     val endMs = System.currentTimeMillis()
                     val text = list.joinToString(" ")
                     if (text.isNotBlank()) {
+                        val sUs = (segmentStartMs - sessionStartMs).coerceAtLeast(0L) * 1000L
+                        val eUs = (endMs - sessionStartMs).coerceAtLeast((segmentStartMs - sessionStartMs) + 500L) * 1000L
                         val newSeg = CaptionSegment(
                             text = text,
-                            startTimeUs = (startMs - com.clipcut.ClipCutApp.instance.packageCodePath.hashCode().toLong() and 0) * 1000L, // placeholder
-                            endTimeUs = (endMs - startMs).coerceAtLeast(0) * 1000L,
+                            startTimeUs = sUs,
+                            endTimeUs = eUs,
                             confidence = conf,
                             isFinal = true
                         )
                         _segments.value = _segments.value + newSeg
-                        AppLog.i(TAG, "final: ${text.take(60)}")
+                        AppLog.i(TAG, "final: ${text.take(60)} ($sUs-$eUs us)")
                     }
-                    startMs = endMs
+                    segmentStartMs = endMs
                     // Continue listening until stop()
                     if (running) {
                         startRecognition()
@@ -93,7 +99,7 @@ class CaptionGenerator {
             })
         }
         running = true
-        startMs = System.currentTimeMillis()
+        sessionStartMs = System.currentTimeMillis()
         startRecognition()
     }
 

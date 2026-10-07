@@ -78,6 +78,7 @@ data class ProjectEntity(
 
 interface ProjectDao {
     fun getAllProjectsFlow(): Flow<List<ProjectEntity>>
+    suspend fun getAllProjects(): List<ProjectEntity>
     suspend fun getProjectById(id: String): ProjectEntity?
     suspend fun insertProject(project: ProjectEntity)
     suspend fun updateProject(project: ProjectEntity)
@@ -138,6 +139,8 @@ private class ProjectDaoImpl(private val helper: ClipCutDatabase) : ProjectDao {
         // Real apps would use Room/Flowable; here we keep the surface but trigger on writes.
         awaitClose { }
     }
+
+    override suspend fun getAllProjects(): List<ProjectEntity> = queryAll()
 
     override suspend fun getProjectById(id: String): ProjectEntity? = with(helper.readableDatabase) {
         query(TBL, null, "id=?", arrayOf(id), null, null, "lastModifiedTime DESC").use { c ->

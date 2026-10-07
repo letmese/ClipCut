@@ -76,10 +76,11 @@ fun SettingsScreen(
                 Row(modifier = Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("#E94560", "#06D6A0", "#4EA8DE", "#FFC857", "#9B5DE5", "#FF7043", "#22D3EE", "#F472B6").forEach { c ->
                         val selected = accent.equals(c, ignoreCase = true)
+                        val parsedColor = runCatching { Color(android.graphics.Color.parseColor(c)) }.getOrDefault(AccentPrimary)
                         Box(modifier = Modifier
                             .size(32.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(android.graphics.Color.parseColor(c)))
+                            .background(parsedColor)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null
@@ -114,7 +115,7 @@ fun SettingsScreen(
                 SecondaryButton("Clear Cache", onClick = { vm.clearCache() }, modifier = Modifier.fillMaxWidth())
             }
             SettingsSection("About") {
-                Text("ClipCut v1.0.0 (Build 19)", color = Color.White, fontSize = 12.sp)
+                Text("ClipCut v1.2.30 (Build 41)", color = Color.White, fontSize = 12.sp)
                 Spacer(Modifier.height(4.dp))
                 Text("Kotlin 2.1.20 • Compose BOM 2024.12.01 • Media3 1.5.0", color = TextSecondary, fontSize = 11.sp)
                 Spacer(Modifier.height(8.dp))

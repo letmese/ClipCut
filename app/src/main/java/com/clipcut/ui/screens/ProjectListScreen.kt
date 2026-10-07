@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
@@ -55,6 +56,7 @@ fun ProjectListScreen(
 ) {
     val projects by viewModel.projects.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
+    var projectToDelete by remember { mutableStateOf<Project?>(null) }
     var projectName by remember { mutableStateOf("") }
     var tab by remember { mutableStateOf(0) }
 
@@ -78,9 +80,33 @@ fun ProjectListScreen(
                 viewModel.createProjectFromTemplate(t) { id -> onOpenProject(id) }
             })
             Spacer(Modifier.height(24.dp))
-            RecentProjectsGrid(projects = projects, onOpen = onOpenProject)
+            RecentProjectsGrid(
+                projects = projects,
+                onOpen = onOpenProject,
+                onDelete = { projectToDelete = it }
+            )
             Spacer(Modifier.height(80.dp))
         }
+    }
+
+    projectToDelete?.let { proj ->
+        AlertDialog(
+            onDismissRequest = { projectToDelete = null },
+            containerColor = Surface2,
+            title = { Text("Delete Project?", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to delete \"${proj.name}\"? All edits will be permanently lost.", color = TextSecondary) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteProject(proj.id)
+                        projectToDelete = null
+                    }
+                ) { Text("Delete", color = Color(0xFFFF5252), fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { projectToDelete = null }) { Text("Cancel", color = TextSecondary) }
+            }
+        )
     }
 
     if (showCreateDialog) {
@@ -192,7 +218,11 @@ private fun TemplatesCarousel(onOpenTemplate: (com.clipcut.core.templates.Templa
 }
 
 @Composable
-private fun RecentProjectsGrid(projects: List<Project>, onOpen: (String) -> Unit) {
+private fun RecentProjectsGrid(
+    projects: List<Project>,
+    onOpen: (String) -> Unit,
+    onDelete: (Project) -> Unit = {}
+) {
     if (projects.isEmpty()) {
         com.clipcut.ui.components.EmptyState(
             title = "No projects yet",
@@ -207,8 +237,8 @@ private fun RecentProjectsGrid(projects: List<Project>, onOpen: (String) -> Unit
     Column(modifier = Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         for (i in projects.indices step 2) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                ProjectCard(projects[i], onOpen, Modifier.weight(1f))
-                if (i + 1 < projects.size) ProjectCard(projects[i + 1], onOpen, Modifier.weight(1f))
+                ProjectCard(projects[i], onOpen, onDelete, Modifier.weight(1f))
+                if (i + 1 < projects.size) ProjectCard(projects[i + 1], onOpen, onDelete, Modifier.weight(1f))
                 else Spacer(Modifier.weight(1f))
             }
         }
@@ -216,10 +246,15 @@ private fun RecentProjectsGrid(projects: List<Project>, onOpen: (String) -> Unit
 }
 
 @Composable
-private fun ProjectCard(project: Project, onOpen: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun ProjectCard(
+    project: Project,
+    onOpen: (String) -> Unit,
+    onDelete: (Project) -> Unit = {},
+    modifier: Modifier = Modifier
+) {
     Box(
         modifier = modifier
-            .height(140.dp)
+            .height(148.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(Surface2)
             .clickable(
@@ -234,6 +269,17 @@ private fun ProjectCard(project: Project, onOpen: (String) -> Unit, modifier: Mo
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Filled.Movie, contentDescription = null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(32.dp))
+                IconButton(
+                    onClick = { onDelete(project) },
+                    modifier = Modifier.align(Alignment.TopEnd).size(36.dp).padding(4.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = "Delete",
+                        tint = Color(0xFFFF6B6B),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
             Spacer(Modifier.height(8.dp))
             Text(project.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1)
@@ -248,7 +294,7 @@ private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
     val tabs = listOf("Projects" to Icons.Filled.Movie, "Templates" to Icons.Filled.PlayArrow, "Me" to Icons.Filled.Settings)
     Surface(color = DarkSurface, tonalElevation = 0.dp) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(64.dp).navigationBarsPadding().padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxWidth().height(76.dp).navigationBarsPadding().padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
@@ -256,14 +302,19 @@ private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
                 val selected = tab == i
                 val color = if (selected) AccentPrimary else TextSecondary
                 Column(
-                    modifier = Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { onTabChange(i) }.padding(8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onTabChange(i) }
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
-                    Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(20.dp))
-                    Text(label, color = color, fontSize = 10.sp)
+                    Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(26.dp))
+                    Spacer(Modifier.height(4.dp))
+                    Text(label, color = color, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
                 }
             }
         }

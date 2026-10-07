@@ -31,8 +31,12 @@ data class LogEntry(
 ) {
     enum class Level { VERBOSE, DEBUG, INFO, WARN, ERROR, FATAL }
 
-    private val fmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
-    val formattedTime: String get() = fmt.format(Date(timestamp))
+    companion object {
+        private val dateFormat = ThreadLocal.withInitial {
+            SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+        }
+    }
+    val formattedTime: String get() = dateFormat.get()?.format(Date(timestamp)) ?: ""
 
     fun toLogLine(): String {
         val t = throwable?.let { sw -> StringWriter().also { pw -> sw.printStackTrace(PrintWriter(pw)) }.toString() } ?: ""
@@ -48,9 +52,13 @@ object AppLog {
     private var logFile: File? = null
 
     fun init(context: Context) {
-        logFile = File(context.filesDir, "clipcut.log")
-        if (!logFile!!.exists()) logFile!!.createNewFile()
-        Log.i("AppLog", "init at ${logFile!!.absolutePath}")
+        try {
+            logFile = File(context.filesDir, "clipcut.log")
+            if (!logFile!!.exists()) logFile!!.createNewFile()
+            Log.i("AppLog", "init at ${logFile!!.absolutePath}")
+        } catch (t: Throwable) {
+            Log.w("AppLog", "Failed creating log file: ${t.message}")
+        }
 
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -123,7 +131,10 @@ object AppLog {
                 putExtra(Intent.EXTRA_SUBJECT, "ClipCut logs")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(send, "Share logs"))
+            val chooser = Intent.createChooser(send, "Share logs").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
         } catch (t: Throwable) {
             e("AppLog", "shareLogs failed", t)
         }

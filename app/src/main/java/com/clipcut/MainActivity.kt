@@ -64,6 +64,9 @@ class MainActivity : ComponentActivity() {
                     composable(Screen.LogViewer.route) {
                         LogViewerScreen(onNavigateBack = { navController.popBackStack() })
                     }
+                    composable(Screen.Settings.route) {
+                        com.clipcut.ui.screens.SettingsScreen(onNavigateBack = { navController.popBackStack() })
+                    }
                 }
             }
         }

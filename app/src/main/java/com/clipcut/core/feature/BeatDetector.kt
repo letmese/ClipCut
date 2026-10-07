@@ -23,10 +23,12 @@ class BeatDetector(private val context: Context) {
         val player = MediaPlayer()
         return try {
             player.setDataSource(context, uri)
+            player.setVolume(0f, 0f)
             player.isLooping = false
             player.prepare()
             val out = mutableListOf<BeatMarker>()
-            val visualizer = Visualizer(0).apply {
+            val sessionId = player.audioSessionId
+            val visualizer = Visualizer(if (sessionId != 0) sessionId else 0).apply {
                 captureSize = Visualizer.getCaptureSizeRange()[1]
             }
             visualizer.setDataCaptureListener(object : Visualizer.OnDataCaptureListener {

@@ -49,10 +49,9 @@
         </activity>
 
         <service
-            android:name="androidx.media3.session.MediaSessionService"
+            android:name=".core.player.ClipCutMediaSessionService"
             android:foregroundServiceType="mediaPlayback"
-            android:exported="false"
-            tools:ignore="Instantiatable" />
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

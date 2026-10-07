@@ -170,6 +170,7 @@ data class PiPTrackItem(
     val normalizedX: Float = 0.75f,
     val normalizedY: Float = 0.25f,
     val scale: Float = 0.3f,
+    val rotation: Float = 0.0f,
     val volume: Float = 1.0f
 )
 
@@ -189,7 +190,8 @@ data class AudioTrackItem(
     val trimEndUs: Long = sourceDurationUs,
     val volume: Float = 1.0f,
     val fadeInMs: Int = 0,
-    val fadeOutMs: Int = 0
+    val fadeOutMs: Int = 0,
+    val isVoiceover: Boolean = false
 ) {
     val effectiveDurationUs: Long get() = (trimEndUs - trimStartUs).coerceAtLeast(0L)
 }
@@ -226,6 +228,70 @@ data class TimelineItem(
 ) {
     val trimmedDurationUs: Long get() = (trimEndUs - trimStartUs).coerceAtLeast(0L)
     val effectiveDurationUs: Long get() = (trimmedDurationUs / speed.coerceAtLeast(0.1f)).toLong()
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as TimelineItem
+        if (id != other.id) return false
+        if (uri != other.uri) return false
+        if (mediaType != other.mediaType) return false
+        if (sourceDurationUs != other.sourceDurationUs) return false
+        if (trimStartUs != other.trimStartUs) return false
+        if (trimEndUs != other.trimEndUs) return false
+        if (speed != other.speed) return false
+        if (speedRamp != other.speedRamp) return false
+        if (volume != other.volume) return false
+        if (rotationDegrees != other.rotationDegrees) return false
+        if (flipHorizontal != other.flipHorizontal) return false
+        if (flipVertical != other.flipVertical) return false
+        if (cropRect != other.cropRect) return false
+        if (fadeInMs != other.fadeInMs) return false
+        if (fadeOutMs != other.fadeOutMs) return false
+        if (isReversed != other.isReversed) return false
+        if (freezeAtUs != other.freezeAtUs) return false
+        if (filterConfig != other.filterConfig) return false
+        if (lutConfig != other.lutConfig) return false
+        if (chromaKeyColor != null) {
+            if (other.chromaKeyColor == null) return false
+            if (!chromaKeyColor.contentEquals(other.chromaKeyColor)) return false
+        } else if (other.chromaKeyColor != null) return false
+        if (chromaKeyThreshold != other.chromaKeyThreshold) return false
+        if (chromaKeySmoothness != other.chromaKeySmoothness) return false
+        if (maskConfig != other.maskConfig) return false
+        if (blendMode != other.blendMode) return false
+        if (transitionType != other.transitionType) return false
+        if (transitionDurationUs != other.transitionDurationUs) return false
+        if (effectId != other.effectId) return false
+        if (effectIntensity != other.effectIntensity) return false
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = id.hashCode()
+        result = 31 * result + uri.hashCode()
+        result = 31 * result + mediaType.hashCode()
+        result = 31 * result + sourceDurationUs.hashCode()
+        result = 31 * result + trimStartUs.hashCode()
+        result = 31 * result + trimEndUs.hashCode()
+        result = 31 * result + speed.hashCode()
+        result = 31 * result + volume.hashCode()
+        result = 31 * result + rotationDegrees.hashCode()
+        result = 31 * result + flipHorizontal.hashCode()
+        result = 31 * result + flipVertical.hashCode()
+        result = 31 * result + cropRect.hashCode()
+        result = 31 * result + isReversed.hashCode()
+        result = 31 * result + filterConfig.hashCode()
+        result = 31 * result + (lutConfig?.hashCode() ?: 0)
+        result = 31 * result + (chromaKeyColor?.contentHashCode() ?: 0)
+        result = 31 * result + maskConfig.hashCode()
+        result = 31 * result + blendMode.hashCode()
+        result = 31 * result + transitionType.hashCode()
+        result = 31 * result + transitionDurationUs.hashCode()
+        result = 31 * result + (effectId?.hashCode() ?: 0)
+        result = 31 * result + effectIntensity.hashCode()
+        return result
+    }
 }
 
 data class Project(

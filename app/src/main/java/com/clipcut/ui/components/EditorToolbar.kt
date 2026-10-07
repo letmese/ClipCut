@@ -1,6 +1,7 @@
 package com.clipcut.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -28,6 +29,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.clipcut.ui.theme.AccentPrimary
 import com.clipcut.ui.theme.DarkSurface
+import com.clipcut.ui.theme.HairlineBorder
+import com.clipcut.ui.theme.Surface2
 
 /**
  * EditorTool — the 22 tools that appear in the horizontal toolbar at the
@@ -79,8 +82,12 @@ fun EditorToolbar(
     val listState = rememberLazyListState()
     val haptic = LocalHapticFeedback.current
     LaunchedEffect(selected) {
-        val idx = EditorTool.values().indexOf(selected).coerceAtLeast(0)
-        listState.animateScrollToItem(idx)
+        if (selected != null) {
+            val idx = EditorTool.values().indexOf(selected)
+            if (idx >= 0) {
+                listState.animateScrollToItem(idx)
+            }
+        }
     }
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -89,10 +96,10 @@ fun EditorToolbar(
         shadowElevation = 0.dp
     ) {
         LazyRow(
-            modifier = Modifier.fillMaxWidth().height(72.dp).padding(horizontal = 4.dp),
+            modifier = Modifier.fillMaxWidth().height(86.dp).padding(horizontal = 6.dp, vertical = 4.dp),
             state = listState,
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             items(EditorTool.values().toList()) { tool ->
                 val enabled = when (tool) {
@@ -119,26 +126,47 @@ private fun ToolButton(
     val fg = when {
         selected -> AccentPrimary
         !enabled -> Color.White.copy(alpha = 0.3f)
-        else -> Color.White.copy(alpha = 0.6f)
+        else -> Color.White.copy(alpha = 0.9f)
     }
-    val bg = if (selected) AccentPrimary.copy(alpha = 0.15f) else Color.Transparent
+    val tileBg = when {
+        selected -> AccentPrimary.copy(alpha = 0.22f)
+        else -> Surface2
+    }
+    val tileBorder = when {
+        selected -> AccentPrimary
+        else -> HairlineBorder
+    }
+
     Column(
         modifier = Modifier
-            .width(64.dp)
-            .height(64.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(bg)
+            .width(68.dp)
+            .fillMaxHeight()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick
             )
-            .padding(4.dp),
+            .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Icon(tool.icon, contentDescription = tool.label, tint = fg, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.height(2.dp))
-        Text(tool.label, color = fg, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        Box(
+            modifier = Modifier
+                .size(46.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(tileBg)
+                .border(1.2.dp, tileBorder, RoundedCornerShape(12.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(tool.icon, contentDescription = tool.label, tint = fg, modifier = Modifier.size(24.dp))
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            tool.label,
+            color = if (selected) AccentPrimary else Color.White.copy(alpha = 0.85f),
+            fontSize = 11.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1
+        )
     }
 }

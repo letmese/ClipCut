@@ -23,19 +23,8 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
 
     fun refresh() {
         viewModelScope.launch(Dispatchers.IO) {
-            val list = dao.getProjectById("")?.let { listOf(it.toDomain()) } ?: emptyList()
-            // The Flow-based getAllProjectsFlow returns immediately; refresh manually
-            val helper = ClipCutDatabase.getInstance(getApplication())
-            val db = helper.readableDatabase
-            val cursor = db.query("projects", null, null, null, null, null, "lastModifiedTime DESC")
-            val out = mutableListOf<Project>()
-            cursor.use { c ->
-                while (c.moveToNext()) {
-                    val id = c.getString(c.getColumnIndexOrThrow("id"))
-                    dao.getProjectById(id)?.let { out.add(it.toDomain()) }
-                }
-            }
-            _projects.value = out
+            val entities = dao.getAllProjects()
+            _projects.value = entities.map { it.toDomain() }
         }
     }
 

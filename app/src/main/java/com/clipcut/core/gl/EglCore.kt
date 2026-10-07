@@ -207,6 +207,7 @@ class FramebufferTexture(val width: Int, val height: Int) {
     fun unbind() { GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0) }
 
     fun release() {
+        unbind()
         if (fboName != -1) {
             GLES20.glDeleteFramebuffers(1, intArrayOf(fboName), 0)
             fboName = -1

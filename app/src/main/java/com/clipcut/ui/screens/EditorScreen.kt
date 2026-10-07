@@ -15,9 +15,27 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.OpenInFull
+import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.filled.FilterCenterFocus
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,10 +47,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.filled.Delete
 import com.clipcut.core.model.AspectRatio
 import com.clipcut.core.model.ExportConfig
 import com.clipcut.core.model.MediaType
 import com.clipcut.ui.theme.HairlineBorder
+import com.clipcut.ui.theme.TextSecondary
 import com.clipcut.ui.components.EditorToolbar
 import com.clipcut.ui.components.EditorTool
 import com.clipcut.ui.components.PrimaryButton
@@ -66,6 +86,7 @@ import com.clipcut.ui.theme.AccentPrimary
 import com.clipcut.ui.theme.DarkBackground
 import com.clipcut.ui.theme.Surface1
 import com.clipcut.ui.theme.Surface2
+import com.clipcut.ui.theme.Surface3
 
 /**
  * EditorScreen — composes preview, timeline, toolbar and the unified bottom
@@ -75,6 +96,7 @@ import com.clipcut.ui.theme.Surface2
  * and renderer; here we surface the player position to UI flows and call
  * viewModel mutations on tool-sheet callbacks.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun EditorScreen(
     projectId: String,
@@ -93,9 +115,11 @@ fun EditorScreen(
     var selectedTool by remember { mutableStateOf<EditorTool?>(null) }
     var activeSpecialSheet by remember { mutableStateOf<String?>(null) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var selectedOverlayId by remember { mutableStateOf<String?>(null) }
+    var selectedPipId by remember { mutableStateOf<String?>(null) }
 
     val ctx = LocalContext.current
-    val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+    val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
             val type = ctx.contentResolver.getType(uri) ?: ""
             val mediaType = if (type.startsWith("image/")) MediaType.IMAGE else MediaType.VIDEO
@@ -110,12 +134,31 @@ fun EditorScreen(
 
     LaunchedEffect(projectId) { viewModel.loadProject(projectId) }
 
-    DisposableEffect(Unit) {
+    LaunchedEffect(selectedOverlayId) {
+        viewModel.previewRenderer.activeEditingOverlayId = selectedOverlayId
+        viewModel.previewRenderer.requestRender()
+    }
+
+    LaunchedEffect(selectedPipId) {
+        viewModel.previewRenderer.activeEditingPipId = selectedPipId
+        viewModel.previewRenderer.requestRender()
+    }
+
+    LaunchedEffect(isPlaying) {
+        if (isPlaying) {
+            selectedOverlayId = null
+            selectedPipId = null
+        }
+    }
+
+    DisposableEffect(projectId) {
         onDispose {
             viewModel.playerManager.pause()
             viewModel.previewRenderer.pause()
         }
     }
+
+    var showDeleteProjectDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = DarkBackground,
@@ -123,7 +166,11 @@ fun EditorScreen(
             EditorTopBar(
                 onBack = onNavigateBack,
                 onLogs = onOpenLogs,
-                onExport = { showExportDialog = true },
+                onExport = {
+                    viewModel.playerManager.pause()
+                    showExportDialog = true
+                },
+                onDelete = { showDeleteProjectDialog = true },
                 title = project?.name ?: "Loading…",
                 currentAspectRatio = project?.aspectRatio ?: AspectRatio.R_16_9,
                 onSelectAspectRatio = { ar -> viewModel.setProjectAspectRatio(ar) }
@@ -155,13 +202,15 @@ fun EditorScreen(
                     .background(Surface2),
                 contentAlignment = Alignment.Center
             ) {
-                if (project == null || project!!.videoClips.isEmpty()) {
+                val hasClips = project?.videoClips?.isNotEmpty() == true
+                val hasOverlays = project?.overlays?.isNotEmpty() == true || project?.pipTracks?.isNotEmpty() == true
+                if (!hasClips && !hasOverlays) {
                     EmptyState(
                         title = "No clips yet",
                         description = "Tap the + below to add media",
                         modifier = Modifier.fillMaxSize()
                     )
-                } else {
+                } else if (hasClips) {
                     AndroidExternalSurface(
                         modifier = Modifier.fillMaxSize(),
                         isOpaque = true
@@ -180,17 +229,708 @@ fun EditorScreen(
                         }
                     }
                 }
-                // Play/pause overlay
-                IconButton(
-                    onClick = { viewModel.playerManager.togglePlayPause() },
-                    modifier = Modifier.align(Alignment.Center)
+                // Interactive Sticker / Overlay / PiP Canvas Manipulation
+                var previewBoxSize by remember { mutableStateOf(IntSize.Zero) }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onSizeChanged { previewBoxSize = it }
+                        .pointerInput(Unit) {
+                            detectTapGestures {
+                                selectedOverlayId = null
+                                selectedPipId = null
+                            }
+                        }
                 ) {
-                    Icon(
-                        if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayCircle,
-                        contentDescription = "Play/Pause",
-                        tint = Color.White,
-                        modifier = Modifier.size(48.dp)
-                    )
+                    val activeOverlays = project?.overlays?.filter {
+                        positionUs in it.timelineStartUs..it.timelineEndUs
+                    } ?: emptyList()
+
+                    val activePips = project?.pipTracks?.filter {
+                        positionUs in it.timelineStartUs..it.timelineEndUs && it.uri.isNotEmpty()
+                    } ?: emptyList()
+
+                    val bw = previewBoxSize.width.toFloat()
+                    val bh = previewBoxSize.height.toFloat()
+                    val safeBw = bw.coerceAtLeast(100f)
+                    val safeBh = bh.coerceAtLeast(100f)
+
+                    if (bw > 0f && bh > 0f) {
+                        // ── Render Interactive Overlays & Stickers ──
+                        activeOverlays.forEach { overlay ->
+                            val isSelected = overlay.id == selectedOverlayId
+
+                            if (isSelected) {
+                                var localNormX by remember(overlay.id) { mutableFloatStateOf(overlay.normalizedX) }
+                                var localNormY by remember(overlay.id) { mutableFloatStateOf(overlay.normalizedY) }
+                                var localScale by remember(overlay.id) { mutableFloatStateOf(overlay.scale) }
+                                var localRotation by remember(overlay.id) { mutableFloatStateOf(overlay.rotation) }
+                                var contentSize by remember(overlay.id) { mutableStateOf(IntSize.Zero) }
+
+                                LaunchedEffect(overlay.normalizedX, overlay.normalizedY, overlay.scale, overlay.rotation) {
+                                    localNormX = overlay.normalizedX
+                                    localNormY = overlay.normalizedY
+                                    localScale = overlay.scale
+                                    localRotation = overlay.rotation
+                                }
+
+                                // Parent bounding box centered at (localNormX * bw, localNormY * bh)
+                                Box(
+                                    modifier = Modifier
+                                        .offset {
+                                            val px = localNormX * bw
+                                            val py = localNormY * bh
+                                            androidx.compose.ui.unit.IntOffset(
+                                                (px - 100.dp.toPx()).toInt(),
+                                                (py - 70.dp.toPx()).toInt()
+                                            )
+                                        }
+                                        .size(200.dp, 140.dp)
+                                        .graphicsLayer {
+                                            scaleX = if (localScale.isFinite() && localScale > 0f) localScale else 1.0f
+                                            scaleY = if (localScale.isFinite() && localScale > 0f) localScale else 1.0f
+                                            rotationZ = if (localRotation.isFinite()) localRotation else 0.0f
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    // Main sticker body with rotation-compensated 1-finger drag physics
+                                    Box(
+                                        modifier = Modifier
+                                            .border(
+                                                width = 1.5.dp,
+                                                color = AccentPrimary,
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                            .background(
+                                                color = AccentPrimary.copy(alpha = 0.15f),
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                            .pointerInput(overlay.id, safeBw, safeBh) {
+                                                detectDragGestures(
+                                                    onDragStart = {
+                                                        selectedOverlayId = overlay.id
+                                                        selectedPipId = null
+                                                    },
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        val rad = Math.toRadians(localRotation.toDouble())
+                                                        val cos = Math.cos(rad).toFloat()
+                                                        val sin = Math.sin(rad).toFloat()
+                                                        val scaleFactor = if (localScale.isFinite() && localScale > 0.05f) localScale else 1.0f
+                                                        val screenDx = (dragAmount.x * cos - dragAmount.y * sin) * scaleFactor
+                                                        val screenDy = (dragAmount.x * sin + dragAmount.y * cos) * scaleFactor
+                                                        if (screenDx.isFinite() && screenDy.isFinite()) {
+                                                            localNormX = (localNormX + screenDx / safeBw).coerceIn(0.01f, 0.99f)
+                                                            localNormY = (localNormY + screenDy / safeBh).coerceIn(0.01f, 0.99f)
+                                                        }
+                                                    },
+                                                    onDragEnd = {
+                                                        viewModel.commitOverlayTransform(overlay.id, localNormX, localNormY, localScale, localRotation)
+                                                    },
+                                                    onDragCancel = {
+                                                        viewModel.commitOverlayTransform(overlay.id, localNormX, localNormY, localScale, localRotation)
+                                                    }
+                                                )
+                                            }
+                                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = overlay.text.ifEmpty { "Sticker" },
+                                            color = Color(overlay.textColor),
+                                            fontSize = overlay.textSizeSp.sp,
+                                            fontWeight = if (overlay.textBold) FontWeight.Bold else FontWeight.Normal,
+                                            fontStyle = if (overlay.textItalic) androidx.compose.ui.text.font.FontStyle.Italic else androidx.compose.ui.text.font.FontStyle.Normal,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                            maxLines = 2
+                                        )
+                                    }
+
+                                    // Top-Right: Delete button (INSIDE layout bounds, NO clipping!)
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .size(36.dp)
+                                            .background(Color(0xFFE53935), CircleShape)
+                                            .border(2.dp, Color.White, CircleShape)
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                selectedOverlayId = null
+                                                viewModel.removeOverlay(overlay.id)
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Close,
+                                            contentDescription = "Delete Overlay",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    // Bottom-Right: Dedicated Scale / Resize Handle
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .size(36.dp)
+                                            .background(AccentPrimary, CircleShape)
+                                            .border(2.dp, Color.White, CircleShape)
+                                            .pointerInput(overlay.id, safeBw) {
+                                                detectDragGestures(
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        val delta = (dragAmount.x + dragAmount.y) / (safeBw * 0.25f)
+                                                        if (!delta.isNaN() && delta.isFinite()) {
+                                                            localScale = (localScale + delta).coerceIn(0.2f, 4.0f)
+                                                        }
+                                                    },
+                                                    onDragEnd = {
+                                                        viewModel.commitOverlayTransform(overlay.id, localNormX, localNormY, localScale, localRotation)
+                                                    },
+                                                    onDragCancel = {
+                                                        viewModel.commitOverlayTransform(overlay.id, localNormX, localNormY, localScale, localRotation)
+                                                    }
+                                                )
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.OpenInFull,
+                                            contentDescription = "Scale Overlay",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    // Bottom-Left: Dedicated Rotate Handle
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomStart)
+                                            .size(36.dp)
+                                            .background(Surface3, CircleShape)
+                                            .border(2.dp, Color.White, CircleShape)
+                                            .pointerInput(overlay.id) {
+                                                detectDragGestures(
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        val rotDelta = dragAmount.x * 0.8f
+                                                        if (!rotDelta.isNaN() && rotDelta.isFinite()) {
+                                                            localRotation = ((localRotation + rotDelta) % 360f + 360f) % 360f
+                                                        }
+                                                    },
+                                                    onDragEnd = {
+                                                        viewModel.commitOverlayTransform(overlay.id, localNormX, localNormY, localScale, localRotation)
+                                                    },
+                                                    onDragCancel = {
+                                                        viewModel.commitOverlayTransform(overlay.id, localNormX, localNormY, localScale, localRotation)
+                                                    }
+                                                )
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.RotateRight,
+                                            contentDescription = "Rotate Overlay",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    // Top-Left: Reset Rotation to 0°
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .size(36.dp)
+                                            .background(Surface2, CircleShape)
+                                            .border(1.5.dp, Color.White.copy(alpha = 0.8f), CircleShape)
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                localRotation = 0f
+                                                viewModel.commitOverlayTransform(overlay.id, localNormX, localNormY, localScale, 0f)
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.FilterCenterFocus,
+                                            contentDescription = "Reset Angle",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                // Tap target for unselected overlay
+                                val unselectedPixelX = overlay.normalizedX * bw
+                                val unselectedPixelY = overlay.normalizedY * bh
+                                Box(
+                                    modifier = Modifier
+                                        .offset {
+                                            androidx.compose.ui.unit.IntOffset(
+                                                (unselectedPixelX - 60.dp.toPx()).toInt(),
+                                                (unselectedPixelY - 45.dp.toPx()).toInt()
+                                            )
+                                        }
+                                        .size(120.dp, 90.dp)
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) {
+                                            selectedOverlayId = overlay.id
+                                            selectedPipId = null
+                                        }
+                                )
+                            }
+                        }
+
+                        // ── Render Interactive PiP Layers (Video & Image Overlays) ──
+                        activePips.forEach { pip ->
+                            val isPipSelected = pip.id == selectedPipId
+
+                            if (isPipSelected) {
+                                var localPipNormX by remember(pip.id) { mutableFloatStateOf(pip.normalizedX) }
+                                var localPipNormY by remember(pip.id) { mutableFloatStateOf(pip.normalizedY) }
+                                var localPipScale by remember(pip.id) { mutableFloatStateOf(pip.scale) }
+                                var pipContentSize by remember(pip.id) { mutableStateOf(IntSize.Zero) }
+
+                                LaunchedEffect(pip.normalizedX, pip.normalizedY, pip.scale) {
+                                    localPipNormX = pip.normalizedX
+                                    localPipNormY = pip.normalizedY
+                                    localPipScale = pip.scale
+                                }
+
+                                // Parent bounding box centered at (localPipNormX * bw, localPipNormY * bh)
+                                Box(
+                                    modifier = Modifier
+                                        .offset {
+                                            val px = localPipNormX * bw
+                                            val py = localPipNormY * bh
+                                            androidx.compose.ui.unit.IntOffset(
+                                                (px - 110.dp.toPx()).toInt(),
+                                                (py - 80.dp.toPx()).toInt()
+                                            )
+                                        }
+                                        .size(220.dp, 160.dp)
+                                        .graphicsLayer {
+                                            scaleX = if (localPipScale.isFinite() && localPipScale > 0f) localPipScale else 1.0f
+                                            scaleY = if (localPipScale.isFinite() && localPipScale > 0f) localPipScale else 1.0f
+                                            rotationZ = if (pip.rotation.isFinite()) pip.rotation else 0.0f
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    // PiP visual card body with smooth rotation-compensated 1-finger drag physics
+                                    Box(
+                                        modifier = Modifier
+                                            .size(150.dp, 90.dp)
+                                            .border(
+                                                width = 2.dp,
+                                                color = AccentPrimary,
+                                                shape = RoundedCornerShape(10.dp)
+                                            )
+                                            .background(
+                                                color = Surface2.copy(alpha = 0.90f),
+                                                shape = RoundedCornerShape(10.dp)
+                                            )
+                                            .pointerInput(pip.id, safeBw, safeBh) {
+                                                detectDragGestures(
+                                                    onDragStart = {
+                                                        selectedPipId = pip.id
+                                                        selectedOverlayId = null
+                                                    },
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        val rad = Math.toRadians(pip.rotation.toDouble())
+                                                        val cos = Math.cos(rad).toFloat()
+                                                        val sin = Math.sin(rad).toFloat()
+                                                        val scaleFactor = if (localPipScale.isFinite() && localPipScale > 0.05f) localPipScale else 1.0f
+                                                        val screenDx = (dragAmount.x * cos - dragAmount.y * sin) * scaleFactor
+                                                        val screenDy = (dragAmount.x * sin + dragAmount.y * cos) * scaleFactor
+                                                        if (screenDx.isFinite() && screenDy.isFinite()) {
+                                                            localPipNormX = (localPipNormX + screenDx / safeBw).coerceIn(0.01f, 0.99f)
+                                                            localPipNormY = (localPipNormY + screenDy / safeBh).coerceIn(0.01f, 0.99f)
+                                                        }
+                                                    },
+                                                    onDragEnd = {
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
+                                                    },
+                                                    onDragCancel = {
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
+                                                    }
+                                                )
+                                            }
+                                            .padding(8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Layers,
+                                                contentDescription = "PiP Layer",
+                                                tint = AccentPrimary,
+                                                modifier = Modifier.size(26.dp)
+                                            )
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(
+                                                text = pip.uri.substringAfterLast('/').take(14).ifEmpty { "Overlay PiP" },
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+
+                                    // Top-Right: Delete PiP button (INSIDE layout bounds, NO clipping!)
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .size(36.dp)
+                                            .background(Color(0xFFE53935), CircleShape)
+                                            .border(2.dp, Color.White, CircleShape)
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                selectedPipId = null
+                                                viewModel.removePipTrack(pip.id)
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Close,
+                                            contentDescription = "Delete PiP",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    // Bottom-Right: Dedicated Scale / Resize handle
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .size(36.dp)
+                                            .background(AccentPrimary, CircleShape)
+                                            .border(2.dp, Color.White, CircleShape)
+                                            .pointerInput(pip.id, safeBw) {
+                                                detectDragGestures(
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        val scaleDelta = (dragAmount.x + dragAmount.y) / (safeBw * 0.30f)
+                                                        if (!scaleDelta.isNaN() && scaleDelta.isFinite()) {
+                                                            localPipScale = (localPipScale + scaleDelta).coerceIn(0.15f, 3.0f)
+                                                        }
+                                                    },
+                                                    onDragEnd = {
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
+                                                    },
+                                                    onDragCancel = {
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
+                                                    }
+                                                )
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.OpenInFull,
+                                            contentDescription = "Resize PiP",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    // Bottom-Left: Dedicated Rotate handle
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomStart)
+                                            .size(36.dp)
+                                            .background(Surface3, CircleShape)
+                                            .border(2.dp, Color.White, CircleShape)
+                                            .pointerInput(pip.id) {
+                                                detectDragGestures(
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        val rotDelta = dragAmount.x * 0.8f
+                                                        if (!rotDelta.isNaN() && rotDelta.isFinite()) {
+                                                            val newRot = ((pip.rotation + rotDelta) % 360f + 360f) % 360f
+                                                            viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, newRot)
+                                                        }
+                                                    },
+                                                    onDragEnd = {
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
+                                                    },
+                                                    onDragCancel = {
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
+                                                    }
+                                                )
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.RotateRight,
+                                            contentDescription = "Rotate PiP",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    // Top-Left: Reset Rotation to 0°
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .size(36.dp)
+                                            .background(Surface2, CircleShape)
+                                            .border(1.5.dp, Color.White.copy(alpha = 0.8f), CircleShape)
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, 0f)
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.FilterCenterFocus,
+                                            contentDescription = "Reset PiP Angle",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                // Tap target for unselected PiP
+                                val unselectedPipX = pip.normalizedX * bw
+                                val unselectedPipY = pip.normalizedY * bh
+                                Box(
+                                    modifier = Modifier
+                                        .offset {
+                                            androidx.compose.ui.unit.IntOffset(
+                                                (unselectedPipX - 60.dp.toPx()).toInt(),
+                                                (unselectedPipY - 40.dp.toPx()).toInt()
+                                            )
+                                        }
+                                        .size(120.dp, 80.dp)
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) {
+                                            selectedPipId = pip.id
+                                            selectedOverlayId = null
+                                        }
+                                )
+                            }
+                        }
+                    }
+
+                    // ── Floating Quick Controls Bar for Selected Overlay ──
+                    val activeOverlay = project?.overlays?.find { it.id == selectedOverlayId }
+                    if (activeOverlay != null) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 12.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            color = Color(0xDD1E1E2E),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                            shadowElevation = 8.dp
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        val newScale = (activeOverlay.scale - 0.15f).coerceAtLeast(0.2f)
+                                        viewModel.commitOverlayTransform(activeOverlay.id, activeOverlay.normalizedX, activeOverlay.normalizedY, newScale, activeOverlay.rotation)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Remove, "Smaller", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                Text(
+                                    text = "${(activeOverlay.scale * 100).toInt()}%",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                IconButton(
+                                    onClick = {
+                                        val newScale = (activeOverlay.scale + 0.15f).coerceAtMost(5.0f)
+                                        viewModel.commitOverlayTransform(activeOverlay.id, activeOverlay.normalizedX, activeOverlay.normalizedY, newScale, activeOverlay.rotation)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Add, "Bigger", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                Box(modifier = Modifier.width(1.dp).height(18.dp).background(Color.White.copy(alpha = 0.2f)))
+
+                                IconButton(
+                                    onClick = {
+                                        val newRot = (activeOverlay.rotation + 90f) % 360f
+                                        viewModel.commitOverlayTransform(activeOverlay.id, activeOverlay.normalizedX, activeOverlay.normalizedY, activeOverlay.scale, newRot)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.RotateRight, "Rotate 90°", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        viewModel.commitOverlayTransform(activeOverlay.id, 0.5f, 0.5f, activeOverlay.scale, activeOverlay.rotation)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.FilterCenterFocus, "Center", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        viewModel.duplicateOverlay(activeOverlay.id)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.ContentCopy, "Duplicate", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        val toDel = activeOverlay.id
+                                        selectedOverlayId = null
+                                        viewModel.removeOverlay(toDel)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Delete, "Delete", tint = Color(0xFFFF5252), modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = { selectedOverlayId = null },
+                                    modifier = Modifier
+                                        .size(30.dp)
+                                        .background(AccentPrimary, CircleShape)
+                                ) {
+                                    Icon(Icons.Filled.Check, "Done", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Floating Quick Controls Bar for Selected PiP ──
+                    val activePip = project?.pipTracks?.find { it.id == selectedPipId }
+                    if (activePip != null) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 12.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            color = Color(0xDD1E1E2E),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                            shadowElevation = 8.dp
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        val newScale = (activePip.scale - 0.1f).coerceAtLeast(0.15f)
+                                        viewModel.commitPipTransform(activePip.id, activePip.normalizedX, activePip.normalizedY, newScale, activePip.rotation)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Remove, "Smaller", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                Text(
+                                    text = "${(activePip.scale * 100).toInt()}%",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                IconButton(
+                                    onClick = {
+                                        val newScale = (activePip.scale + 0.1f).coerceAtMost(3.0f)
+                                        viewModel.commitPipTransform(activePip.id, activePip.normalizedX, activePip.normalizedY, newScale, activePip.rotation)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Add, "Bigger", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                Box(modifier = Modifier.width(1.dp).height(18.dp).background(Color.White.copy(alpha = 0.2f)))
+
+                                IconButton(
+                                    onClick = {
+                                        val newRot = (activePip.rotation + 90f) % 360f
+                                        viewModel.commitPipTransform(activePip.id, activePip.normalizedX, activePip.normalizedY, activePip.scale, newRot)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.RotateRight, "Rotate 90°", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        viewModel.commitPipTransform(activePip.id, 0.5f, 0.5f, activePip.scale, activePip.rotation)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.FilterCenterFocus, "Center", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        viewModel.duplicatePipTrack(activePip.id)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.ContentCopy, "Duplicate", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        val toDel = activePip.id
+                                        selectedPipId = null
+                                        viewModel.removePipTrack(toDel)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Delete, "Delete", tint = Color(0xFFFF5252), modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = { selectedPipId = null },
+                                    modifier = Modifier
+                                        .size(30.dp)
+                                        .background(AccentPrimary, CircleShape)
+                                ) {
+                                    Icon(Icons.Filled.Check, "Done", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Play/pause overlay
+                if (selectedOverlayId == null && selectedPipId == null) {
+                    IconButton(
+                        onClick = { viewModel.playerManager.togglePlayPause() },
+                        modifier = Modifier.align(Alignment.Center)
+                    ) {
+                        Icon(
+                            if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayCircle,
+                            contentDescription = "Play/Pause",
+                            tint = Color.White,
+                            modifier = Modifier.size(48.dp)
+                        )
+                    }
                 }
             }
             // Timeline
@@ -198,13 +938,49 @@ fun EditorScreen(
                 videoClips = project?.videoClips ?: emptyList(),
                 audioTracks = project?.audioTracks ?: emptyList(),
                 overlays = project?.overlays ?: emptyList(),
+                pipTracks = project?.pipTracks ?: emptyList(),
                 beatMarkers = project?.beatMarkers ?: emptyList(),
                 selectedClipId = selectedClipId,
+                selectedOverlayId = selectedOverlayId,
+                selectedPipId = selectedPipId,
                 currentPositionUs = positionUs,
                 totalDurationUs = project?.totalDurationUs ?: 0L,
-                onSelectClip = { viewModel.selectClip(it) },
+                isPlaying = isPlaying,
+                onTogglePlayPause = { viewModel.playerManager.togglePlayPause() },
+                onStop = {
+                    viewModel.playerManager.pause()
+                    viewModel.playerManager.seekToUs(0L)
+                },
+                onSelectClip = {
+                    selectedOverlayId = null
+                    selectedPipId = null
+                    viewModel.selectClip(it)
+                },
                 onSeek = { viewModel.playerManager.seekToUs(it) },
-                onAddMediaClick = { pickMedia.launch("video/*") },
+                onAddMediaClick = { pickMedia.launch(arrayOf("video/*", "image/*")) },
+                onTrimClip = { id, s, e -> viewModel.trimClip(id, s, e) },
+                onSelectAudioTrack = { selectedTool = EditorTool.AUDIO },
+                onTrimAudioTrack = { id, s, e -> viewModel.trimAudioTrack(id, s, e) },
+                onSelectOverlay = { overlay ->
+                    val wasSelected = selectedOverlayId == overlay.id
+                    selectedOverlayId = if (wasSelected) null else overlay.id
+                    selectedPipId = null
+                    selectedTool = null
+                    if (!wasSelected && (positionUs < overlay.timelineStartUs || positionUs > overlay.timelineEndUs)) {
+                        viewModel.playerManager.seekToUs(overlay.timelineStartUs)
+                    }
+                },
+                onTrimOverlay = { id, s, e -> viewModel.trimOverlay(id, s, e) },
+                onSelectPip = { pip ->
+                    val wasSelected = selectedPipId == pip.id
+                    selectedPipId = if (wasSelected) null else pip.id
+                    selectedOverlayId = null
+                    selectedTool = null
+                    if (!wasSelected && (positionUs < pip.timelineStartUs || positionUs > pip.timelineEndUs)) {
+                        viewModel.playerManager.seekToUs(pip.timelineStartUs)
+                    }
+                },
+                onTrimPip = { id, s, e -> viewModel.trimPipTrack(id, s, e) },
                 modifier = Modifier.fillMaxWidth().wrapContentHeight()
             )
         }
@@ -238,7 +1014,12 @@ fun EditorScreen(
                 )
                 "pip" -> PiPPanel(
                     playheadUs = positionUs,
-                    onAdd = { viewModel.addPipTrack(it) },
+                    onAdd = {
+                        viewModel.addPipTrack(it)
+                        selectedPipId = it.id
+                        selectedOverlayId = null
+                        activeSpecialSheet = null
+                    },
                     onDismiss = { activeSpecialSheet = null }
                 )
             }
@@ -247,9 +1028,12 @@ fun EditorScreen(
                 EditorTool.AUDIO -> AudioSheet(
                     originalVideoVolume = project?.originalVideoVolume ?: 1f,
                     backgroundMusicVolume = project?.backgroundMusicVolume ?: 1f,
+                    audioTracks = project?.audioTracks ?: emptyList(),
                     hasMusicTrack = (project?.audioTracks?.isNotEmpty() == true),
                     onVolumesChanged = { o, m -> viewModel.setVolumes(o, m) },
                     onPickMusicClick = { pickAudio.launch("audio/*") },
+                    onDeleteTrack = { id -> viewModel.removeAudioTrack(id) },
+                    onTrimTrack = { id, s, e -> viewModel.trimAudioTrack(id, s, e) },
                     onVoiceoverClick = { activeSpecialSheet = "voiceover" },
                     onDismiss = { selectedTool = null }
                 )
@@ -266,7 +1050,7 @@ fun EditorScreen(
                 durationUs = clip?.transitionDurationUs ?: 500_000L,
                 onApply = { type, dur ->
                     sid?.let {
-                        viewModel.setClipTransition(it, type)
+                        viewModel.setClipTransition(it, type, dur)
                     }
                 },
                 onDismiss = { selectedTool = null }
@@ -326,20 +1110,28 @@ fun EditorScreen(
                 onDismiss = { selectedTool = null }
             )
             EditorTool.TEXT -> TextSheet(
-                onApply = { overlay -> viewModel.addOverlay(overlay) },
+                playheadUs = positionUs,
+                totalDurationUs = project?.totalDurationUs ?: 5_000_000L,
+                onApply = { overlay ->
+                    viewModel.addOverlay(overlay)
+                    selectedOverlayId = overlay.id
+                },
                 onOpenCaptions = { activeSpecialSheet = "captions" },
                 onDismiss = { selectedTool = null }
             )
             EditorTool.STICKER -> StickerSheet(
                 onPick = { stickerRes ->
-                    viewModel.addOverlay(
-                        com.clipcut.core.model.OverlayItem(
-                            text = stickerRes,
-                            timelineStartUs = positionUs,
-                            timelineEndUs = positionUs + 2_000_000L
-                        )
+                    val newSticker = com.clipcut.core.model.OverlayItem(
+                        text = stickerRes,
+                        timelineStartUs = positionUs,
+                        timelineEndUs = positionUs + 3_000_000L,
+                        normalizedX = 0.5f,
+                        normalizedY = 0.5f,
+                        scale = 1.0f,
+                        textSizeSp = 36f
                     )
-                    selectedTool = null
+                    viewModel.addOverlay(newSticker)
+                    selectedOverlayId = newSticker.id
                 },
                 onDismiss = { selectedTool = null }
             )
@@ -347,14 +1139,30 @@ fun EditorScreen(
                 totalDurationUs = project?.totalDurationUs ?: 0L,
                 initialPlayheadUs = positionUs,
                 existingOverlays = project?.overlays ?: emptyList(),
-                onAddOverlay = { o -> viewModel.addOverlay(o) },
-                onDeleteOverlay = { id -> viewModel.removeOverlay(id) },
+                existingPips = project?.pipTracks ?: emptyList(),
+                onAddOverlay = { o ->
+                    viewModel.addOverlay(o)
+                    selectedOverlayId = o.id
+                    selectedPipId = null
+                },
+                onDeleteOverlay = { id ->
+                    if (selectedOverlayId == id) selectedOverlayId = null
+                    viewModel.removeOverlay(id)
+                },
+                onDeletePip = { id ->
+                    if (selectedPipId == id) selectedPipId = null
+                    viewModel.removePipTrack(id)
+                },
+                onTrimPip = { id, s, e -> viewModel.trimPipTrack(id, s, e) },
                 onSeekPreview = { us -> viewModel.playerManager.seekToUs(us) },
-                onOpenPiP = { activeSpecialSheet = "pip" },
+                onOpenPiP = {
+                    selectedTool = null
+                    activeSpecialSheet = "pip"
+                },
                 onDismiss = { selectedTool = null }
             )
             EditorTool.KEYFRAMES -> KeyframeSheet(
-                overlay = project?.overlays?.firstOrNull(),
+                overlay = project?.overlays?.firstOrNull { it.id == selectedOverlayId } ?: project?.overlays?.firstOrNull(),
                 playheadUs = positionUs,
                 onAddKeyframe = { ovId, kf -> viewModel.addKeyframe(ovId, kf) },
                 onRemoveKeyframe = { ovId, kfId -> viewModel.removeKeyframe(ovId, kfId) },
@@ -375,10 +1183,35 @@ fun EditorScreen(
         ExportDialog(
             projectAspectRatio = project?.aspectRatio ?: com.clipcut.core.model.AspectRatio.R_16_9,
             exportState = exportState,
-            onStartExport = { cfg -> viewModel.startExport(cfg) },
+            onStartExport = { cfg ->
+                viewModel.playerManager.pause()
+                viewModel.startExport(cfg)
+            },
             onCancelExport = { viewModel.cancelExport() },
             onDismiss = { showExportDialog = false; viewModel.dismissExportDialog() },
             onViewLogsClick = onOpenLogs
+        )
+    }
+
+    if (showDeleteProjectDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteProjectDialog = false },
+            containerColor = Surface2,
+            title = { Text("Delete Project?", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to delete \"${project?.name ?: "this project"}\"? All edits and clips will be permanently removed.", color = TextSecondary) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteProjectDialog = false
+                        viewModel.deleteCurrentProject {
+                            onNavigateBack()
+                        }
+                    }
+                ) { Text("Delete", color = Color(0xFFFF5252), fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteProjectDialog = false }) { Text("Cancel", color = TextSecondary) }
+            }
         )
     }
 }
@@ -388,6 +1221,7 @@ private fun EditorTopBar(
     onBack: () -> Unit,
     onLogs: () -> Unit,
     onExport: () -> Unit,
+    onDelete: () -> Unit,
     title: String,
     currentAspectRatio: AspectRatio,
     onSelectAspectRatio: (AspectRatio) -> Unit
@@ -404,7 +1238,7 @@ private fun EditorTopBar(
             IconButton(onClick = onBack) {
                 Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
             }
-            Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+            Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, modifier = Modifier.weight(1f), maxLines = 1)
 
             var showAspectRatioMenu by remember { mutableStateOf(false) }
             Box(modifier = Modifier.padding(end = 4.dp)) {
@@ -433,6 +1267,9 @@ private fun EditorTopBar(
                 }
             }
 
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Filled.Delete, contentDescription = "Delete Project", tint = Color(0xFFFF6B6B))
+            }
             IconButton(onClick = onLogs) {
                 Icon(Icons.Filled.BugReport, contentDescription = "Logs", tint = Color.White.copy(alpha = 0.7f))
             }

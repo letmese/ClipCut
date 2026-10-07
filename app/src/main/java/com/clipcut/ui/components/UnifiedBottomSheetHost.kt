@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.dp
 import com.clipcut.ui.theme.AccentPrimary
 import com.clipcut.ui.theme.DarkSurface
 import com.clipcut.ui.theme.HairlineBorder
+import kotlinx.coroutines.launch
 
 /**
  * UnifiedBottomSheetHost — the single ModalBottomSheet used by the editor
@@ -35,7 +36,12 @@ fun UnifiedBottomSheetHost(
     content: @Composable () -> Unit
 ) {
     if (!visible) return
-    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    val state = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { true }
+    )
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = state,
@@ -45,7 +51,13 @@ fun UnifiedBottomSheetHost(
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { SheetDragHandle() }
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp).navigationBarsPadding()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp)
+                .navigationBarsPadding()
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -67,8 +79,7 @@ private fun SheetDragHandle() {
     Box(
         modifier = Modifier
             .padding(vertical = 12.dp)
-            .size(width = 36.dp, height = 4.dp)
-            .let { it.then(Modifier) },
+            .size(width = 36.dp, height = 4.dp),
         contentAlignment = Alignment.Center
     ) {
         androidx.compose.material3.Surface(

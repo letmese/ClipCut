@@ -124,18 +124,22 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         refreshDerived()
     }
 
-    fun importMedia(uri: Uri, mediaType: MediaType) = mutate { p ->
-        val (duration, rotation) = if (mediaType == MediaType.VIDEO) extractMediaInfo(uri) else Pair(5_000_000L, 0)
-        val clip = TimelineItem(
-            uri = uri.toString(),
-            mediaType = mediaType,
-            sourceDurationUs = duration,
-            trimStartUs = 0L,
-            trimEndUs = duration,
-            rotationDegrees = rotation
-        )
-        AppLog.i(TAG, "importMedia ${uri} ${mediaType} dur=${duration} rot=${rotation}")
-        p.copy(videoClips = p.videoClips + clip)
+    fun importMedia(uri: Uri, mediaType: MediaType) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val (duration, rotation) = if (mediaType == MediaType.VIDEO) extractMediaInfo(uri) else Pair(5_000_000L, 0)
+            val clip = TimelineItem(
+                uri = uri.toString(),
+                mediaType = mediaType,
+                sourceDurationUs = duration,
+                trimStartUs = 0L,
+                trimEndUs = duration,
+                rotationDegrees = rotation
+            )
+            AppLog.i(TAG, "importMedia ${uri} ${mediaType} dur=${duration} rot=${rotation}")
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                mutate { p -> p.copy(videoClips = p.videoClips + clip) }
+            }
+        }
     }
 
     fun splitClipAtPlayhead() {
@@ -170,7 +174,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setClipSpeed(clipId: String, speed: Float) = mutateClip(clipId) { it.copy(speed = speed.coerceIn(0.1f, 10f)) }
     fun setClipFilter(clipId: String, filter: FilterConfig) = mutateClip(clipId) { it.copy(filterConfig = filter) }
-    fun setClipTransition(clipId: String, type: TransitionType) = mutateClip(clipId) { it.copy(transitionType = type) }
+    fun setClipTransition(clipId: String, type: TransitionType, durationUs: Long = 500_000L) = mutateClip(clipId) { it.copy(transitionType = type, transitionDurationUs = durationUs) }
     fun setClipVolume(clipId: String, vol: Float) = mutateClip(clipId) { it.copy(volume = vol.coerceIn(0f, 2f)) }
     fun setClipRotation(clipId: String, deg: Int) = mutateClip(clipId) { it.copy(rotationDegrees = ((deg % 360) + 360) % 360) }
     fun setClipFlipH(clipId: String, flip: Boolean) = mutateClip(clipId) { it.copy(flipHorizontal = flip) }
@@ -212,8 +216,34 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun addOverlay(o: OverlayItem) = mutate { it.copy(overlays = it.overlays + o) }
     fun removeOverlay(id: String) = mutate { it.copy(overlays = it.overlays.filterNot { o -> o.id == id }) }
+    fun trimOverlay(id: String, startUs: Long, endUs: Long) = mutate { p ->
+        p.copy(overlays = p.overlays.map { if (it.id == id) it.copy(timelineStartUs = startUs, timelineEndUs = endUs) else it })
+    }
     fun updateOverlay(id: String, block: (OverlayItem) -> OverlayItem) = mutate { p ->
         p.copy(overlays = p.overlays.map { if (it.id == id) block(it) else it })
+    }
+    fun commitOverlayTransform(id: String, normX: Float, normY: Float, scale: Float, rotation: Float) = mutate { p ->
+        val safeNormX = if (normX.isFinite()) normX.coerceIn(0.01f, 0.99f) else 0.5f
+        val safeNormY = if (normY.isFinite()) normY.coerceIn(0.01f, 0.99f) else 0.5f
+        val safeScale = if (scale.isFinite()) scale.coerceIn(0.2f, 5.0f) else 1.0f
+        val safeRot = if (rotation.isFinite()) ((rotation % 360f) + 360f) % 360f else 0f
+        p.copy(overlays = p.overlays.map {
+            if (it.id == id) it.copy(
+                normalizedX = safeNormX,
+                normalizedY = safeNormY,
+                scale = safeScale,
+                rotation = safeRot
+            ) else it
+        })
+    }
+    fun duplicateOverlay(id: String) = mutate { p ->
+        val orig = p.overlays.find { it.id == id } ?: return@mutate p
+        val dup = orig.copy(
+            id = UUID.randomUUID().toString(),
+            normalizedX = (orig.normalizedX + 0.05f).coerceIn(0.05f, 0.95f),
+            normalizedY = (orig.normalizedY + 0.05f).coerceIn(0.05f, 0.95f)
+        )
+        p.copy(overlays = p.overlays + dup)
     }
     fun addKeyframe(overlayId: String, kf: OverlayKeyframe) = mutate { p ->
         p.copy(overlays = p.overlays.map {
@@ -230,8 +260,40 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun addPipTrack(pip: PiPTrackItem) = mutate { it.copy(pipTracks = it.pipTracks + pip) }
     fun removePipTrack(id: String) = mutate { it.copy(pipTracks = it.pipTracks.filterNot { p -> p.id == id }) }
+    fun trimPipTrack(id: String, startUs: Long, endUs: Long) = mutate { p ->
+        p.copy(pipTracks = p.pipTracks.map {
+            if (it.id == id) {
+                val s = startUs.coerceAtLeast(0L)
+                val e = endUs.coerceAtLeast(s + 200_000L)
+                it.copy(timelineStartUs = s, timelineEndUs = e)
+            } else it
+        })
+    }
     fun updatePipTrack(id: String, block: (PiPTrackItem) -> PiPTrackItem) = mutate { p ->
         p.copy(pipTracks = p.pipTracks.map { if (it.id == id) block(it) else it })
+    }
+    fun commitPipTransform(id: String, normX: Float, normY: Float, scale: Float, rotation: Float = 0.0f) = mutate { p ->
+        val safeNormX = if (normX.isFinite()) normX.coerceIn(0.01f, 0.99f) else 0.5f
+        val safeNormY = if (normY.isFinite()) normY.coerceIn(0.01f, 0.99f) else 0.5f
+        val safeScale = if (scale.isFinite()) scale.coerceIn(0.1f, 3.0f) else 1.0f
+        val safeRot = if (rotation.isFinite()) ((rotation % 360f) + 360f) % 360f else 0f
+        p.copy(pipTracks = p.pipTracks.map {
+            if (it.id == id) it.copy(
+                normalizedX = safeNormX,
+                normalizedY = safeNormY,
+                scale = safeScale,
+                rotation = safeRot
+            ) else it
+        })
+    }
+    fun duplicatePipTrack(id: String) = mutate { p ->
+        val orig = p.pipTracks.find { it.id == id } ?: return@mutate p
+        val dup = orig.copy(
+            id = UUID.randomUUID().toString(),
+            normalizedX = (orig.normalizedX + 0.05f).coerceIn(0.05f, 0.95f),
+            normalizedY = (orig.normalizedY + 0.05f).coerceIn(0.05f, 0.95f)
+        )
+        p.copy(pipTracks = p.pipTracks + dup)
     }
 
     fun setVolumes(orig: Float, music: Float) = mutate {
@@ -240,27 +302,103 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun addAudioTrack(item: AudioTrackItem) = mutate { it.copy(audioTracks = it.audioTracks + item) }
     fun addAudioTrack(uri: Uri) {
-        val durationUs = try {
-            val retriever = android.media.MediaMetadataRetriever()
-            retriever.setDataSource(getApplication(), uri)
-            val durStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
-            retriever.release()
-            (durStr?.toLongOrNull() ?: 5_000L) * 1000L
-        } catch (t: Throwable) {
-            AppLog.w(TAG, "extract audio duration failed: ${t.message}")
-            _project.value?.totalDurationUs?.coerceAtLeast(5_000_000L) ?: 5_000_000L
+        val app = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            var displayName = "Music Track"
+            try {
+                val cursor = app.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        val idx = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (idx != -1) {
+                            val name = it.getString(idx)
+                            if (!name.isNullOrBlank()) displayName = name
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                AppLog.w(TAG, "Failed to resolve audio display name: ${t.message}")
+            }
+
+            // Copy audio track to internal app storage to guarantee persistent access across sessions and background export
+            val audioDir = java.io.File(app.filesDir, "audio_tracks").apply { mkdirs() }
+            val cleanExt = displayName.substringAfterLast('.', "mp3")
+            val destFile = java.io.File(audioDir, "audio_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}.$cleanExt")
+            try {
+                app.contentResolver.openInputStream(uri)?.use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            } catch (t: Throwable) {
+                AppLog.e(TAG, "Failed to copy audio track to local filesDir", t)
+            }
+
+            val targetFileOrUri = if (destFile.exists() && destFile.length() > 0) {
+                android.net.Uri.fromFile(destFile).toString()
+            } else {
+                uri.toString()
+            }
+
+            val durationUs = try {
+                val retriever = android.media.MediaMetadataRetriever()
+                if (destFile.exists() && destFile.length() > 0) {
+                    retriever.setDataSource(destFile.absolutePath)
+                } else {
+                    retriever.setDataSource(app, uri)
+                }
+                val durStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                retriever.release()
+                (durStr?.toLongOrNull() ?: 5_000L) * 1000L
+            } catch (t: Throwable) {
+                AppLog.w(TAG, "extract audio duration failed: ${t.message}")
+                5_000_000L
+            }
+
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                val projDur = _project.value?.totalDurationUs ?: durationUs
+                val item = AudioTrackItem(
+                    uri = targetFileOrUri,
+                    name = displayName,
+                    sourceDurationUs = durationUs,
+                    timelineStartUs = 0L,
+                    trimStartUs = 0L,
+                    trimEndUs = if (durationUs > 0) durationUs else projDur.coerceAtLeast(1_000_000L)
+                )
+                addAudioTrack(item)
+            }
         }
-        val item = AudioTrackItem(
-            uri = uri.toString(),
-            name = "Music Track",
-            sourceDurationUs = durationUs,
-            timelineStartUs = 0L,
-            trimStartUs = 0L,
-            trimEndUs = (_project.value?.totalDurationUs ?: durationUs).coerceAtLeast(1_000_000L).coerceAtMost(durationUs)
-        )
-        addAudioTrack(item)
     }
     fun removeAudioTrack(id: String) = mutate { it.copy(audioTracks = it.audioTracks.filterNot { a -> a.id == id }) }
+    fun trimAudioTrack(id: String, startUs: Long, endUs: Long) = mutate { p ->
+        p.copy(audioTracks = p.audioTracks.map {
+            if (it.id == id) {
+                val validStart = startUs.coerceAtLeast(0L)
+                val maxEnd = if (it.sourceDurationUs > 0) it.sourceDurationUs else Long.MAX_VALUE
+                val minEnd = (validStart + 100_000L).coerceAtMost(maxEnd)
+                val validEnd = endUs.coerceIn(minEnd, maxEnd)
+                it.copy(trimStartUs = validStart, trimEndUs = validEnd)
+            } else it
+        })
+    }
+
+    fun deleteCurrentProject(onDeleted: () -> Unit) {
+        val pid = _project.value?.id ?: return
+        playerManager.pause()
+        previewRenderer.pause()
+        previewRenderer.setProject(Project(id = "", name = ""))
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                dao.deleteProjectById(pid)
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    _project.value = null
+                    onDeleted()
+                }
+            } catch (t: Throwable) {
+                AppLog.e(TAG, "Failed to delete project $pid", t)
+            }
+        }
+    }
 
     fun startExport(config: ExportConfig) {
         if (currentExport != null) {
@@ -291,10 +429,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     // ── Internals ──
     private fun mutate(block: (Project) -> Project) {
         val current = _project.value ?: return
+        val modified = block(current)
+        if (modified == current) return
         undoStack.addLast(current)
         if (undoStack.size > 50) undoStack.removeFirst()
         redoStack.clear()
-        val next = block(current).copy(lastModifiedTime = System.currentTimeMillis())
+        val next = modified.copy(lastModifiedTime = System.currentTimeMillis())
         _project.value = next
         pushAutoSave(next)
         refreshDerived()
@@ -306,12 +446,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private var syncJob: kotlinx.coroutines.Job? = null
+
     private fun refreshDerived() {
         _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = redoStack.isNotEmpty()
-        _project.value?.let {
-            playerManager.syncWithProject(it)
-            previewRenderer.setProject(it)
+        val current = _project.value ?: return
+        syncJob?.cancel()
+        syncJob = viewModelScope.launch(Dispatchers.Main) {
+            kotlinx.coroutines.delay(50L)
+            playerManager.syncWithProject(current)
+            previewRenderer.setProject(current)
         }
     }
 
