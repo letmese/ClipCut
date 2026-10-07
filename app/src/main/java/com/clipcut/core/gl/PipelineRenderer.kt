@@ -232,14 +232,13 @@ class PipelineRenderer(private val context: Context) {
         rotationDegrees: Int,
         clip: TimelineItem,
         transitionProgress: Float = 0f,
-        prevClipTexId: Int? = null,
-        baseLayerTexId: Int? = null
+        prevClipTexId: Int? = null
     ) {
         renderFrame(
             sourceTexId, sourceTexMatrix, sourceIsOes, mvpMatrix, rotationDegrees,
             clip.filterConfig, clip.cropRect, clip.flipHorizontal, clip.flipVertical,
             clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySmoothness,
-            clip.lutConfig, clip.maskConfig, clip.blendMode, baseLayerTexId,
+            clip.lutConfig, clip.maskConfig, clip.blendMode, null,
             clip.effectId, clip.effectIntensity,
             transitionProgress, clip.transitionType, prevClipTexId
         )

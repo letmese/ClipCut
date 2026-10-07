@@ -202,15 +202,13 @@ fun EditorScreen(
                     .background(Surface2),
                 contentAlignment = Alignment.Center
             ) {
-                val hasClips = project?.videoClips?.isNotEmpty() == true
-                val hasOverlays = project?.overlays?.isNotEmpty() == true || project?.pipTracks?.isNotEmpty() == true
-                if (!hasClips && !hasOverlays) {
+                if (project == null || project!!.videoClips.isEmpty()) {
                     EmptyState(
                         title = "No clips yet",
                         description = "Tap the + below to add media",
                         modifier = Modifier.fillMaxSize()
                     )
-                } else if (hasClips) {
+                } else {
                     AndroidExternalSurface(
                         modifier = Modifier.fillMaxSize(),
                         isOpaque = true
@@ -252,8 +250,6 @@ fun EditorScreen(
 
                     val bw = previewBoxSize.width.toFloat()
                     val bh = previewBoxSize.height.toFloat()
-                    val safeBw = bw.coerceAtLeast(100f)
-                    val safeBh = bh.coerceAtLeast(100f)
 
                     if (bw > 0f && bh > 0f) {
                         // ── Render Interactive Overlays & Stickers ──
@@ -274,22 +270,23 @@ fun EditorScreen(
                                     localRotation = overlay.rotation
                                 }
 
-                                // Parent bounding box centered at (localNormX * bw, localNormY * bh)
+                                val currentPixelX = localNormX * bw
+                                val currentPixelY = localNormY * bh
+
+                                // Parent bounding box centered at (currentPixelX, currentPixelY)
                                 Box(
                                     modifier = Modifier
                                         .offset {
-                                            val px = localNormX * bw
-                                            val py = localNormY * bh
                                             androidx.compose.ui.unit.IntOffset(
-                                                (px - 100.dp.toPx()).toInt(),
-                                                (py - 70.dp.toPx()).toInt()
+                                                (currentPixelX - 100.dp.toPx()).toInt(),
+                                                (currentPixelY - 70.dp.toPx()).toInt()
                                             )
                                         }
                                         .size(200.dp, 140.dp)
                                         .graphicsLayer {
-                                            scaleX = if (localScale.isFinite() && localScale > 0f) localScale else 1.0f
-                                            scaleY = if (localScale.isFinite() && localScale > 0f) localScale else 1.0f
-                                            rotationZ = if (localRotation.isFinite()) localRotation else 0.0f
+                                            scaleX = localScale
+                                            scaleY = localScale
+                                            rotationZ = localRotation
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -305,7 +302,7 @@ fun EditorScreen(
                                                 color = AccentPrimary.copy(alpha = 0.15f),
                                                 shape = RoundedCornerShape(8.dp)
                                             )
-                                            .pointerInput(overlay.id, safeBw, safeBh) {
+                                            .pointerInput(overlay.id, bw, bh) {
                                                 detectDragGestures(
                                                     onDragStart = {
                                                         selectedOverlayId = overlay.id
@@ -316,13 +313,10 @@ fun EditorScreen(
                                                         val rad = Math.toRadians(localRotation.toDouble())
                                                         val cos = Math.cos(rad).toFloat()
                                                         val sin = Math.sin(rad).toFloat()
-                                                        val scaleFactor = if (localScale.isFinite() && localScale > 0.05f) localScale else 1.0f
-                                                        val screenDx = (dragAmount.x * cos - dragAmount.y * sin) * scaleFactor
-                                                        val screenDy = (dragAmount.x * sin + dragAmount.y * cos) * scaleFactor
-                                                        if (screenDx.isFinite() && screenDy.isFinite()) {
-                                                            localNormX = (localNormX + screenDx / safeBw).coerceIn(0.01f, 0.99f)
-                                                            localNormY = (localNormY + screenDy / safeBh).coerceIn(0.01f, 0.99f)
-                                                        }
+                                                        val screenDx = dragAmount.x * cos - dragAmount.y * sin
+                                                        val screenDy = dragAmount.x * sin + dragAmount.y * cos
+                                                        localNormX = (localNormX + screenDx / bw).coerceIn(0.01f, 0.99f)
+                                                        localNormY = (localNormY + screenDy / bh).coerceIn(0.01f, 0.99f)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitOverlayTransform(overlay.id, localNormX, localNormY, localScale, localRotation)
@@ -377,14 +371,12 @@ fun EditorScreen(
                                             .size(36.dp)
                                             .background(AccentPrimary, CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
-                                            .pointerInput(overlay.id, safeBw) {
+                                            .pointerInput(overlay.id) {
                                                 detectDragGestures(
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
-                                                        val delta = (dragAmount.x + dragAmount.y) / (safeBw * 0.25f)
-                                                        if (!delta.isNaN() && delta.isFinite()) {
-                                                            localScale = (localScale + delta).coerceIn(0.2f, 4.0f)
-                                                        }
+                                                        val delta = (dragAmount.x + dragAmount.y) / (bw * 0.25f)
+                                                        localScale = (localScale + delta).coerceIn(0.2f, 4.0f)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitOverlayTransform(overlay.id, localNormX, localNormY, localScale, localRotation)
@@ -416,9 +408,7 @@ fun EditorScreen(
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
                                                         val rotDelta = dragAmount.x * 0.8f
-                                                        if (!rotDelta.isNaN() && rotDelta.isFinite()) {
-                                                            localRotation = ((localRotation + rotDelta) % 360f + 360f) % 360f
-                                                        }
+                                                        localRotation = ((localRotation + rotDelta) % 360f + 360f) % 360f
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitOverlayTransform(overlay.id, localNormX, localNormY, localScale, localRotation)
@@ -502,22 +492,23 @@ fun EditorScreen(
                                     localPipScale = pip.scale
                                 }
 
-                                // Parent bounding box centered at (localPipNormX * bw, localPipNormY * bh)
+                                val pipPixelX = localPipNormX * bw
+                                val pipPixelY = localPipNormY * bh
+
+                                // Parent bounding box centered at (pipPixelX, pipPixelY)
                                 Box(
                                     modifier = Modifier
                                         .offset {
-                                            val px = localPipNormX * bw
-                                            val py = localPipNormY * bh
                                             androidx.compose.ui.unit.IntOffset(
-                                                (px - 110.dp.toPx()).toInt(),
-                                                (py - 80.dp.toPx()).toInt()
+                                                (pipPixelX - 110.dp.toPx()).toInt(),
+                                                (pipPixelY - 80.dp.toPx()).toInt()
                                             )
                                         }
                                         .size(220.dp, 160.dp)
                                         .graphicsLayer {
-                                            scaleX = if (localPipScale.isFinite() && localPipScale > 0f) localPipScale else 1.0f
-                                            scaleY = if (localPipScale.isFinite() && localPipScale > 0f) localPipScale else 1.0f
-                                            rotationZ = if (pip.rotation.isFinite()) pip.rotation else 0.0f
+                                            scaleX = localPipScale
+                                            scaleY = localPipScale
+                                            rotationZ = pip.rotation
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -534,7 +525,7 @@ fun EditorScreen(
                                                 color = Surface2.copy(alpha = 0.90f),
                                                 shape = RoundedCornerShape(10.dp)
                                             )
-                                            .pointerInput(pip.id, safeBw, safeBh) {
+                                            .pointerInput(pip.id, bw, bh) {
                                                 detectDragGestures(
                                                     onDragStart = {
                                                         selectedPipId = pip.id
@@ -545,13 +536,10 @@ fun EditorScreen(
                                                         val rad = Math.toRadians(pip.rotation.toDouble())
                                                         val cos = Math.cos(rad).toFloat()
                                                         val sin = Math.sin(rad).toFloat()
-                                                        val scaleFactor = if (localPipScale.isFinite() && localPipScale > 0.05f) localPipScale else 1.0f
-                                                        val screenDx = (dragAmount.x * cos - dragAmount.y * sin) * scaleFactor
-                                                        val screenDy = (dragAmount.x * sin + dragAmount.y * cos) * scaleFactor
-                                                        if (screenDx.isFinite() && screenDy.isFinite()) {
-                                                            localPipNormX = (localPipNormX + screenDx / safeBw).coerceIn(0.01f, 0.99f)
-                                                            localPipNormY = (localPipNormY + screenDy / safeBh).coerceIn(0.01f, 0.99f)
-                                                        }
+                                                        val screenDx = dragAmount.x * cos - dragAmount.y * sin
+                                                        val screenDy = dragAmount.x * sin + dragAmount.y * cos
+                                                        localPipNormX = (localPipNormX + screenDx / bw).coerceIn(0.01f, 0.99f)
+                                                        localPipNormY = (localPipNormY + screenDy / bh).coerceIn(0.01f, 0.99f)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
@@ -613,14 +601,12 @@ fun EditorScreen(
                                             .size(36.dp)
                                             .background(AccentPrimary, CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
-                                            .pointerInput(pip.id, safeBw) {
+                                            .pointerInput(pip.id) {
                                                 detectDragGestures(
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
-                                                        val scaleDelta = (dragAmount.x + dragAmount.y) / (safeBw * 0.30f)
-                                                        if (!scaleDelta.isNaN() && scaleDelta.isFinite()) {
-                                                            localPipScale = (localPipScale + scaleDelta).coerceIn(0.15f, 3.0f)
-                                                        }
+                                                        val scaleDelta = (dragAmount.x + dragAmount.y) / (bw * 0.30f)
+                                                        localPipScale = (localPipScale + scaleDelta).coerceIn(0.15f, 3.0f)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
@@ -652,10 +638,8 @@ fun EditorScreen(
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
                                                         val rotDelta = dragAmount.x * 0.8f
-                                                        if (!rotDelta.isNaN() && rotDelta.isFinite()) {
-                                                            val newRot = ((pip.rotation + rotDelta) % 360f + 360f) % 360f
-                                                            viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, newRot)
-                                                        }
+                                                        val newRot = ((pip.rotation + rotDelta) % 360f + 360f) % 360f
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, newRot)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
@@ -941,8 +925,6 @@ fun EditorScreen(
                 pipTracks = project?.pipTracks ?: emptyList(),
                 beatMarkers = project?.beatMarkers ?: emptyList(),
                 selectedClipId = selectedClipId,
-                selectedOverlayId = selectedOverlayId,
-                selectedPipId = selectedPipId,
                 currentPositionUs = positionUs,
                 totalDurationUs = project?.totalDurationUs ?: 0L,
                 isPlaying = isPlaying,
@@ -951,35 +933,18 @@ fun EditorScreen(
                     viewModel.playerManager.pause()
                     viewModel.playerManager.seekToUs(0L)
                 },
-                onSelectClip = {
-                    selectedOverlayId = null
-                    selectedPipId = null
-                    viewModel.selectClip(it)
-                },
+                onSelectClip = { viewModel.selectClip(it) },
                 onSeek = { viewModel.playerManager.seekToUs(it) },
                 onAddMediaClick = { pickMedia.launch(arrayOf("video/*", "image/*")) },
                 onTrimClip = { id, s, e -> viewModel.trimClip(id, s, e) },
                 onSelectAudioTrack = { selectedTool = EditorTool.AUDIO },
                 onTrimAudioTrack = { id, s, e -> viewModel.trimAudioTrack(id, s, e) },
                 onSelectOverlay = { overlay ->
-                    val wasSelected = selectedOverlayId == overlay.id
-                    selectedOverlayId = if (wasSelected) null else overlay.id
-                    selectedPipId = null
-                    selectedTool = null
-                    if (!wasSelected && (positionUs < overlay.timelineStartUs || positionUs > overlay.timelineEndUs)) {
-                        viewModel.playerManager.seekToUs(overlay.timelineStartUs)
-                    }
+                    selectedOverlayId = if (selectedOverlayId == overlay.id) null else overlay.id
+                    selectedTool = EditorTool.OVERLAY
                 },
                 onTrimOverlay = { id, s, e -> viewModel.trimOverlay(id, s, e) },
-                onSelectPip = { pip ->
-                    val wasSelected = selectedPipId == pip.id
-                    selectedPipId = if (wasSelected) null else pip.id
-                    selectedOverlayId = null
-                    selectedTool = null
-                    if (!wasSelected && (positionUs < pip.timelineStartUs || positionUs > pip.timelineEndUs)) {
-                        viewModel.playerManager.seekToUs(pip.timelineStartUs)
-                    }
-                },
+                onSelectPip = { selectedTool = EditorTool.OVERLAY },
                 onTrimPip = { id, s, e -> viewModel.trimPipTrack(id, s, e) },
                 modifier = Modifier.fillMaxWidth().wrapContentHeight()
             )
@@ -1132,6 +1097,7 @@ fun EditorScreen(
                     )
                     viewModel.addOverlay(newSticker)
                     selectedOverlayId = newSticker.id
+                    selectedTool = null
                 },
                 onDismiss = { selectedTool = null }
             )
@@ -1162,7 +1128,7 @@ fun EditorScreen(
                 onDismiss = { selectedTool = null }
             )
             EditorTool.KEYFRAMES -> KeyframeSheet(
-                overlay = project?.overlays?.firstOrNull { it.id == selectedOverlayId } ?: project?.overlays?.firstOrNull(),
+                overlay = project?.overlays?.firstOrNull(),
                 playheadUs = positionUs,
                 onAddKeyframe = { ovId, kf -> viewModel.addKeyframe(ovId, kf) },
                 onRemoveKeyframe = { ovId, kfId -> viewModel.removeKeyframe(ovId, kfId) },

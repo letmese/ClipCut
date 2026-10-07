@@ -36,12 +36,15 @@ fun UnifiedBottomSheetHost(
     content: @Composable () -> Unit
 ) {
     if (!visible) return
-
-    val state = rememberModalBottomSheetState(
-        skipPartiallyExpanded = true,
-        confirmValueChange = { true }
-    )
-
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val animateAndClose: (() -> Unit) -> Unit = { callback ->
+        scope.launch {
+            try { state.hide() } catch (_: Throwable) {}
+        }.invokeOnCompletion {
+            callback()
+        }
+    }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = state,
@@ -51,20 +54,14 @@ fun UnifiedBottomSheetHost(
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { SheetDragHandle() }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp)
-                .navigationBarsPadding()
-        ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp).navigationBarsPadding()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(title, style = MaterialTheme.typography.titleMedium, color = Color.White, fontWeight = FontWeight.Bold)
-                TextButton(onClick = onDone) {
+                TextButton(onClick = { animateAndClose(onDone) }) {
                     Text("Done", color = AccentPrimary, style = MaterialTheme.typography.labelLarge)
                 }
             }

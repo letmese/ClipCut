@@ -597,16 +597,6 @@ class MediaMuxerWrapper(outputPath: String, private val expectedTrackCount: Int 
 
     fun writeVideoSample(buffer: ByteBuffer, bufferInfo: MediaCodec.BufferInfo) {
         synchronized(lock) {
-            if (!started && pendingSamples.size > 200 && trackCount > 0) {
-                // If audio failed or is not arriving, don't let pending video samples cause OOM; start muxer with available tracks
-                try {
-                    muxer.start()
-                    started = true
-                    flushPendingSamplesLocked()
-                } catch (t: Throwable) {
-                    AppLog.w("MediaMuxerWrapper", "Auto-starting muxer on pending threshold failed", t)
-                }
-            }
             if (started) {
                 val trackIdx = tracks[0] ?: return@synchronized
                 muxer.writeSampleData(trackIdx, buffer, bufferInfo)

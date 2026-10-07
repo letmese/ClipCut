@@ -223,16 +223,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         p.copy(overlays = p.overlays.map { if (it.id == id) block(it) else it })
     }
     fun commitOverlayTransform(id: String, normX: Float, normY: Float, scale: Float, rotation: Float) = mutate { p ->
-        val safeNormX = if (normX.isFinite()) normX.coerceIn(0.01f, 0.99f) else 0.5f
-        val safeNormY = if (normY.isFinite()) normY.coerceIn(0.01f, 0.99f) else 0.5f
-        val safeScale = if (scale.isFinite()) scale.coerceIn(0.2f, 5.0f) else 1.0f
-        val safeRot = if (rotation.isFinite()) ((rotation % 360f) + 360f) % 360f else 0f
         p.copy(overlays = p.overlays.map {
             if (it.id == id) it.copy(
-                normalizedX = safeNormX,
-                normalizedY = safeNormY,
-                scale = safeScale,
-                rotation = safeRot
+                normalizedX = normX.coerceIn(0.01f, 0.99f),
+                normalizedY = normY.coerceIn(0.01f, 0.99f),
+                scale = scale.coerceIn(0.2f, 5.0f),
+                rotation = ((rotation % 360f) + 360f) % 360f
             ) else it
         })
     }
@@ -273,16 +269,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         p.copy(pipTracks = p.pipTracks.map { if (it.id == id) block(it) else it })
     }
     fun commitPipTransform(id: String, normX: Float, normY: Float, scale: Float, rotation: Float = 0.0f) = mutate { p ->
-        val safeNormX = if (normX.isFinite()) normX.coerceIn(0.01f, 0.99f) else 0.5f
-        val safeNormY = if (normY.isFinite()) normY.coerceIn(0.01f, 0.99f) else 0.5f
-        val safeScale = if (scale.isFinite()) scale.coerceIn(0.1f, 3.0f) else 1.0f
-        val safeRot = if (rotation.isFinite()) ((rotation % 360f) + 360f) % 360f else 0f
         p.copy(pipTracks = p.pipTracks.map {
             if (it.id == id) it.copy(
-                normalizedX = safeNormX,
-                normalizedY = safeNormY,
-                scale = safeScale,
-                rotation = safeRot
+                normalizedX = normX.coerceIn(0.01f, 0.99f),
+                normalizedY = normY.coerceIn(0.01f, 0.99f),
+                scale = scale.coerceIn(0.1f, 3.0f),
+                rotation = (rotation % 360f + 360f) % 360f
             ) else it
         })
     }
@@ -375,8 +367,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             if (it.id == id) {
                 val validStart = startUs.coerceAtLeast(0L)
                 val maxEnd = if (it.sourceDurationUs > 0) it.sourceDurationUs else Long.MAX_VALUE
-                val minEnd = (validStart + 100_000L).coerceAtMost(maxEnd)
-                val validEnd = endUs.coerceIn(minEnd, maxEnd)
+                val validEnd = endUs.coerceIn(validStart + 100_000L, maxEnd)
                 it.copy(trimStartUs = validStart, trimEndUs = validEnd)
             } else it
         })
@@ -384,14 +375,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun deleteCurrentProject(onDeleted: () -> Unit) {
         val pid = _project.value?.id ?: return
-        playerManager.pause()
-        previewRenderer.pause()
-        previewRenderer.setProject(Project(id = "", name = ""))
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 dao.deleteProjectById(pid)
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
-                    _project.value = null
                     onDeleted()
                 }
             } catch (t: Throwable) {
@@ -429,12 +416,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     // ── Internals ──
     private fun mutate(block: (Project) -> Project) {
         val current = _project.value ?: return
-        val modified = block(current)
-        if (modified == current) return
         undoStack.addLast(current)
         if (undoStack.size > 50) undoStack.removeFirst()
         redoStack.clear()
-        val next = modified.copy(lastModifiedTime = System.currentTimeMillis())
+        val next = block(current).copy(lastModifiedTime = System.currentTimeMillis())
         _project.value = next
         pushAutoSave(next)
         refreshDerived()
@@ -446,17 +431,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private var syncJob: kotlinx.coroutines.Job? = null
-
     private fun refreshDerived() {
         _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = redoStack.isNotEmpty()
-        val current = _project.value ?: return
-        syncJob?.cancel()
-        syncJob = viewModelScope.launch(Dispatchers.Main) {
-            kotlinx.coroutines.delay(50L)
-            playerManager.syncWithProject(current)
-            previewRenderer.setProject(current)
+        _project.value?.let {
+            playerManager.syncWithProject(it)
+            previewRenderer.setProject(it)
         }
     }
 

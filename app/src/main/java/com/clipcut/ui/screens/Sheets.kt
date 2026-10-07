@@ -136,8 +136,8 @@ fun AudioSheet(
                 val icon = if (track.isVoiceover || track.name.contains("voiceover", ignoreCase = true)) Icons.Filled.Mic else Icons.Filled.MusicNote
                 val maxDurUs = if (track.sourceDurationUs > 0) track.sourceDurationUs else (track.trimEndUs.coerceAtLeast(5_000_000L))
                 val maxDurSec = (maxDurUs / 1_000_000f).coerceAtLeast(1f)
-                val startSec = (track.trimStartUs / 1_000_000f).coerceIn(0f, (maxDurSec - 0.1f).coerceAtLeast(0f))
-                val endSec = (track.trimEndUs / 1_000_000f).coerceIn((startSec + 0.1f).coerceAtMost(maxDurSec), maxDurSec)
+                val startSec = (track.trimStartUs / 1_000_000f).coerceIn(0f, maxDurSec)
+                val endSec = (track.trimEndUs / 1_000_000f).coerceIn(startSec + 0.1f, maxDurSec)
 
                 Column(
                     modifier = Modifier
@@ -203,17 +203,11 @@ fun AudioSheet(
 
                     // Digital input boxes: user can type exact numbers e.g. 1s, 2.5s, 10s directly!
                     Spacer(Modifier.height(6.dp))
-                    var startInputText by remember(track.id) {
+                    var startInputText by remember(track.id, track.trimStartUs) {
                         mutableStateOf(String.format(java.util.Locale.US, "%.1f", startSec))
                     }
-                    var endInputText by remember(track.id) {
+                    var endInputText by remember(track.id, track.trimEndUs) {
                         mutableStateOf(String.format(java.util.Locale.US, "%.1f", endSec))
-                    }
-                    LaunchedEffect(startSec) {
-                        startInputText = String.format(java.util.Locale.US, "%.1f", startSec)
-                    }
-                    LaunchedEffect(endSec) {
-                        endInputText = String.format(java.util.Locale.US, "%.1f", endSec)
                     }
 
                     Row(
@@ -1179,16 +1173,13 @@ fun FlipSheet(flipH: Boolean, flipV: Boolean, onApply: (Boolean, Boolean) -> Uni
 
 @Composable
 fun TrimSheet(startUs: Long, endUs: Long, onApply: (Long, Long) -> Unit, onDismiss: () -> Unit) {
-    val safeEnd = endUs.coerceAtLeast(1_000_000L).toFloat()
-    var s by remember { mutableStateOf(startUs.toFloat().coerceIn(0f, safeEnd)) }
-    var e by remember { mutableStateOf(endUs.toFloat().coerceAtLeast(s + 200_000f)) }
+    var s by remember { mutableStateOf(startUs.toFloat()) }
+    var e by remember { mutableStateOf(endUs.toFloat()) }
     Column {
         SheetHeader("Trim", onDismiss)
         Spacer(Modifier.height(12.dp))
-        SheetSlider("Start", s, 0f..safeEnd, onValueChange = { s = it })
-        val endMin = s.coerceAtMost(safeEnd)
-        val endMax = (safeEnd * 2f).coerceAtLeast(endMin + 1f)
-        SheetSlider("End", e.coerceIn(endMin, endMax), endMin..endMax, onValueChange = { e = it })
+        SheetSlider("Start", s, 0f..(endUs.toFloat()), onValueChange = { s = it })
+        SheetSlider("End", e, (startUs.toFloat())..(endUs.toFloat() * 2), onValueChange = { e = it })
         Spacer(Modifier.height(12.dp))
         PrimaryButton("Apply", onClick = { onApply(s.toLong(), e.toLong()) }, modifier = Modifier.fillMaxWidth())
     }

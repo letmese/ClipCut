@@ -234,7 +234,6 @@ class AudioProcessor(
                 voiceIntervals.add(t.timelineStartUs..(t.timelineStartUs + t.effectiveDurationUs))
             }
         }
-        val sortedVoiceIntervals = voiceIntervals.sortedBy { it.first }
 
         // 2. Added audio tracks (music, sound effects, voiceovers)
         for (track in project.audioTracks) {
@@ -374,24 +373,7 @@ class AudioProcessor(
                                             // Dynamic ducking envelope with attack/release ramp (M-1 & M-2)
                                             if (track.isBackgroundTrack && project.audioDuckingEnabled) {
                                                 val currentPtsUs = timelinePtsUs + ((outF.toLong() * 1_000_000L) / targetSampleRate.toLong())
-                                                val isVoiceActive = if (sortedVoiceIntervals.isEmpty()) false else {
-                                                    var low = 0
-                                                    var high = sortedVoiceIntervals.size - 1
-                                                    var active = false
-                                                    while (low <= high) {
-                                                        val mid = (low + high).ushr(1)
-                                                        val range = sortedVoiceIntervals[mid]
-                                                        if (currentPtsUs < range.first) {
-                                                            high = mid - 1
-                                                        } else if (currentPtsUs > range.last) {
-                                                            low = mid + 1
-                                                        } else {
-                                                            active = true
-                                                            break
-                                                        }
-                                                    }
-                                                    active
-                                                }
+                                                val isVoiceActive = voiceIntervals.any { currentPtsUs in it }
                                                 val targetMultiplier = if (isVoiceActive) project.audioDuckLevel.coerceIn(0f, 1.0f) else 1.0f
                                                 // Smooth ramp over ~30ms at target sample rate to eliminate pops/clicks
                                                 val slewAlpha = (1f / (0.03f * targetSampleRate.toFloat())).coerceIn(0.0001f, 0.05f)
@@ -512,6 +494,81 @@ class AudioProcessor(
                 if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
             }
         }
+    }
+}
+
+/**
+ * ReverseDecoder — pre-decodes all frames of a clip and serves them in reverse
+ * order, used when TimelineItem.isReversed == true.
+ */
+class ReverseDecoder(
+    private val context: Context,
+    private val uri: String,
+    private val trimStartUs: Long,
+    private val trimEndUs: Long,
+    private val frameCount: Int
+) {
+    private val frames: MutableList<android.graphics.Bitmap> = mutableListOf()
+    var size: Int = 0
+        private set
+
+    fun prepare() {
+        val ext = MediaExtractor().apply { setDataSource(context, android.net.Uri.parse(uri), null) }
+        var format: MediaFormat? = null
+        for (i in 0 until ext.trackCount) {
+            val fmt = ext.getTrackFormat(i)
+            val mime = fmt.getString(MediaFormat.KEY_MIME) ?: continue
+            if (mime.startsWith("video/")) { ext.selectTrack(i); format = fmt; break }
+        }
+        if (format == null) { ext.release(); return }
+        val mime = format.getString(MediaFormat.KEY_MIME)!!
+        val dec = MediaCodec.createDecoderByType(mime)
+        dec.configure(format, null, null, 0)
+        dec.start()
+        ext.seekTo(trimStartUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+        val info = MediaCodec.BufferInfo()
+        var count = 0
+        while (count < frameCount) {
+            val inIdx = dec.dequeueInputBuffer(10_000)
+            if (inIdx >= 0) {
+                val buf = dec.getInputBuffer(inIdx) ?: continue
+                val sz = ext.readSampleData(buf, 0)
+                if (sz < 0) {
+                    dec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                } else if (ext.sampleTime in trimStartUs..trimEndUs) {
+                    dec.queueInputBuffer(inIdx, 0, sz, ext.sampleTime, 0)
+                    ext.advance()
+                } else {
+                    ext.advance()
+                }
+            }
+            val outIdx = dec.dequeueOutputBuffer(info, 10_000)
+            if (outIdx >= 0) {
+                if (info.size > 0 && (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) == 0) {
+                    val bmp = android.graphics.Bitmap.createBitmap(
+                        format.getInteger(MediaFormat.KEY_WIDTH),
+                        format.getInteger(MediaFormat.KEY_HEIGHT),
+                        android.graphics.Bitmap.Config.ARGB_8888
+                    )
+                    dec.releaseOutputBuffer(outIdx, false)
+                    frames.add(bmp)
+                    count++
+                } else {
+                    dec.releaseOutputBuffer(outIdx, false)
+                }
+                if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
+            }
+        }
+        dec.stop(); dec.release(); ext.release()
+        size = frames.size
+    }
+
+    fun getFrame(index: Int): android.graphics.Bitmap? =
+        frames.getOrNull(frames.size - 1 - index.coerceIn(0, frames.size - 1))
+
+    fun release() {
+        frames.forEach { it.recycle() }
+        frames.clear()
     }
 }
 

@@ -169,8 +169,8 @@ class GlPreviewRenderer(private val context: Context) {
         @Volatile var pendingBitmap: android.graphics.Bitmap? = null,
         @Volatile var isDecoding: Boolean = false
     )
-    private val pipCaches = java.util.concurrent.ConcurrentHashMap<String, PipFrameCache>()
-    private val pipDecodeExecutor = java.util.concurrent.Executors.newFixedThreadPool(2)
+    private var pipCache: PipFrameCache? = null
+    private val pipDecodeExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     private fun renderOnce(
         core: EglCore, eSurface: EGLSurface, out: OutputSurface,
@@ -223,7 +223,18 @@ class GlPreviewRenderer(private val context: Context) {
                         val isVideo = pip.uri.contains("video", ignoreCase = true) || pip.uri.endsWith(".mp4", ignoreCase = true) || pip.uri.endsWith(".mkv", ignoreCase = true)
                         val bucket = if (isVideo) (relTime / 100_000L).coerceAtLeast(0L) else 0L
 
-                        val cache = pipCaches.getOrPut(pip.uri) { PipFrameCache(pip.uri) }
+                        var cache = pipCache
+                        if (cache == null || cache.uri != pip.uri) {
+                            cache?.let {
+                                if (it.textureId != -1) {
+                                    try { GLES20.glDeleteTextures(1, intArrayOf(it.textureId), 0) } catch (_: Throwable) {}
+                                }
+                                it.pendingBitmap?.recycle()
+                                it.pendingBitmap = null
+                            }
+                            cache = PipFrameCache(pip.uri)
+                            pipCache = cache
+                        }
 
                         // Check if a newly decoded bitmap is ready to upload to OpenGL texture
                         val readyBmp = cache.pendingBitmap
@@ -269,20 +280,21 @@ class GlPreviewRenderer(private val context: Context) {
                                         videoFrame ?: BitmapFactory.decodeFile(filePath)
                                     }
 
-                                    val targetCache = pipCaches[decodeUri]
-                                    if (targetCache != null) {
-                                        targetCache.pendingBitmap?.recycle()
-                                        targetCache.pendingBitmap = bmp
-                                        targetCache.timestampBucket = targetBucket
-                                        // Request a render pass so the new bitmap is immediately uploaded and drawn
-                                        isDirty = true
+                                    if (pipCache?.uri == decodeUri) {
+                                        pipCache?.let {
+                                            it.pendingBitmap?.recycle()
+                                            it.pendingBitmap = bmp
+                                            it.timestampBucket = targetBucket
+                                            // Request a render pass so the new bitmap is immediately uploaded and drawn
+                                            isDirty = true
+                                        }
                                     } else {
                                         bmp?.recycle()
                                     }
                                 } catch (t: Throwable) {
                                     AppLog.w(TAG, "Async PiP frame decode failed: ${t.message}")
                                 } finally {
-                                    pipCaches[decodeUri]?.isDecoding = false
+                                    pipCache?.isDecoding = false
                                 }
                             }
                         }
@@ -378,14 +390,14 @@ class GlPreviewRenderer(private val context: Context) {
             try { it.release() } catch (_: Throwable) {}
         }
         pipRetrievers.clear()
-        for (it in pipCaches.values) {
+        pipCache?.let {
             if (it.textureId != -1) {
                 try { GLES20.glDeleteTextures(1, intArrayOf(it.textureId), 0) } catch (_: Throwable) {}
             }
             it.pendingBitmap?.recycle()
             it.pendingBitmap = null
         }
-        pipCaches.clear()
+        pipCache = null
         try { pipDecodeExecutor.shutdownNow() } catch (_: Throwable) {}
     }
 

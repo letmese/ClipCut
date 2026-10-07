@@ -52,13 +52,9 @@ object AppLog {
     private var logFile: File? = null
 
     fun init(context: Context) {
-        try {
-            logFile = File(context.filesDir, "clipcut.log")
-            if (!logFile!!.exists()) logFile!!.createNewFile()
-            Log.i("AppLog", "init at ${logFile!!.absolutePath}")
-        } catch (t: Throwable) {
-            Log.w("AppLog", "Failed creating log file: ${t.message}")
-        }
+        logFile = File(context.filesDir, "clipcut.log")
+        if (!logFile!!.exists()) logFile!!.createNewFile()
+        Log.i("AppLog", "init at ${logFile!!.absolutePath}")
 
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->

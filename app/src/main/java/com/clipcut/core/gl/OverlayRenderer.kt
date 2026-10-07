@@ -9,7 +9,6 @@ import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.opengl.GLES20
 import android.opengl.GLUtils
-import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.FontFamilyOption
 import com.clipcut.core.model.OverlayItem
 import com.clipcut.core.model.TextAnimation
@@ -44,22 +43,6 @@ class OverlayRenderer(private val context: Context) {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
     }
 
-    private fun ensureBitmaps(w: Int, h: Int) {
-        if (width != w || height != h || reusableBitmap == null || flippedBitmap == null) {
-            width = w.coerceAtLeast(1)
-            height = h.coerceAtLeast(1)
-            reusableBitmap?.recycle()
-            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            reusableBitmap = bmp
-            reusableCanvas = Canvas(bmp)
-
-            flippedBitmap?.recycle()
-            val fbmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            flippedBitmap = fbmp
-            flippedCanvas = Canvas(fbmp)
-        }
-    }
-
     fun renderOverlays(
         overlays: List<OverlayItem>,
         currentPtsUs: Long,
@@ -67,79 +50,84 @@ class OverlayRenderer(private val context: Context) {
         viewportHeight: Int
     ) {
         if (overlayTexId == -1) return
-        try {
-            ensureBitmaps(viewportWidth, viewportHeight)
-            val bmp = reusableBitmap ?: return
-            val canvas = reusableCanvas ?: return
 
-            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-
-            if (overlays.isEmpty()) {
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
-                GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
-                return
-            }
-
-            overlays.filter { currentPtsUs in it.timelineStartUs..it.timelineEndUs }.forEach { o ->
-                val (x, y, scale, rot) = interpolatedTransform(o, currentPtsUs)
-                val cx = (x * width).toInt()
-                val cy = (y * height).toInt()
-
-                textPaint.reset()
-                textPaint.isAntiAlias = true
-                textPaint.color = o.textColor.toInt()
-                val referenceDimension = kotlin.math.min(width, height).toFloat().coerceAtLeast(360f)
-                val relAnim = (currentPtsUs - o.timelineStartUs).toFloat() / (o.animationDurationMs * 1000f).coerceAtLeast(1f)
-                val animScale = if (o.animation == TextAnimation.SCALE_IN) relAnim.coerceIn(0.05f, 1f) else 1f
-                textPaint.textSize = o.textSizeSp * scale * animScale * (referenceDimension / 720f)
-                if (o.animation == TextAnimation.FADE_IN) {
-                    val alpha = (255 * relAnim.coerceIn(0f, 1f)).toInt()
-                    textPaint.alpha = alpha
-                }
-                textPaint.isFakeBoldText = o.textBold
-                textPaint.textSkewX = if (o.textItalic) -0.25f else 0f
-                textPaint.typeface = when (o.fontFamily) {
-                    FontFamilyOption.SERIF -> Typeface.SERIF
-                    FontFamilyOption.MONOSPACE -> Typeface.MONOSPACE
-                    FontFamilyOption.SANS_SERIF_CONDENSED -> Typeface.create("sans-serif-condensed", Typeface.NORMAL)
-                    else -> Typeface.DEFAULT
-                }
-                val text = applyAnimation(o, currentPtsUs)
-                if (text.isNotEmpty()) {
-                    val fm = textPaint.fontMetrics
-                    val textWidth = textPaint.measureText(text)
-                    val textHeight = fm.descent - fm.ascent
-                    if (o.backgroundColor != 0L) {
-                        bgPaint.color = o.backgroundColor.toInt()
-                        val pad = o.backgroundPaddingPx.toFloat()
-                        canvas.drawRect(
-                            cx - textWidth / 2 - pad, cy - textHeight / 2 - pad,
-                            cx + textWidth / 2 + pad, cy + textHeight / 2 + pad, bgPaint
-                        )
-                    }
-                    canvas.save()
-                    canvas.rotate(rot, cx.toFloat(), cy.toFloat())
-                    canvas.drawText(text, cx - textWidth / 2, cy - textHeight / 2 - fm.ascent, textPaint)
-                    canvas.restore()
-                }
-            }
-
-            // Upload: GLUtils.texImage2D stores row 0 at texture V=0 (bottom).
-            // Canvas row 0 is visual top. Flip bitmap once vertically so texture V=0
-            // corresponds to visual top. Now every caller uses IDENTITY tex-matrix!
-            val dst = flippedBitmap ?: return
-            val dstCanvas = flippedCanvas ?: Canvas(dst).also { flippedCanvas = it }
-            dstCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-            flipMatrix.reset()
-            flipMatrix.setScale(1f, -1f)
-            flipMatrix.postTranslate(0f, height.toFloat())
-            dstCanvas.drawBitmap(bmp, flipMatrix, null)
-
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
-            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, dst, 0)
-        } catch (t: Throwable) {
-            AppLog.e("OverlayRenderer", "renderOverlays failed: ${t.message}", t)
+        if (width != viewportWidth || height != viewportHeight || reusableBitmap == null) {
+            width = viewportWidth.coerceAtLeast(1)
+            height = viewportHeight.coerceAtLeast(1)
+            reusableBitmap?.recycle()
+            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            reusableBitmap = bmp
+            reusableCanvas = Canvas(bmp)
+            flippedBitmap?.recycle()
+            flippedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         }
+        val bmp = reusableBitmap ?: return
+        val canvas = reusableCanvas ?: return
+
+        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+
+        if (overlays.isEmpty()) {
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
+            return
+        }
+
+        overlays.filter { currentPtsUs in it.timelineStartUs..it.timelineEndUs }.forEach { o ->
+            val (x, y, scale, rot) = interpolatedTransform(o, currentPtsUs)
+            val cx = (x * width).toInt()
+            val cy = (y * height).toInt()
+
+            textPaint.reset()
+            textPaint.isAntiAlias = true
+            textPaint.color = o.textColor.toInt()
+            textPaint.textSize = o.textSizeSp * scale * (width / 1080f)
+            textPaint.isFakeBoldText = o.textBold
+            textPaint.textSkewX = if (o.textItalic) -0.25f else 0f
+            textPaint.typeface = when (o.fontFamily) {
+                FontFamilyOption.SERIF -> Typeface.SERIF
+                FontFamilyOption.MONOSPACE -> Typeface.MONOSPACE
+                FontFamilyOption.SANS_SERIF_CONDENSED -> Typeface.create("sans-serif-condensed", Typeface.NORMAL)
+                else -> Typeface.DEFAULT
+            }
+            val text = applyAnimation(o, currentPtsUs)
+            if (text.isNotEmpty()) {
+                val fm = textPaint.fontMetrics
+                val textWidth = textPaint.measureText(text)
+                val textHeight = fm.descent - fm.ascent
+                if (o.backgroundColor != 0L) {
+                    bgPaint.color = o.backgroundColor.toInt()
+                    val pad = o.backgroundPaddingPx.toFloat()
+                    canvas.drawRect(
+                        cx - textWidth / 2 - pad, cy - textHeight / 2 - pad,
+                        cx + textWidth / 2 + pad, cy + textHeight / 2 + pad, bgPaint
+                    )
+                }
+                canvas.save()
+                canvas.rotate(rot, cx.toFloat(), cy.toFloat())
+                canvas.drawText(text, cx - textWidth / 2, cy - textHeight / 2 - fm.ascent, textPaint)
+                canvas.restore()
+            }
+        }
+
+        // Upload: GLUtils.texImage2D stores row 0 at texture V=0 (bottom).
+        // Canvas row 0 is visual top. Flip bitmap once vertically so texture V=0
+        // corresponds to visual top. Now every caller uses IDENTITY tex-matrix!
+        if (flippedBitmap == null || flippedBitmap?.width != width || flippedBitmap?.height != height) {
+            flippedBitmap?.recycle()
+            val newBmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            flippedBitmap = newBmp
+            flippedCanvas = Canvas(newBmp)
+        }
+        val dst = flippedBitmap ?: return
+        val dstCanvas = flippedCanvas ?: Canvas(dst).also { flippedCanvas = it }
+        dstCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        flipMatrix.reset()
+        flipMatrix.setScale(1f, -1f)
+        flipMatrix.postTranslate(0f, height.toFloat())
+        dstCanvas.drawBitmap(bmp, flipMatrix, null)
+
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, dst, 0)
     }
 
     private fun interpolatedTransform(o: OverlayItem, ptsUs: Long): FloatArray {
@@ -173,16 +161,7 @@ class OverlayRenderer(private val context: Context) {
         if (o.animation == TextAnimation.NONE) return o.text
         val rel = (ptsUs - o.timelineStartUs).toFloat() / (o.animationDurationMs * 1000f).coerceAtLeast(1f)
         return when (o.animation) {
-            TextAnimation.TYPEWRITER -> {
-                val targetCount = (o.text.length * rel.coerceIn(0f, 1f)).toInt()
-                if (targetCount <= 0) ""
-                else if (targetCount >= o.text.length) o.text
-                else {
-                    // Avoid splitting surrogate pairs
-                    val safeEnd = if (Character.isHighSurrogate(o.text[targetCount - 1])) targetCount - 1 else targetCount
-                    o.text.substring(0, safeEnd)
-                }
-            }
+            TextAnimation.TYPEWRITER -> o.text.take((o.text.length * rel.coerceIn(0f, 1f)).toInt())
             else -> o.text
         }
     }

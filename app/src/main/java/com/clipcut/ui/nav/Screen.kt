@@ -14,5 +14,4 @@ sealed class Screen(val route: String) {
         fun createRoute(projectId: String): String = "editor/$projectId"
     }
     object LogViewer : Screen("logs")
-    object Settings : Screen("settings")
 }
