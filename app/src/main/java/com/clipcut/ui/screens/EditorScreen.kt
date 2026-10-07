@@ -310,13 +310,8 @@ fun EditorScreen(
                                                     },
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
-                                                        val rad = Math.toRadians(localRotation.toDouble())
-                                                        val cos = Math.cos(rad).toFloat()
-                                                        val sin = Math.sin(rad).toFloat()
-                                                        val screenDx = dragAmount.x * cos - dragAmount.y * sin
-                                                        val screenDy = dragAmount.x * sin + dragAmount.y * cos
-                                                        localNormX = (localNormX + screenDx / bw).coerceIn(0.01f, 0.99f)
-                                                        localNormY = (localNormY + screenDy / bh).coerceIn(0.01f, 0.99f)
+                                                        localNormX = (localNormX + dragAmount.x / bw).coerceIn(0.02f, 0.98f)
+                                                        localNormY = (localNormY + dragAmount.y / bh).coerceIn(0.02f, 0.98f)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitOverlayTransform(overlay.id, localNormX, localNormY, localScale, localRotation)
@@ -340,19 +335,20 @@ fun EditorScreen(
                                         )
                                     }
 
-                                    // Top-Right: Delete button (INSIDE layout bounds, NO clipping!)
+                                    // Top-Right: Delete button (40dp easy tap target)
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.TopEnd)
-                                            .size(36.dp)
+                                            .size(40.dp)
                                             .background(Color(0xFFE53935), CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
                                             .clickable(
                                                 interactionSource = remember { MutableInteractionSource() },
                                                 indication = null
                                             ) {
+                                                val toDel = overlay.id
                                                 selectedOverlayId = null
-                                                viewModel.removeOverlay(overlay.id)
+                                                viewModel.removeOverlay(toDel)
                                             },
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -360,7 +356,7 @@ fun EditorScreen(
                                             imageVector = Icons.Filled.Close,
                                             contentDescription = "Delete Overlay",
                                             tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
 
@@ -368,7 +364,7 @@ fun EditorScreen(
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.BottomEnd)
-                                            .size(36.dp)
+                                            .size(40.dp)
                                             .background(AccentPrimary, CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
                                             .pointerInput(overlay.id) {
@@ -392,7 +388,7 @@ fun EditorScreen(
                                             imageVector = Icons.Filled.OpenInFull,
                                             contentDescription = "Scale Overlay",
                                             tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
 
@@ -400,14 +396,14 @@ fun EditorScreen(
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.BottomStart)
-                                            .size(36.dp)
+                                            .size(40.dp)
                                             .background(Surface3, CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
                                             .pointerInput(overlay.id) {
                                                 detectDragGestures(
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
-                                                        val rotDelta = dragAmount.x * 0.8f
+                                                        val rotDelta = dragAmount.x * 1.0f
                                                         localRotation = ((localRotation + rotDelta) % 360f + 360f) % 360f
                                                     },
                                                     onDragEnd = {
@@ -424,7 +420,7 @@ fun EditorScreen(
                                             imageVector = Icons.Filled.RotateRight,
                                             contentDescription = "Rotate Overlay",
                                             tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
 
@@ -432,7 +428,7 @@ fun EditorScreen(
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.TopStart)
-                                            .size(36.dp)
+                                            .size(40.dp)
                                             .background(Surface2, CircleShape)
                                             .border(1.5.dp, Color.White.copy(alpha = 0.8f), CircleShape)
                                             .clickable(
@@ -448,7 +444,7 @@ fun EditorScreen(
                                             imageVector = Icons.Filled.FilterCenterFocus,
                                             contentDescription = "Reset Angle",
                                             tint = Color.White,
-                                            modifier = Modifier.size(16.dp)
+                                            modifier = Modifier.size(18.dp)
                                         )
                                     }
                                 }
@@ -533,13 +529,8 @@ fun EditorScreen(
                                                     },
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
-                                                        val rad = Math.toRadians(pip.rotation.toDouble())
-                                                        val cos = Math.cos(rad).toFloat()
-                                                        val sin = Math.sin(rad).toFloat()
-                                                        val screenDx = dragAmount.x * cos - dragAmount.y * sin
-                                                        val screenDy = dragAmount.x * sin + dragAmount.y * cos
-                                                        localPipNormX = (localPipNormX + screenDx / bw).coerceIn(0.01f, 0.99f)
-                                                        localPipNormY = (localPipNormY + screenDy / bh).coerceIn(0.01f, 0.99f)
+                                                        localPipNormX = (localPipNormX + dragAmount.x / bw).coerceIn(0.02f, 0.98f)
+                                                        localPipNormY = (localPipNormY + dragAmount.y / bh).coerceIn(0.02f, 0.98f)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
@@ -570,11 +561,11 @@ fun EditorScreen(
                                         }
                                     }
 
-                                    // Top-Right: Delete PiP button (INSIDE layout bounds, NO clipping!)
+                                    // Top-Right: Delete PiP button (40dp easy tap target)
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.TopEnd)
-                                            .size(36.dp)
+                                            .size(40.dp)
                                             .background(Color(0xFFE53935), CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
                                             .clickable(
@@ -590,7 +581,7 @@ fun EditorScreen(
                                             imageVector = Icons.Filled.Close,
                                             contentDescription = "Delete PiP",
                                             tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
 
@@ -598,7 +589,7 @@ fun EditorScreen(
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.BottomEnd)
-                                            .size(36.dp)
+                                            .size(40.dp)
                                             .background(AccentPrimary, CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
                                             .pointerInput(pip.id) {
@@ -622,7 +613,7 @@ fun EditorScreen(
                                             imageVector = Icons.Filled.OpenInFull,
                                             contentDescription = "Resize PiP",
                                             tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
 
@@ -630,14 +621,14 @@ fun EditorScreen(
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.BottomStart)
-                                            .size(36.dp)
+                                            .size(40.dp)
                                             .background(Surface3, CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
                                             .pointerInput(pip.id) {
                                                 detectDragGestures(
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
-                                                        val rotDelta = dragAmount.x * 0.8f
+                                                        val rotDelta = dragAmount.x * 1.0f
                                                         val newRot = ((pip.rotation + rotDelta) % 360f + 360f) % 360f
                                                         viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, newRot)
                                                     },
@@ -655,7 +646,7 @@ fun EditorScreen(
                                             imageVector = Icons.Filled.RotateRight,
                                             contentDescription = "Rotate PiP",
                                             tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
 
@@ -663,7 +654,7 @@ fun EditorScreen(
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.TopStart)
-                                            .size(36.dp)
+                                            .size(40.dp)
                                             .background(Surface2, CircleShape)
                                             .border(1.5.dp, Color.White.copy(alpha = 0.8f), CircleShape)
                                             .clickable(
@@ -678,7 +669,7 @@ fun EditorScreen(
                                             imageVector = Icons.Filled.FilterCenterFocus,
                                             contentDescription = "Reset PiP Angle",
                                             tint = Color.White,
-                                            modifier = Modifier.size(16.dp)
+                                            modifier = Modifier.size(18.dp)
                                         )
                                     }
                                 }
@@ -925,6 +916,8 @@ fun EditorScreen(
                 pipTracks = project?.pipTracks ?: emptyList(),
                 beatMarkers = project?.beatMarkers ?: emptyList(),
                 selectedClipId = selectedClipId,
+                selectedOverlayId = selectedOverlayId,
+                selectedPipId = selectedPipId,
                 currentPositionUs = positionUs,
                 totalDurationUs = project?.totalDurationUs ?: 0L,
                 isPlaying = isPlaying,
@@ -941,10 +934,13 @@ fun EditorScreen(
                 onTrimAudioTrack = { id, s, e -> viewModel.trimAudioTrack(id, s, e) },
                 onSelectOverlay = { overlay ->
                     selectedOverlayId = if (selectedOverlayId == overlay.id) null else overlay.id
-                    selectedTool = EditorTool.OVERLAY
+                    selectedPipId = null
                 },
                 onTrimOverlay = { id, s, e -> viewModel.trimOverlay(id, s, e) },
-                onSelectPip = { selectedTool = EditorTool.OVERLAY },
+                onSelectPip = { pip ->
+                    selectedPipId = if (selectedPipId == pip.id) null else pip.id
+                    selectedOverlayId = null
+                },
                 onTrimPip = { id, s, e -> viewModel.trimPipTrack(id, s, e) },
                 modifier = Modifier.fillMaxWidth().wrapContentHeight()
             )

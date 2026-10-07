@@ -56,6 +56,8 @@ fun TimelineView(
     pipTracks: List<PiPTrackItem> = emptyList(),
     beatMarkers: List<BeatMarker> = emptyList(),
     selectedClipId: String?,
+    selectedOverlayId: String? = null,
+    selectedPipId: String? = null,
     currentPositionUs: Long,
     totalDurationUs: Long,
     isPlaying: Boolean = false,
@@ -77,9 +79,12 @@ fun TimelineView(
     val scrollState = rememberScrollState()
 
     var zoomLevel by remember { mutableFloatStateOf(1.0f) }
-    var selectedAudioTrackId by remember { mutableStateOf<String?>(null) }
-    var selectedOverlayId by remember { mutableStateOf<String?>(null) }
-    var selectedPipId by remember { mutableStateOf<String?>(null) }
+    var internalSelectedAudioTrackId by remember { mutableStateOf<String?>(null) }
+    var internalSelectedOverlayId by remember { mutableStateOf<String?>(null) }
+    var internalSelectedPipId by remember { mutableStateOf<String?>(null) }
+
+    val activeSelectedOverlayId = selectedOverlayId ?: internalSelectedOverlayId
+    val activeSelectedPipId = selectedPipId ?: internalSelectedPipId
 
     // Dynamic scale: 1dp = usPerDp (50,000 us at 1x zoom)
     val usPerDp = 50_000f / zoomLevel
@@ -212,7 +217,7 @@ fun TimelineView(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(28.dp)
+                            .height(34.dp)
                             .background(Surface2)
                             .pointerInput(totalDurationUs, usPerDp) {
                                 detectTapGestures { offset ->
@@ -221,40 +226,54 @@ fun TimelineView(
                                 }
                             }
                     ) {
-                        val tickStepUs = (1_000_000L / zoomLevel).toLong().coerceAtLeast(500_000L)
-                        val numTicks = (totalUs / tickStepUs).toInt().coerceAtMost(300)
+                        val tickStepUs = if (zoomLevel > 1.8f) 500_000L else if (zoomLevel < 0.8f) 2_000_000L else 1_000_000L
+                        val numTicks = (totalUs / tickStepUs).toInt().coerceAtMost(400)
                         for (i in 0..numTicks) {
                             val tickUs = i * tickStepUs
                             val tickDp = (tickUs / usPerDp).dp
+                            val isMajor = (tickUs % 1_000_000L) == 0L
+                            val tickPx = with(density) { tickDp.roundToPx() }
+
+                            // Vertical notch tick line
                             Box(
                                 modifier = Modifier
-                                    .offset { IntOffset(with(density) { tickDp.roundToPx() }, 0) }
-                                    .padding(start = 2.dp, top = 4.dp)
-                            ) {
-                                val s = (tickUs / 1_000_000L)
-                                val m = s / 60
-                                val secRem = s % 60
-                                Text(
-                                    "%02d:%02d".format(m, secRem),
-                                    color = Color.White.copy(alpha = 0.45f),
-                                    fontSize = 9.sp
-                                )
+                                    .offset { IntOffset(tickPx, with(density) { (if (isMajor) 18.dp else 24.dp).roundToPx() }) }
+                                    .width(1.dp)
+                                    .height(if (isMajor) 16.dp else 10.dp)
+                                    .background(if (isMajor) Color.White.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.25f))
+                            )
+
+                            // Timestamp label on major second ticks
+                            if (isMajor) {
+                                Box(
+                                    modifier = Modifier
+                                        .offset { IntOffset(tickPx + with(density) { 3.dp.roundToPx() }, with(density) { 4.dp.roundToPx() }) }
+                                ) {
+                                    val s = (tickUs / 1_000_000L)
+                                    val m = s / 60
+                                    val secRem = s % 60
+                                    Text(
+                                        "%02d:%02d".format(m, secRem),
+                                        color = Color.White.copy(alpha = 0.70f),
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
                             }
                         }
                     }
                     HorizontalDivider(color = HairlineBorder)
 
-                    // Video Track with Trim Handles
+                    // Video Track with Trim Handles (strictly contiguous, no gap drift)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
-                            .padding(horizontal = 4.dp),
+                            .height(48.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(0.dp)
                     ) {
                         videoClips.forEach { clip ->
-                            val widthDp = (clip.effectiveDurationUs / usPerDp).coerceIn(60f, 10_000f)
+                            val widthDp = (clip.effectiveDurationUs / usPerDp).coerceIn(44f, 10_000f)
                             val durSec = String.format("%.1f", clip.effectiveDurationUs / 1_000_000f)
                             val isSelected = clip.id == selectedClipId
                             ClipBlock(
@@ -283,138 +302,156 @@ fun TimelineView(
                     }
                     HorizontalDivider(color = HairlineBorder)
 
-                    // Audio Track with Trim Handles
-                    Row(
+                    // Audio Track with Trim Handles (aligned to timelineStartUs)
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(46.dp)
-                            .padding(horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         audioTracks.forEach { a ->
-                            val widthDp = (a.effectiveDurationUs / usPerDp).coerceIn(60f, 10_000f)
+                            val startDp = (a.timelineStartUs / usPerDp).dp
+                            val widthDp = (a.effectiveDurationUs / usPerDp).coerceIn(44f, 10_000f)
                             val durSec = String.format("%.1f", a.effectiveDurationUs / 1_000_000f)
-                            val isSelected = a.id == selectedAudioTrackId
-                            ClipBlock(
-                                label = a.name.ifEmpty { "Audio" }.take(14),
-                                durationText = "${durSec}s",
-                                widthDp = widthDp,
-                                selected = isSelected,
-                                color = AudioTrackColor,
-                                onClick = {
-                                    selectedAudioTrackId = if (isSelected) null else a.id
-                                    onSelectAudioTrack?.invoke(a)
-                                },
-                                onTrimStart = { dragAmount ->
-                                    val deltaUs = (dragAmount / density.density) * usPerDp
-                                    val newStart = (a.trimStartUs + deltaUs.toLong()).coerceIn(0L, a.trimEndUs - 200_000L)
-                                    onTrimAudioTrack?.invoke(a.id, newStart, a.trimEndUs)
-                                    onSeek(a.timelineStartUs + (newStart - a.trimStartUs).coerceAtLeast(0L))
-                                },
-                                onTrimEnd = { dragAmount ->
-                                    val deltaUs = (dragAmount / density.density) * usPerDp
-                                    val maxEnd = if (a.sourceDurationUs > 0) a.sourceDurationUs else Long.MAX_VALUE
-                                    val newEnd = (a.trimEndUs + deltaUs.toLong()).coerceIn(a.trimStartUs + 200_000L, maxEnd)
-                                    onTrimAudioTrack?.invoke(a.id, a.trimStartUs, newEnd)
-                                }
-                            )
+                            val isSelected = a.id == internalSelectedAudioTrackId
+                            Box(
+                                modifier = Modifier
+                                    .offset { IntOffset(with(density) { startDp.roundToPx() }, with(density) { 3.dp.roundToPx() }) }
+                            ) {
+                                ClipBlock(
+                                    label = a.name.ifEmpty { "Audio" }.take(14),
+                                    durationText = "${durSec}s",
+                                    widthDp = widthDp,
+                                    selected = isSelected,
+                                    color = AudioTrackColor,
+                                    onClick = {
+                                        internalSelectedAudioTrackId = if (isSelected) null else a.id
+                                        onSelectAudioTrack?.invoke(a)
+                                    },
+                                    onTrimStart = { dragAmount ->
+                                        val deltaUs = (dragAmount / density.density) * usPerDp
+                                        val newStart = (a.trimStartUs + deltaUs.toLong()).coerceIn(0L, a.trimEndUs - 200_000L)
+                                        onTrimAudioTrack?.invoke(a.id, newStart, a.trimEndUs)
+                                        onSeek(a.timelineStartUs + (newStart - a.trimStartUs).coerceAtLeast(0L))
+                                    },
+                                    onTrimEnd = { dragAmount ->
+                                        val deltaUs = (dragAmount / density.density) * usPerDp
+                                        val maxEnd = if (a.sourceDurationUs > 0) a.sourceDurationUs else Long.MAX_VALUE
+                                        val newEnd = (a.trimEndUs + deltaUs.toLong()).coerceIn(a.trimStartUs + 200_000L, maxEnd)
+                                        onTrimAudioTrack?.invoke(a.id, a.trimStartUs, newEnd)
+                                    }
+                                )
+                            }
                         }
                     }
                     HorizontalDivider(color = HairlineBorder)
 
-                    // Text/Overlay Track
-                    Row(
+                    // Text/Overlay Track (aligned to timelineStartUs)
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(44.dp)
-                            .padding(horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         overlays.forEach { o ->
-                            val durUs = (o.timelineEndUs - o.timelineStartUs).coerceAtLeast(500_000L)
-                            val widthDp = (durUs / usPerDp).coerceIn(48f, 2500f)
+                            val startDp = (o.timelineStartUs / usPerDp).dp
+                            val durUs = (o.timelineEndUs - o.timelineStartUs).coerceAtLeast(200_000L)
+                            val widthDp = (durUs / usPerDp).coerceIn(44f, 5000f)
                             val durSec = String.format("%.1f", durUs / 1_000_000f)
-                            val isSelected = o.id == selectedOverlayId
-                            ClipBlock(
-                                label = o.text.ifEmpty { "Text" }.take(12),
-                                durationText = "${durSec}s",
-                                widthDp = widthDp,
-                                selected = isSelected,
-                                color = OverlayTrackColor.copy(alpha = 0.35f),
-                                onClick = {
-                                    selectedOverlayId = if (isSelected) null else o.id
-                                    onSelectOverlay?.invoke(o)
-                                },
-                                onTrimStart = { dragAmount ->
-                                    val deltaUs = (dragAmount / density.density) * usPerDp
-                                    val newStart = (o.timelineStartUs + deltaUs.toLong()).coerceIn(0L, o.timelineEndUs - 200_000L)
-                                    onTrimOverlay?.invoke(o.id, newStart, o.timelineEndUs)
-                                    onSeek(newStart)
-                                },
-                                onTrimEnd = { dragAmount ->
-                                    val deltaUs = (dragAmount / density.density) * usPerDp
-                                    val newEnd = (o.timelineEndUs + deltaUs.toLong()).coerceAtLeast(o.timelineStartUs + 200_000L)
-                                    onTrimOverlay?.invoke(o.id, o.timelineStartUs, newEnd)
-                                    onSeek(newEnd)
-                                }
-                            )
-                        }
-                    }
-
-                    // PiP Track
-                    if (pipTracks.isNotEmpty()) {
-                        HorizontalDivider(color = HairlineBorder)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp)
-                                .padding(horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            pipTracks.forEach { p ->
-                                val durUs = (p.timelineEndUs - p.timelineStartUs).coerceAtLeast(500_000L)
-                                val widthDp = (durUs / usPerDp).coerceIn(48f, 2500f)
-                                val durSec = String.format("%.1f", durUs / 1_000_000f)
-                                val isSelected = p.id == selectedPipId
+                            val isSelected = o.id == activeSelectedOverlayId
+                            Box(
+                                modifier = Modifier
+                                    .offset { IntOffset(with(density) { startDp.roundToPx() }, with(density) { 2.dp.roundToPx() }) }
+                            ) {
                                 ClipBlock(
-                                    label = p.uri.substringAfterLast('/').take(12),
+                                    label = o.text.ifEmpty { "Text" }.take(12),
                                     durationText = "${durSec}s",
                                     widthDp = widthDp,
                                     selected = isSelected,
-                                    color = AccentGold.copy(alpha = 0.4f),
+                                    color = OverlayTrackColor.copy(alpha = 0.45f),
                                     onClick = {
-                                        selectedPipId = if (isSelected) null else p.id
-                                        onSelectPip?.invoke(p)
+                                        internalSelectedOverlayId = if (isSelected) null else o.id
+                                        onSelectOverlay?.invoke(o)
                                     },
                                     onTrimStart = { dragAmount ->
                                         val deltaUs = (dragAmount / density.density) * usPerDp
-                                        val newStart = (p.timelineStartUs + deltaUs.toLong()).coerceIn(0L, p.timelineEndUs - 200_000L)
-                                        onTrimPip?.invoke(p.id, newStart, p.timelineEndUs)
+                                        val newStart = (o.timelineStartUs + deltaUs.toLong()).coerceIn(0L, o.timelineEndUs - 200_000L)
+                                        onTrimOverlay?.invoke(o.id, newStart, o.timelineEndUs)
                                         onSeek(newStart)
                                     },
                                     onTrimEnd = { dragAmount ->
                                         val deltaUs = (dragAmount / density.density) * usPerDp
-                                        val newEnd = (p.timelineEndUs + deltaUs.toLong()).coerceAtLeast(p.timelineStartUs + 200_000L)
-                                        onTrimPip?.invoke(p.id, p.timelineStartUs, newEnd)
+                                        val newEnd = (o.timelineEndUs + deltaUs.toLong()).coerceAtLeast(o.timelineStartUs + 200_000L)
+                                        onTrimOverlay?.invoke(o.id, o.timelineStartUs, newEnd)
                                         onSeek(newEnd)
                                     }
                                 )
                             }
                         }
                     }
+
+                    // PiP Track (aligned to timelineStartUs)
+                    if (pipTracks.isNotEmpty()) {
+                        HorizontalDivider(color = HairlineBorder)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                        ) {
+                            pipTracks.forEach { p ->
+                                val startDp = (p.timelineStartUs / usPerDp).dp
+                                val durUs = (p.timelineEndUs - p.timelineStartUs).coerceAtLeast(200_000L)
+                                val widthDp = (durUs / usPerDp).coerceIn(44f, 5000f)
+                                val durSec = String.format("%.1f", durUs / 1_000_000f)
+                                val isSelected = p.id == activeSelectedPipId
+                                Box(
+                                    modifier = Modifier
+                                        .offset { IntOffset(with(density) { startDp.roundToPx() }, with(density) { 2.dp.roundToPx() }) }
+                                ) {
+                                    ClipBlock(
+                                        label = p.uri.substringAfterLast('/').take(12).ifEmpty { "PiP" },
+                                        durationText = "${durSec}s",
+                                        widthDp = widthDp,
+                                        selected = isSelected,
+                                        color = AccentGold.copy(alpha = 0.40f),
+                                        onClick = {
+                                            internalSelectedPipId = if (isSelected) null else p.id
+                                            onSelectPip?.invoke(p)
+                                        },
+                                        onTrimStart = { dragAmount ->
+                                            val deltaUs = (dragAmount / density.density) * usPerDp
+                                            val newStart = (p.timelineStartUs + deltaUs.toLong()).coerceIn(0L, p.timelineEndUs - 200_000L)
+                                            onTrimPip?.invoke(p.id, newStart, p.timelineEndUs)
+                                            onSeek(newStart)
+                                        },
+                                        onTrimEnd = { dragAmount ->
+                                            val deltaUs = (dragAmount / density.density) * usPerDp
+                                            val newEnd = (p.timelineEndUs + deltaUs.toLong()).coerceAtLeast(p.timelineStartUs + 200_000L)
+                                            onTrimPip?.invoke(p.id, p.timelineStartUs, newEnd)
+                                            onSeek(newEnd)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
-                // Vertical Playhead across all tracks with explicit height
+                // Vertical Playhead across all tracks with precise height and top indicator pin
                 val trackHeights = buildList {
-                    if (beatMarkers.isNotEmpty()) add(18.dp)
+                    if (beatMarkers.isNotEmpty()) {
+                        add(18.dp)
+                        add(1.dp)
+                    }
                     add(34.dp) // timebar
+                    add(1.dp)
                     add(48.dp) // video
+                    add(1.dp)
                     add(46.dp) // audio
+                    add(1.dp)
                     add(44.dp) // text
-                    if (pipTracks.isNotEmpty()) add(44.dp) // pip
+                    if (pipTracks.isNotEmpty()) {
+                        add(1.dp)
+                        add(44.dp) // pip
+                    }
                 }
                 val totalTrackHeight = trackHeights.fold(0.dp) { acc, h -> acc + h }
                 val playheadPx = with(density) { playheadDp.toPx() }
@@ -424,7 +461,18 @@ fun TimelineView(
                         .width(2.dp)
                         .height(totalTrackHeight)
                         .background(TimelinePlayhead)
-                )
+                ) {
+                    // Precision Playhead Top Pin in the ruler
+                    Box(
+                        modifier = Modifier
+                            .offset { IntOffset(with(density) { (-4).dp.roundToPx() }, 0) }
+                            .size(10.dp, 12.dp)
+                            .background(
+                                color = TimelinePlayhead,
+                                shape = RoundedCornerShape(bottomStart = 4.dp, bottomEnd = 4.dp)
+                            )
+                    )
+                }
             }
         }
     }

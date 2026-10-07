@@ -115,7 +115,7 @@ fun SettingsScreen(
                 SecondaryButton("Clear Cache", onClick = { vm.clearCache() }, modifier = Modifier.fillMaxWidth())
             }
             SettingsSection("About") {
-                Text("ClipCut v1.2.27 (Build 38)", color = Color.White, fontSize = 12.sp)
+                Text("ClipCut v1.2.31 (Build 42)", color = Color.White, fontSize = 12.sp)
                 Spacer(Modifier.height(4.dp))
                 Text("Kotlin 2.1.20 • Compose BOM 2024.12.01 • Media3 1.5.0", color = TextSecondary, fontSize = 11.sp)
                 Spacer(Modifier.height(8.dp))
