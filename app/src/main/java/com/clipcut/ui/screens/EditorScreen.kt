@@ -32,6 +32,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.border
@@ -229,10 +231,12 @@ fun EditorScreen(
                 }
                 // Interactive Sticker / Overlay / PiP Canvas Manipulation
                 var previewBoxSize by remember { mutableStateOf(IntSize.Zero) }
+                var previewCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .onSizeChanged { previewBoxSize = it }
+                        .onGloballyPositioned { previewCoords = it }
                         .pointerInput(Unit) {
                             detectTapGestures {
                                 selectedOverlayId = null
@@ -262,6 +266,9 @@ fun EditorScreen(
                                 var localScale by remember(overlay.id) { mutableFloatStateOf(overlay.scale) }
                                 var localRotation by remember(overlay.id) { mutableFloatStateOf(overlay.rotation) }
                                 var contentSize by remember(overlay.id) { mutableStateOf(IntSize.Zero) }
+                                var rotateHandleCoords by remember(overlay.id) { mutableStateOf<LayoutCoordinates?>(null) }
+                                var rotateStartAngleDeg by remember(overlay.id) { mutableFloatStateOf(0f) }
+                                var rotateStartRotation by remember(overlay.id) { mutableFloatStateOf(0f) }
 
                                 LaunchedEffect(overlay.normalizedX, overlay.normalizedY, overlay.scale, overlay.rotation) {
                                     localNormX = overlay.normalizedX
@@ -392,19 +399,49 @@ fun EditorScreen(
                                         )
                                     }
 
-                                    // Bottom-Left: Dedicated Rotate Handle
+                                    // Bottom-Left: Dedicated Rotate Handle (360° circular follow-finger rotation)
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.BottomStart)
                                             .size(40.dp)
                                             .background(Surface3, CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
-                                            .pointerInput(overlay.id) {
+                                            .onGloballyPositioned { rotateHandleCoords = it }
+                                            .pointerInput(overlay.id, bw, bh) {
                                                 detectDragGestures(
+                                                    onDragStart = { offset ->
+                                                        selectedOverlayId = overlay.id
+                                                        rotateStartRotation = localRotation
+                                                        val touchPos = try {
+                                                            if (previewCoords?.isAttached == true && rotateHandleCoords?.isAttached == true) {
+                                                                previewCoords?.localPositionOf(rotateHandleCoords!!, offset)
+                                                            } else null
+                                                        } catch (_: Throwable) { null }
+                                                        if (touchPos != null) {
+                                                            val dx = touchPos.x - (localNormX * bw)
+                                                            val dy = touchPos.y - (localNormY * bh)
+                                                            rotateStartAngleDeg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                                                        }
+                                                    },
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
-                                                        val rotDelta = dragAmount.x * 1.0f
-                                                        localRotation = ((localRotation + rotDelta) % 360f + 360f) % 360f
+                                                        val touchPos = try {
+                                                            if (previewCoords?.isAttached == true && rotateHandleCoords?.isAttached == true) {
+                                                                previewCoords?.localPositionOf(rotateHandleCoords!!, change.position)
+                                                            } else null
+                                                        } catch (_: Throwable) { null }
+                                                        if (touchPos != null) {
+                                                            val dx = touchPos.x - (localNormX * bw)
+                                                            val dy = touchPos.y - (localNormY * bh)
+                                                            val currentAngleDeg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                                                            var deltaDeg = currentAngleDeg - rotateStartAngleDeg
+                                                            while (deltaDeg > 180f) deltaDeg -= 360f
+                                                            while (deltaDeg < -180f) deltaDeg += 360f
+                                                            localRotation = ((rotateStartRotation + deltaDeg) % 360f + 360f) % 360f
+                                                        } else {
+                                                            val rotDelta = dragAmount.x * 1.0f
+                                                            localRotation = ((localRotation + rotDelta) % 360f + 360f) % 360f
+                                                        }
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitOverlayTransform(overlay.id, localNormX, localNormY, localScale, localRotation)
@@ -481,6 +518,9 @@ fun EditorScreen(
                                 var localPipNormY by remember(pip.id) { mutableFloatStateOf(pip.normalizedY) }
                                 var localPipScale by remember(pip.id) { mutableFloatStateOf(pip.scale) }
                                 var pipContentSize by remember(pip.id) { mutableStateOf(IntSize.Zero) }
+                                var pipRotateHandleCoords by remember(pip.id) { mutableStateOf<LayoutCoordinates?>(null) }
+                                var pipRotateStartAngleDeg by remember(pip.id) { mutableFloatStateOf(0f) }
+                                var pipRotateStartRotation by remember(pip.id) { mutableFloatStateOf(0f) }
 
                                 LaunchedEffect(pip.normalizedX, pip.normalizedY, pip.scale) {
                                     localPipNormX = pip.normalizedX
@@ -617,20 +657,51 @@ fun EditorScreen(
                                         )
                                     }
 
-                                    // Bottom-Left: Dedicated Rotate handle
+                                    // Bottom-Left: Dedicated Rotate handle (360° circular follow-finger rotation)
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.BottomStart)
                                             .size(40.dp)
                                             .background(Surface3, CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
-                                            .pointerInput(pip.id) {
+                                            .onGloballyPositioned { pipRotateHandleCoords = it }
+                                            .pointerInput(pip.id, bw, bh) {
                                                 detectDragGestures(
+                                                    onDragStart = { offset ->
+                                                        selectedPipId = pip.id
+                                                        pipRotateStartRotation = pip.rotation
+                                                        val touchPos = try {
+                                                            if (previewCoords?.isAttached == true && pipRotateHandleCoords?.isAttached == true) {
+                                                                previewCoords?.localPositionOf(pipRotateHandleCoords!!, offset)
+                                                            } else null
+                                                        } catch (_: Throwable) { null }
+                                                        if (touchPos != null) {
+                                                            val dx = touchPos.x - (localPipNormX * bw)
+                                                            val dy = touchPos.y - (localPipNormY * bh)
+                                                            pipRotateStartAngleDeg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                                                        }
+                                                    },
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
-                                                        val rotDelta = dragAmount.x * 1.0f
-                                                        val newRot = ((pip.rotation + rotDelta) % 360f + 360f) % 360f
-                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, newRot)
+                                                        val touchPos = try {
+                                                            if (previewCoords?.isAttached == true && pipRotateHandleCoords?.isAttached == true) {
+                                                                previewCoords?.localPositionOf(pipRotateHandleCoords!!, change.position)
+                                                            } else null
+                                                        } catch (_: Throwable) { null }
+                                                        if (touchPos != null) {
+                                                            val dx = touchPos.x - (localPipNormX * bw)
+                                                            val dy = touchPos.y - (localPipNormY * bh)
+                                                            val currentAngleDeg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                                                            var deltaDeg = currentAngleDeg - pipRotateStartAngleDeg
+                                                            while (deltaDeg > 180f) deltaDeg -= 360f
+                                                            while (deltaDeg < -180f) deltaDeg += 360f
+                                                            val newRot = ((pipRotateStartRotation + deltaDeg) % 360f + 360f) % 360f
+                                                            viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, newRot)
+                                                        } else {
+                                                            val rotDelta = dragAmount.x * 1.0f
+                                                            val newRot = ((pip.rotation + rotDelta) % 360f + 360f) % 360f
+                                                            viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, newRot)
+                                                        }
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
