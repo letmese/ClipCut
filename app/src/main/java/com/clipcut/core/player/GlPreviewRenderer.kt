@@ -17,6 +17,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.opengl.Matrix
 import com.clipcut.core.gl.PassthroughFilter
+import com.clipcut.core.gl.OesFilter
 import com.clipcut.core.gl.PipelineRenderer
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.Project
@@ -43,6 +44,13 @@ class GlPreviewRenderer(private val context: Context) {
     private var overlayRenderer: OverlayRenderer? = null
     private var overlayFilter: GlFilter? = null
     private var oesTextureId = -1
+
+    private var pipOesTextureId = -1
+    private var pipOutputSurface: OutputSurface? = null
+    private var pipOesFilter: OesFilter? = null
+    private val pipTexMatrix = FloatArray(16)
+    @Volatile private var hasReceivedPipFrame = false
+    @Volatile private var currentPipVideoUri: String? = null
 
     private val texMatrix = FloatArray(16)
     @Volatile private var isRunning = false
@@ -95,8 +103,12 @@ class GlPreviewRenderer(private val context: Context) {
         synchronized(threadLock) { stopRenderThreadLocked() }
         if (Looper.myLooper() == Looper.getMainLooper()) {
             playerManager?.setVideoSurface(null)
+            playerManager?.setPipVideoSurface(null)
         } else {
-            mainHandler.post { playerManager?.setVideoSurface(null) }
+            mainHandler.post {
+                playerManager?.setVideoSurface(null)
+                playerManager?.setPipVideoSurface(null)
+            }
         }
     }
 
@@ -119,6 +131,10 @@ class GlPreviewRenderer(private val context: Context) {
         var filter: GlFilter? = null
         var oesTex = -1
 
+        var pipOesTex = -1
+        var pipOutSurface: OutputSurface? = null
+        var pipFilter: OesFilter? = null
+
         try {
             core = EglCore(null, EglCore.FLAG_RECORDABLE)
             eglCore = core
@@ -130,9 +146,20 @@ class GlPreviewRenderer(private val context: Context) {
             oesTextureId = oesTex
             outSurface = OutputSurface(oesTex)
             outputSurface = outSurface
+            outSurface.onFrameAvailableCallback = { isDirty = true }
 
             val os = outSurface.surface
             mainHandler.post { playerManager?.setVideoSurface(os) }
+
+            // Dedicated hardware OES texture & Surface for PiP video playback
+            pipOesTex = GlUtil.generateTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
+            pipOesTextureId = pipOesTex
+            pipOutSurface = OutputSurface(pipOesTex)
+            pipOutputSurface = pipOutSurface
+            pipOutSurface.onFrameAvailableCallback = { isDirty = true }
+
+            val pOs = pipOutSurface.surface
+            mainHandler.post { playerManager?.setPipVideoSurface(pOs) }
 
             pipe = PipelineRenderer(context).also { it.init(initialW, initialH) }
             pipeline = pipe
@@ -143,13 +170,16 @@ class GlPreviewRenderer(private val context: Context) {
             filter = PassthroughFilter().also { it.init() }
             overlayFilter = filter
 
+            pipFilter = OesFilter().also { it.init() }
+            pipOesFilter = pipFilter
+
             while (isRunning) {
                 if (requestResize) {
                     requestResize = false
                     pipe.resizeIfNeeded(resizeW, resizeH)
                 }
                 if (!paused || isDirty) {
-                    renderOnce(core, eSurface, outSurface, pipe, over, filter, oesTex)
+                    renderOnce(core, eSurface, outSurface, pipe, over, filter, oesTex, pipOutSurface, pipFilter, pipOesTex)
                 } else {
                     Thread.sleep(16)
                 }
@@ -157,20 +187,30 @@ class GlPreviewRenderer(private val context: Context) {
         } catch (t: Throwable) {
             AppLog.e(TAG, "Render thread fatal: ${t.message}", t)
         } finally {
-            mainHandler.post { playerManager?.setVideoSurface(null) }
+            mainHandler.post {
+                playerManager?.setVideoSurface(null)
+                playerManager?.setPipVideoSurface(null)
+            }
             try { filter?.release() } catch (_: Throwable) {}
+            try { pipFilter?.release() } catch (_: Throwable) {}
             try { over?.release() } catch (_: Throwable) {}
             try { pipe?.release() } catch (_: Throwable) {}
             try { outSurface?.release() } catch (_: Throwable) {}
+            try { pipOutSurface?.release() } catch (_: Throwable) {}
             if (oesTex != -1) {
                 try { GLES20.glDeleteTextures(1, intArrayOf(oesTex), 0) } catch (_: Throwable) {}
+            }
+            if (pipOesTex != -1) {
+                try { GLES20.glDeleteTextures(1, intArrayOf(pipOesTex), 0) } catch (_: Throwable) {}
             }
             try { core?.makeNothingCurrent() } catch (_: Throwable) {}
             try { core?.destroySurface(eSurface) } catch (_: Throwable) {}
             try { core?.release() } catch (_: Throwable) {}
             eglCore = null; eglSurface = null; outputSurface = null
+            pipOutputSurface = null; pipOesFilter = null; pipOesTextureId = -1
             pipeline = null; overlayRenderer = null; overlayFilter = null
             oesTextureId = -1
+            hasReceivedPipFrame = false
         }
     }
 
@@ -225,11 +265,19 @@ class GlPreviewRenderer(private val context: Context) {
 
     private fun renderOnce(
         core: EglCore, eSurface: EGLSurface, out: OutputSurface,
-        pipe: PipelineRenderer, over: OverlayRenderer, filter: GlFilter, oesTex: Int
+        pipe: PipelineRenderer, over: OverlayRenderer, filter: GlFilter, oesTex: Int,
+        pipOut: OutputSurface?, pipFilter: OesFilter?, pipOesTex: Int
     ) {
         val newFrame = out.awaitNewImage(10)
         if (newFrame) hasReceivedFirstFrame = true
-        if (!newFrame && !isDirty) { Thread.sleep(8); return }
+
+        val newPipFrame = pipOut?.awaitNewImage(2) ?: false
+        if (newPipFrame) {
+            hasReceivedPipFrame = true
+            pipOut?.getTransformMatrix(pipTexMatrix)
+        }
+
+        if (!newFrame && !newPipFrame && !isDirty) { Thread.sleep(8); return }
         isDirty = false
 
         val w = viewportWidth.coerceAtLeast(1)
@@ -265,139 +313,165 @@ class GlPreviewRenderer(private val context: Context) {
 
         val proj = project
         if (proj != null) {
+            val activeExoPip = proj.pipTracks.firstOrNull { pip ->
+                pip.uri.isNotEmpty() && (
+                    pip.uri.contains("video", ignoreCase = true) ||
+                    pip.uri.endsWith(".mp4", ignoreCase = true) ||
+                    pip.uri.endsWith(".mkv", ignoreCase = true) ||
+                    pip.uri.endsWith(".mov", ignoreCase = true) ||
+                    pip.uri.endsWith(".webm", ignoreCase = true) ||
+                    (pip.uri.startsWith("content://") && !pip.uri.contains("images", ignoreCase = true) && !pip.uri.endsWith(".png", true) && !pip.uri.endsWith(".jpg", true))
+                )
+            }
+            if (activeExoPip?.uri != currentPipVideoUri) {
+                currentPipVideoUri = activeExoPip?.uri
+                hasReceivedPipFrame = false
+            }
+
             // Render PiP Layers
             for (pip in proj.pipTracks) {
                 if (posUs in pip.timelineStartUs..pip.timelineEndUs && pip.uri.isNotEmpty()) {
                     try {
-                        val relTime = (posUs - pip.timelineStartUs) + pip.trimStartUs
                         val meta = getPipMediaMeta(pip.uri)
                         val isVideo = meta.isVideo
-                        val bucket = if (isVideo) (relTime / 125_000L).coerceAtLeast(0L) else 0L
+                        val isEditingThisPip = (pip.id == activeEditingPipId && activeEditingPipX != null)
+                        val normX = if (isEditingThisPip) activeEditingPipX!! else pip.normalizedX
+                        val normY = if (isEditingThisPip) (activeEditingPipY ?: pip.normalizedY) else pip.normalizedY
+                        val scale = if (isEditingThisPip) (activeEditingPipScale ?: pip.scale) else pip.scale
+                        val rot = if (isEditingThisPip) (activeEditingPipRotation ?: pip.rotation) else pip.rotation
 
-                        var cache = pipCaches.getOrPut(pip.id) { PipFrameCache(pip.id, pip.uri) }
-                        if (cache.uri != pip.uri) {
-                            if (cache.textureId != -1) {
-                                try { GLES20.glDeleteTextures(1, intArrayOf(cache.textureId), 0) } catch (_: Throwable) {}
-                            }
-                            cache.pendingBitmap?.recycle()
-                            cache.pendingBitmap = null
-                            cache = PipFrameCache(pip.id, pip.uri)
-                            pipCaches[pip.id] = cache
+                        val pipMvp = FloatArray(16)
+                        Matrix.setIdentityM(pipMvp, 0)
+                        val tx = (normX * 2f) - 1f
+                        val ty = 1f - (normY * 2f)
+                        Matrix.translateM(pipMvp, 0, tx, ty, 0f)
+                        if (rot != 0f) {
+                            Matrix.rotateM(pipMvp, 0, -rot, 0f, 0f, 1f)
                         }
+                        Matrix.scaleM(pipMvp, 0, scale, scale, 1f)
 
-                        // Check if a newly decoded bitmap is ready to upload to OpenGL texture
-                        val readyBmp = cache.pendingBitmap
-                        if (readyBmp != null && !readyBmp.isRecycled) {
-                            cache.pendingBitmap = null
-                            val texId = if (cache.textureId != -1) {
-                                cache.textureId
-                            } else {
-                                GlUtil.generateTexture(GLES20.GL_TEXTURE_2D).also { cache.textureId = it }
-                            }
-                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId)
-                            android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, readyBmp, 0)
-                            cache.hasValidTexture = true
-                            readyBmp.recycle()
-                        }
+                        val isExoVideoPip = (pip.id == activeExoPip?.id && hasReceivedPipFrame && pipOesTex != -1 && pipFilter != null)
 
-                        // If bucket changed and not currently decoding, submit async decode task
-                        if (cache.timestampBucket != bucket && !cache.isDecoding) {
-                            cache.isDecoding = true
-                            val decodeUri = pip.uri
-                            val targetBucket = bucket
-                            val targetRelTime = relTime
-                            val pipId = pip.id
-                            pipDecodeExecutor.execute {
-                                try {
-                                    val itemMeta = getPipMediaMeta(decodeUri)
-                                    val bmp = if (itemMeta.isVideo) {
-                                        val retr = getPipRetriever(decodeUri)
-                                        try {
-                                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 &&
-                                                itemMeta.scaledWidth > 0 && itemMeta.scaledHeight > 0
-                                            ) {
-                                                retr?.getScaledFrameAtTime(
-                                                    targetRelTime,
-                                                    MediaMetadataRetriever.OPTION_CLOSEST,
-                                                    itemMeta.scaledWidth,
-                                                    itemMeta.scaledHeight
-                                                ) ?: retr?.getFrameAtTime(targetRelTime, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                                            } else {
-                                                retr?.getFrameAtTime(targetRelTime, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                                            }
-                                        } catch (_: Throwable) { null }
-                                    } else {
-                                        try {
-                                            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                                            if (decodeUri.startsWith("content://")) {
-                                                context.contentResolver.openInputStream(Uri.parse(decodeUri))?.use {
-                                                    BitmapFactory.decodeStream(it, null, options)
-                                                }
-                                            } else {
-                                                val path = if (decodeUri.startsWith("file://")) Uri.parse(decodeUri).path ?: decodeUri.removePrefix("file://") else decodeUri
-                                                BitmapFactory.decodeFile(path, options)
-                                            }
-                                            val maxDim = maxOf(options.outWidth, options.outHeight).coerceAtLeast(1)
-                                            var sampleSize = 1
-                                            while (maxDim / (sampleSize * 2) >= 480) {
-                                                sampleSize *= 2
-                                            }
-                                            val decodeOptions = BitmapFactory.Options().apply {
-                                                inSampleSize = sampleSize
-                                                inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
-                                            }
-                                            if (decodeUri.startsWith("content://")) {
-                                                context.contentResolver.openInputStream(Uri.parse(decodeUri))?.use {
-                                                    BitmapFactory.decodeStream(it, null, decodeOptions)
-                                                }
-                                            } else {
-                                                val path = if (decodeUri.startsWith("file://")) Uri.parse(decodeUri).path ?: decodeUri.removePrefix("file://") else decodeUri
-                                                BitmapFactory.decodeFile(path, decodeOptions)
-                                            }
-                                        } catch (_: Throwable) { null }
-                                    }
-
-                                    val targetCache = pipCaches[pipId]
-                                    if (targetCache != null && targetCache.uri == decodeUri) {
-                                        targetCache.pendingBitmap?.recycle()
-                                        targetCache.pendingBitmap = bmp
-                                        targetCache.timestampBucket = if (itemMeta.isVideo) targetBucket else Long.MAX_VALUE
-                                        isDirty = true
-                                    } else {
-                                        bmp?.recycle()
-                                    }
-                                } catch (t: Throwable) {
-                                    AppLog.w(TAG, "Async PiP frame decode failed: ${t.message}")
-                                } finally {
-                                    pipCaches[pipId]?.isDecoding = false
-                                }
-                            }
-                        }
-
-                        val pipTexId = cache.textureId
-                        // Draw PiP layer with live or persisted transform
-                        if (pipTexId != -1 && cache.hasValidTexture) {
-                            val isEditingThisPip = (pip.id == activeEditingPipId && activeEditingPipX != null)
-                            val normX = if (isEditingThisPip) activeEditingPipX!! else pip.normalizedX
-                            val normY = if (isEditingThisPip) (activeEditingPipY ?: pip.normalizedY) else pip.normalizedY
-                            val scale = if (isEditingThisPip) (activeEditingPipScale ?: pip.scale) else pip.scale
-                            val rot = if (isEditingThisPip) (activeEditingPipRotation ?: pip.rotation) else pip.rotation
-
-                            val pipMvp = FloatArray(16)
-                            Matrix.setIdentityM(pipMvp, 0)
-                            val tx = (normX * 2f) - 1f
-                            val ty = 1f - (normY * 2f)
-                            Matrix.translateM(pipMvp, 0, tx, ty, 0f)
-                            if (rot != 0f) {
-                                Matrix.rotateM(pipMvp, 0, -rot, 0f, 0f, 1f)
-                            }
-                            Matrix.scaleM(pipMvp, 0, scale, scale, 1f)
-
+                        if (isExoVideoPip) {
+                            // Hardware-accelerated 60 FPS playback via OES texture direct from ExoPlayer MediaCodec
                             GLES20.glEnable(GLES20.GL_BLEND)
                             GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-                            // Apply FLIP_Y_MATRIX to texture matrix so the bitmap renders right-side up!
-                            filter.draw(pipTexId, GlUtil.FLIP_Y_MATRIX, pipMvp, w, h)
+                            pipFilter!!.draw(pipOesTex, pipTexMatrix, pipMvp, w, h, GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
                             GLES20.glDisable(GLES20.GL_BLEND)
+                        } else {
+                            // Fallback: 2D texture cache for image overlays/stickers or initial poster frame
+                            val relTime = (posUs - pip.timelineStartUs) + pip.trimStartUs
+                            val bucket = if (isVideo) (relTime / 125_000L).coerceAtLeast(0L) else 0L
+
+                            var cache = pipCaches.getOrPut(pip.id) { PipFrameCache(pip.id, pip.uri) }
+                            if (cache.uri != pip.uri) {
+                                if (cache.textureId != -1) {
+                                    try { GLES20.glDeleteTextures(1, intArrayOf(cache.textureId), 0) } catch (_: Throwable) {}
+                                }
+                                cache.pendingBitmap?.recycle()
+                                cache.pendingBitmap = null
+                                cache = PipFrameCache(pip.id, pip.uri)
+                                pipCaches[pip.id] = cache
+                            }
+
+                            // Check if a newly decoded bitmap is ready to upload to OpenGL texture
+                            val readyBmp = cache.pendingBitmap
+                            if (readyBmp != null && !readyBmp.isRecycled) {
+                                cache.pendingBitmap = null
+                                val texId = if (cache.textureId != -1) {
+                                    cache.textureId
+                                } else {
+                                    GlUtil.generateTexture(GLES20.GL_TEXTURE_2D).also { cache.textureId = it }
+                                }
+                                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId)
+                                android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, readyBmp, 0)
+                                cache.hasValidTexture = true
+                                readyBmp.recycle()
+                            }
+
+                            // Only submit decode if not video or if video has no valid texture yet
+                            val shouldDecode = !isVideo || (!hasReceivedPipFrame && !cache.hasValidTexture)
+                            if (shouldDecode && cache.timestampBucket != bucket && !cache.isDecoding) {
+                                cache.isDecoding = true
+                                val decodeUri = pip.uri
+                                val targetBucket = bucket
+                                val targetRelTime = relTime
+                                val pipId = pip.id
+                                pipDecodeExecutor.execute {
+                                    try {
+                                        val itemMeta = getPipMediaMeta(decodeUri)
+                                        val bmp = if (itemMeta.isVideo) {
+                                            val retr = getPipRetriever(decodeUri)
+                                            try {
+                                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 &&
+                                                    itemMeta.scaledWidth > 0 && itemMeta.scaledHeight > 0
+                                                ) {
+                                                    retr?.getScaledFrameAtTime(
+                                                        targetRelTime,
+                                                        MediaMetadataRetriever.OPTION_CLOSEST,
+                                                        itemMeta.scaledWidth,
+                                                        itemMeta.scaledHeight
+                                                    ) ?: retr?.getFrameAtTime(targetRelTime, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                                                } else {
+                                                    retr?.getFrameAtTime(targetRelTime, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                                                }
+                                            } catch (_: Throwable) { null }
+                                        } else {
+                                            try {
+                                                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                                if (decodeUri.startsWith("content://")) {
+                                                    context.contentResolver.openInputStream(Uri.parse(decodeUri))?.use {
+                                                        BitmapFactory.decodeStream(it, null, options)
+                                                    }
+                                                } else {
+                                                    val path = if (decodeUri.startsWith("file://")) Uri.parse(decodeUri).path ?: decodeUri.removePrefix("file://") else decodeUri
+                                                    BitmapFactory.decodeFile(path, options)
+                                                }
+                                                val maxDim = maxOf(options.outWidth, options.outHeight).coerceAtLeast(1)
+                                                var sampleSize = 1
+                                                while (maxDim / (sampleSize * 2) >= 480) {
+                                                    sampleSize *= 2
+                                                }
+                                                val decodeOptions = BitmapFactory.Options().apply {
+                                                    inSampleSize = sampleSize
+                                                    inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+                                                }
+                                                if (decodeUri.startsWith("content://")) {
+                                                    context.contentResolver.openInputStream(Uri.parse(decodeUri))?.use {
+                                                        BitmapFactory.decodeStream(it, null, decodeOptions)
+                                                    }
+                                                } else {
+                                                    val path = if (decodeUri.startsWith("file://")) Uri.parse(decodeUri).path ?: decodeUri.removePrefix("file://") else decodeUri
+                                                    BitmapFactory.decodeFile(path, decodeOptions)
+                                                }
+                                            } catch (_: Throwable) { null }
+                                        }
+
+                                        val targetCache = pipCaches[pipId]
+                                        if (targetCache != null && targetCache.uri == decodeUri) {
+                                            targetCache.pendingBitmap?.recycle()
+                                            targetCache.pendingBitmap = bmp
+                                            targetCache.timestampBucket = if (itemMeta.isVideo) targetBucket else Long.MAX_VALUE
+                                            isDirty = true
+                                        } else {
+                                            bmp?.recycle()
+                                        }
+                                    } catch (t: Throwable) {
+                                        AppLog.w(TAG, "Async PiP frame decode failed: ${t.message}")
+                                    } finally {
+                                        pipCaches[pipId]?.isDecoding = false
+                                    }
+                                }
+                            }
+
+                            val pipTexId = cache.textureId
+                            // Draw PiP layer with live or persisted transform
+                            if (pipTexId != -1 && cache.hasValidTexture) {
+                                GLES20.glEnable(GLES20.GL_BLEND)
+                                GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+                                filter.draw(pipTexId, GlUtil.FLIP_Y_MATRIX, pipMvp, w, h)
+                                GLES20.glDisable(GLES20.GL_BLEND)
+                            }
                         }
                     } catch (t: Throwable) {
                         AppLog.w(TAG, "PiP preview frame error: ${t.message}")

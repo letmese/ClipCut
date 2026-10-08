@@ -137,9 +137,11 @@ class OutputSurface(val textureId: Int) : SurfaceTexture.OnFrameAvailableListene
     @Volatile private var frameAvailable = false
     @Volatile private var released = false
     private val lock = Object()
+    var onFrameAvailableCallback: (() -> Unit)? = null
 
     override fun onFrameAvailable(st: SurfaceTexture) {
         synchronized(lock) { frameAvailable = true; lock.notifyAll() }
+        onFrameAvailableCallback?.invoke()
     }
 
     fun awaitNewImage(timeoutMs: Long = 1000): Boolean {

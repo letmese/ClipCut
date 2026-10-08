@@ -25,6 +25,16 @@ private data class AudioTrackPlayerItem(
     var trimEndUs: Long
 )
 
+private data class PipVideoPlayerItem(
+    val id: String,
+    val player: ExoPlayer,
+    var timelineStartUs: Long,
+    var timelineEndUs: Long,
+    var uri: String,
+    var trimStartUs: Long,
+    var trimEndUs: Long
+)
+
 /**
  * PreviewPlayerManager — wraps a single ExoPlayer instance for preview.
  *
@@ -59,6 +69,13 @@ class PreviewPlayerManager(private val context: Context) {
     @Volatile private var audioDuckLevel: Float = 0.3f
 
     private val audioTrackPlayers = mutableListOf<AudioTrackPlayerItem>()
+    private var pipVideoPlayer: PipVideoPlayerItem? = null
+    @Volatile private var pipVideoSurface: android.view.Surface? = null
+
+    fun setPipVideoSurface(surface: android.view.Surface?) = runOnMainThread {
+        pipVideoSurface = surface
+        pipVideoPlayer?.player?.setVideoSurface(surface)
+    }
 
     init {
         initialize()
@@ -128,6 +145,30 @@ class PreviewPlayerManager(private val context: Context) {
                                     } else {
                                         val actualPos = item.player.currentPosition
                                         if (Math.abs(actualPos - relTimeMs) > 250) {
+                                            item.player.seekTo(relTimeMs)
+                                        }
+                                    }
+                                } else {
+                                    if (item.player.isPlaying) item.player.pause()
+                                }
+                            } else {
+                                if (item.player.isPlaying) item.player.pause()
+                            }
+                        } catch (_: Throwable) {}
+                    }
+
+                    // Synchronize PiP video player with current timeline position
+                    pipVideoPlayer?.let { item ->
+                        try {
+                            if (currentPosUs in item.timelineStartUs until item.timelineEndUs) {
+                                val relTimeMs = ((currentPosUs - item.timelineStartUs + item.trimStartUs) / 1000L).coerceAtLeast(0L)
+                                if (isPlayingNow) {
+                                    if (!item.player.isPlaying) {
+                                        item.player.seekTo(relTimeMs)
+                                        item.player.play()
+                                    } else {
+                                        val actualPos = item.player.currentPosition
+                                        if (Math.abs(actualPos - relTimeMs) > 200) {
                                             item.player.seekTo(relTimeMs)
                                         }
                                     }
@@ -319,6 +360,76 @@ class PreviewPlayerManager(private val context: Context) {
                     }
                 }
             }
+
+            // Reconcile PiP video player with project.pipTracks
+            val firstVideoPip = project.pipTracks.firstOrNull { pip ->
+                pip.uri.isNotEmpty() && (
+                    pip.uri.contains("video", ignoreCase = true) ||
+                    pip.uri.endsWith(".mp4", ignoreCase = true) ||
+                    pip.uri.endsWith(".mkv", ignoreCase = true) ||
+                    pip.uri.endsWith(".mov", ignoreCase = true) ||
+                    pip.uri.endsWith(".webm", ignoreCase = true) ||
+                    (pip.uri.startsWith("content://") && !pip.uri.contains("images", ignoreCase = true) && !pip.uri.endsWith(".png", true) && !pip.uri.endsWith(".jpg", true) && !pip.uri.endsWith(".jpeg", true) && !pip.uri.endsWith(".webp", true))
+                )
+            }
+
+            if (firstVideoPip != null) {
+                val currentPip = pipVideoPlayer
+                if (currentPip == null) {
+                    try {
+                        val p = ExoPlayer.Builder(context)
+                            .setLooper(Looper.getMainLooper())
+                            .build()
+                        p.setVideoSurface(pipVideoSurface)
+                        p.volume = firstVideoPip.volume
+                        val clippingBuilder = MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs((firstVideoPip.trimStartUs / 1000L).coerceAtLeast(0L))
+                        if (firstVideoPip.trimEndUs > firstVideoPip.trimStartUs) {
+                            clippingBuilder.setEndPositionMs((firstVideoPip.trimEndUs / 1000L).coerceAtLeast(firstVideoPip.trimStartUs / 1000L + 1L))
+                        }
+                        val mi = MediaItem.Builder()
+                            .setUri(firstVideoPip.uri)
+                            .setClippingConfiguration(clippingBuilder.build())
+                            .build()
+                        p.setMediaItem(mi)
+                        p.prepare()
+                        pipVideoPlayer = PipVideoPlayerItem(
+                            id = firstVideoPip.id,
+                            player = p,
+                            timelineStartUs = firstVideoPip.timelineStartUs,
+                            timelineEndUs = firstVideoPip.timelineEndUs,
+                            uri = firstVideoPip.uri,
+                            trimStartUs = firstVideoPip.trimStartUs,
+                            trimEndUs = firstVideoPip.trimEndUs
+                        )
+                    } catch (t: Throwable) {
+                        AppLog.w(TAG, "Failed creating pip player for ${firstVideoPip.uri}", t)
+                    }
+                } else {
+                    currentPip.timelineStartUs = firstVideoPip.timelineStartUs
+                    currentPip.timelineEndUs = firstVideoPip.timelineEndUs
+                    currentPip.player.volume = firstVideoPip.volume
+                    if (currentPip.uri != firstVideoPip.uri || currentPip.trimStartUs != firstVideoPip.trimStartUs || currentPip.trimEndUs != firstVideoPip.trimEndUs) {
+                        currentPip.uri = firstVideoPip.uri
+                        currentPip.trimStartUs = firstVideoPip.trimStartUs
+                        currentPip.trimEndUs = firstVideoPip.trimEndUs
+                        val clippingBuilder = MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs((firstVideoPip.trimStartUs / 1000L).coerceAtLeast(0L))
+                        if (firstVideoPip.trimEndUs > firstVideoPip.trimStartUs) {
+                            clippingBuilder.setEndPositionMs((firstVideoPip.trimEndUs / 1000L).coerceAtLeast(firstVideoPip.trimStartUs / 1000L + 1L))
+                        }
+                        val mi = MediaItem.Builder()
+                            .setUri(firstVideoPip.uri)
+                            .setClippingConfiguration(clippingBuilder.build())
+                            .build()
+                        currentPip.player.setMediaItem(mi)
+                        currentPip.player.prepare()
+                    }
+                }
+            } else {
+                try { pipVideoPlayer?.player?.release() } catch (_: Throwable) {}
+                pipVideoPlayer = null
+            }
         }
     }
 
@@ -337,6 +448,17 @@ class PreviewPlayerManager(private val context: Context) {
                 }
             } catch (_: Throwable) {}
         }
+        pipVideoPlayer?.let { item ->
+            try {
+                if (currentUs in item.timelineStartUs until item.timelineEndUs) {
+                    val relTimeMs = ((currentUs - item.timelineStartUs + item.trimStartUs) / 1000L).coerceAtLeast(0L)
+                    item.player.seekTo(relTimeMs)
+                    item.player.play()
+                } else {
+                    item.player.pause()
+                }
+            } catch (_: Throwable) {}
+        }
     }
 
     fun pause() = runOnMainThread {
@@ -344,6 +466,9 @@ class PreviewPlayerManager(private val context: Context) {
         player?.pause()
         for (item in audioTrackPlayers) {
             try { item.player.pause() } catch (_: Throwable) {}
+        }
+        pipVideoPlayer?.let {
+            try { it.player.pause() } catch (_: Throwable) {}
         }
     }
 
@@ -386,6 +511,19 @@ class PreviewPlayerManager(private val context: Context) {
             } catch (_: Throwable) {}
         }
 
+        pipVideoPlayer?.let { item ->
+            try {
+                if (targetTimelineUs in item.timelineStartUs until item.timelineEndUs) {
+                    val relTimeMs = ((targetTimelineUs - item.timelineStartUs + item.trimStartUs) / 1000L).coerceAtLeast(0L)
+                    item.player.seekTo(relTimeMs)
+                    if (_isPlaying.value) item.player.play() else item.player.pause()
+                } else {
+                    item.player.pause()
+                    item.player.seekTo(0L)
+                }
+            } catch (_: Throwable) {}
+        }
+
         _positionUs.value = targetTimelineUs
         onSeek?.invoke(targetTimelineUs)
     }
@@ -402,6 +540,8 @@ class PreviewPlayerManager(private val context: Context) {
             try { item.player.release() } catch (t: Throwable) { AppLog.w(TAG, "audioTrackPlayer.release", t) }
         }
         audioTrackPlayers.clear()
+        try { pipVideoPlayer?.player?.release() } catch (t: Throwable) { AppLog.w(TAG, "pipVideoPlayer.release", t) }
+        pipVideoPlayer = null
         lastClipsFingerprint = null
         _isPlaying.value = false
     }
