@@ -4,13 +4,16 @@ import android.content.Context
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.os.Build
 import android.view.Surface
 import com.clipcut.core.gl.FramebufferTexture
 import com.clipcut.core.gl.GlUtil
 import com.clipcut.core.gl.InputSurface
+import com.clipcut.core.gl.OesFilter
 import com.clipcut.core.gl.OutputSurface
 import com.clipcut.core.gl.OverlayRenderer
 import com.clipcut.core.gl.PassthroughFilter
@@ -18,6 +21,7 @@ import com.clipcut.core.gl.PipelineRenderer
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.ExportConfig
 import com.clipcut.core.model.MediaType
+import com.clipcut.core.model.PiPTrackItem
 import com.clipcut.core.model.Project
 import com.clipcut.core.model.TimelineItem
 import kotlinx.coroutines.Dispatchers
@@ -81,6 +85,37 @@ class ExportEngine(
         }
     }
 
+    private class ExportPipSession(
+        val pip: PiPTrackItem,
+        val isVideo: Boolean,
+        var imageTexId: Int = -1,
+        var videoDecoder: VideoDecoder? = null,
+        var outputSurface: OutputSurface? = null,
+        var oesTexId: Int = -1,
+        var lastDecodedPtsUs: Long = -1L,
+        val texMatrix: FloatArray = FloatArray(16)
+    )
+
+    private fun isVideoUri(uriStr: String): Boolean {
+        if (uriStr.endsWith(".png", true) || uriStr.endsWith(".jpg", true) ||
+            uriStr.endsWith(".jpeg", true) || uriStr.endsWith(".webp", true)) {
+            return false
+        }
+        if (uriStr.endsWith(".mp4", true) || uriStr.endsWith(".mkv", true) ||
+            uriStr.endsWith(".mov", true) || uriStr.endsWith(".webm", true) ||
+            uriStr.contains("video", true)) {
+            return true
+        }
+        return try {
+            val retr = getPipRetriever(uriStr)
+            val hasVideo = retr?.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) != null
+            val mime = retr?.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_MIMETYPE) ?: ""
+            hasVideo || mime.startsWith("video/")
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     fun cancel() {
         AppLog.w(tag, "cancel requested")
         cancelled = true
@@ -113,6 +148,8 @@ class ExportEngine(
         var enc: VideoEncoder? = null
         var surface: InputSurface? = null
         var mux: MediaMuxerWrapper? = null
+        val pipSessions = mutableMapOf<String, ExportPipSession>()
+        var pipOesFilter: OesFilter? = null
 
         try {
             val totalUs = project.totalDurationUs.coerceAtLeast(1L)
@@ -150,6 +187,71 @@ class ExportEngine(
             overlayRenderer = OverlayRenderer(context).also { it.init() }
             passthrough = PassthroughFilter().also { it.init() }
 
+            // Pre-initialize PiP sessions (hardware video decoders and cached image textures)
+            if (project.pipTracks.isNotEmpty()) {
+                val hasVideoPip = project.pipTracks.any { isVideoUri(it.uri) }
+                if (hasVideoPip) {
+                    try {
+                        pipOesFilter = OesFilter().also { it.init() }
+                    } catch (t: Throwable) {
+                        AppLog.w(tag, "Failed to init pipOesFilter: ${t.message}")
+                    }
+                }
+
+                for (pip in project.pipTracks) {
+                    if (pip.uri.isEmpty()) continue
+                    val isVid = isVideoUri(pip.uri)
+                    if (isVid) {
+                        try {
+                            val oesTex = GlUtil.generateTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
+                            val outSurface = OutputSurface(oesTex)
+                            val dummyClip = TimelineItem(
+                                uri = pip.uri,
+                                trimStartUs = pip.trimStartUs,
+                                trimEndUs = pip.trimEndUs
+                            )
+                            val dec = VideoDecoder(context, dummyClip, outSurface).also {
+                                it.init()
+                                if (pip.trimStartUs > 0) it.seekTo(pip.trimStartUs)
+                            }
+                            pipSessions[pip.id] = ExportPipSession(
+                                pip = pip,
+                                isVideo = true,
+                                oesTexId = oesTex,
+                                outputSurface = outSurface,
+                                videoDecoder = dec
+                            )
+                        } catch (t: Throwable) {
+                            AppLog.w(tag, "Failed hardware VideoDecoder for PiP ${pip.uri}: ${t.message}")
+                        }
+                    } else {
+                        // Pre-cache image into GL texture once
+                        try {
+                            val bmp = if (pip.uri.startsWith("content://") || pip.uri.startsWith("file://")) {
+                                context.contentResolver.openInputStream(Uri.parse(pip.uri))?.use {
+                                    BitmapFactory.decodeStream(it)
+                                }
+                            } else {
+                                BitmapFactory.decodeFile(pip.uri)
+                            }
+                            if (bmp != null) {
+                                val imgTex = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
+                                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, imgTex)
+                                android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
+                                bmp.recycle()
+                                pipSessions[pip.id] = ExportPipSession(
+                                    pip = pip,
+                                    isVideo = false,
+                                    imageTexId = imgTex
+                                )
+                            }
+                        } catch (t: Throwable) {
+                            AppLog.w(tag, "Failed to pre-cache image PiP: ${pip.uri}", t)
+                        }
+                    }
+                }
+            }
+
             onProgress(0.05f, "Encoder initialised")
 
             var progressUs = 0L
@@ -161,13 +263,14 @@ class ExportEngine(
                     pipeline = pipeline,
                     overlayRenderer = overlayRenderer,
                     passthrough = passthrough,
+                    pipSessions = pipSessions,
+                    pipOesFilter = pipOesFilter,
                     onProgress = onProgress,
                     totalUs = totalUs,
                     progressUs = progressUs,
                     lastPtsNs = lastPtsNs
                 )
                 progressUs += clip.effectiveDurationUs
-                onProgress(0.05f + 0.85f * (progressUs.toFloat() / totalUs), "Clip ${clip.id.take(8)} done")
             }
 
             // Drain encoder EoS
@@ -175,7 +278,7 @@ class ExportEngine(
 
             // Audio
             if (hasAudio && !cancelled) {
-                onProgress(0.90f, "Muxing audio")
+                onProgress(0.92f, "Processing audio")
                 val ap = AudioProcessor(context, project, config)
                 ap.processAudio(mux, totalUs) { /* per-clip audio progress */ }
             }
@@ -200,6 +303,18 @@ class ExportEngine(
             try { mux?.stopAndRelease() } catch (_: Throwable) {}
             Result.failure(t)
         } finally {
+            for (sess in pipSessions.values) {
+                try { sess.videoDecoder?.release() } catch (_: Throwable) {}
+                try { sess.outputSurface?.release() } catch (_: Throwable) {}
+                if (sess.oesTexId != -1) {
+                    try { GLES20.glDeleteTextures(1, intArrayOf(sess.oesTexId), 0) } catch (_: Throwable) {}
+                }
+                if (sess.imageTexId != -1) {
+                    try { GLES20.glDeleteTextures(1, intArrayOf(sess.imageTexId), 0) } catch (_: Throwable) {}
+                }
+            }
+            pipSessions.clear()
+            try { pipOesFilter?.release() } catch (_: Throwable) {}
             for (r in pipRetrievers.values) {
                 try { r.release() } catch (_: Throwable) {}
             }
@@ -215,6 +330,8 @@ class ExportEngine(
         pipeline: PipelineRenderer,
         overlayRenderer: OverlayRenderer,
         passthrough: PassthroughFilter,
+        pipSessions: Map<String, ExportPipSession>,
+        pipOesFilter: OesFilter?,
         onProgress: (Float, String) -> Unit,
         totalUs: Long,
         progressUs: Long,
@@ -257,6 +374,12 @@ class ExportEngine(
                     val timelineOffsetUs = (i * 1_000_000L / config.frameRate)
                     val timelinePtsUs = progressUs + timelineOffsetUs
 
+                    if (i % 8 == 0) {
+                        val p = 0.05f + 0.85f * (timelinePtsUs.toFloat() / totalUs.toFloat()).coerceIn(0f, 1f)
+                        val pct = (p * 100).toInt()
+                        onProgress(p, "Exporting ($pct%)")
+                    }
+
                     val transProgress = if (clip.transitionType != com.clipcut.core.model.TransitionType.NONE && clip.transitionDurationUs > 0) {
                         (timelineOffsetUs.toFloat() / clip.transitionDurationUs.toFloat()).coerceIn(0f, 1f)
                     } else 0f
@@ -271,7 +394,7 @@ class ExportEngine(
                         prevClipTexId = if (hasPrevClip) prevClipFbo?.textureId else null
                     )
 
-                    renderPiPAndOverlays(timelinePtsUs, passthrough, overlayRenderer)
+                    renderPiPAndOverlays(timelinePtsUs, passthrough, overlayRenderer, pipSessions, pipOesFilter)
 
                     val ptsNs = timelinePtsUs * 1000L
                     currentLastPtsNs = if (ptsNs > currentLastPtsNs) ptsNs else currentLastPtsNs + 1_000L
@@ -298,12 +421,13 @@ class ExportEngine(
             }
 
             val texMatrix = FloatArray(16)
+            var frameCount = 0
 
             while (true) {
                 if (cancelled) break
-                val pts = dec.decodeNextFrame(timeoutUs = 20_000L)
+                val pts = dec.decodeNextFrame(timeoutUs = 2_500L)
                 if (pts < 0) break
-                if (!outputSurface.awaitNewImage(timeoutMs = 500)) continue
+                if (!outputSurface.awaitNewImage(timeoutMs = 200)) continue
 
                 if (pts < trimStart) continue
                 if (pts > trimEnd) break
@@ -311,6 +435,13 @@ class ExportEngine(
                 val sourceOffsetUs = (pts - trimStart).coerceAtLeast(0L)
                 val timelineOffsetUs = SpeedRampProcessor.sourceToTimeline(sourceOffsetUs, clip.speedRamp, clip.speed)
                 val timelinePtsUs = progressUs + timelineOffsetUs
+
+                frameCount++
+                if (frameCount % 8 == 0) {
+                    val p = 0.05f + 0.85f * (timelinePtsUs.toFloat() / totalUs.toFloat()).coerceIn(0f, 1f)
+                    val pct = (p * 100).toInt()
+                    onProgress(p, "Exporting ($pct%)")
+                }
 
                 outputSurface.getTransformMatrix(texMatrix)
 
@@ -328,7 +459,7 @@ class ExportEngine(
                     prevClipTexId = if (hasPrevClip) prevClipFbo?.textureId else null
                 )
 
-                renderPiPAndOverlays(timelinePtsUs, passthrough, overlayRenderer)
+                renderPiPAndOverlays(timelinePtsUs, passthrough, overlayRenderer, pipSessions, pipOesFilter)
 
                 val ptsNs = timelinePtsUs * 1000L
                 currentLastPtsNs = if (ptsNs > currentLastPtsNs) ptsNs else currentLastPtsNs + 1_000L
@@ -367,6 +498,12 @@ class ExportEngine(
                     val timelineOffsetUs = (i * 1_000_000L / config.frameRate)
                     val timelinePtsUs = progressUs + timelineOffsetUs
 
+                    if (i % 8 == 0) {
+                        val p = 0.05f + 0.85f * (timelinePtsUs.toFloat() / totalUs.toFloat()).coerceIn(0f, 1f)
+                        val pct = (p * 100).toInt()
+                        onProgress(p, "Exporting ($pct%)")
+                    }
+
                     val transProgress = if (clip.transitionType != com.clipcut.core.model.TransitionType.NONE && clip.transitionDurationUs > 0) {
                         (timelineOffsetUs.toFloat() / clip.transitionDurationUs.toFloat()).coerceIn(0f, 1f)
                     } else 0f
@@ -381,7 +518,7 @@ class ExportEngine(
                         prevClipTexId = if (hasPrevClip) prevClipFbo?.textureId else null
                     )
 
-                    renderPiPAndOverlays(timelinePtsUs, passthrough, overlayRenderer)
+                    renderPiPAndOverlays(timelinePtsUs, passthrough, overlayRenderer, pipSessions, pipOesFilter)
 
                     val ptsNs = timelinePtsUs * 1000L
                     currentLastPtsNs = if (ptsNs > currentLastPtsNs) ptsNs else currentLastPtsNs + 1_000L
@@ -418,56 +555,66 @@ class ExportEngine(
     private fun renderPiPAndOverlays(
         timelinePtsUs: Long,
         passthrough: PassthroughFilter,
-        overlayRenderer: OverlayRenderer
+        overlayRenderer: OverlayRenderer,
+        pipSessions: Map<String, ExportPipSession>,
+        pipOesFilter: OesFilter?
     ) {
-
         // 1. PiP layers
         for (pip in project.pipTracks) {
             if (timelinePtsUs in pip.timelineStartUs..pip.timelineEndUs && pip.uri.isNotEmpty()) {
                 try {
-                    val pipBmp = if (pip.uri.startsWith("content://")) {
-                        val retr = getPipRetriever(pip.uri)
-                        val relTime = (timelinePtsUs - pip.timelineStartUs) + pip.trimStartUs
-                        val videoFrame = try {
-                            retr?.getFrameAtTime(relTime, android.media.MediaMetadataRetriever.OPTION_CLOSEST)
-                        } catch (_: Throwable) { null }
-                        videoFrame ?: run {
-                            try {
-                                context.contentResolver.openInputStream(Uri.parse(pip.uri))?.use {
-                                    android.graphics.BitmapFactory.decodeStream(it)
+                    val pipMvp = FloatArray(16)
+                    android.opengl.Matrix.setIdentityM(pipMvp, 0)
+                    val tx = (pip.normalizedX * 2f) - 1f
+                    val ty = 1f - (pip.normalizedY * 2f)
+                    android.opengl.Matrix.translateM(pipMvp, 0, tx, ty, 0f)
+                    if (pip.rotation != 0f) {
+                        android.opengl.Matrix.rotateM(pipMvp, 0, -pip.rotation, 0f, 0f, 1f)
+                    }
+                    android.opengl.Matrix.scaleM(pipMvp, 0, pip.scale, pip.scale, 1f)
+
+                    val session = pipSessions[pip.id]
+                    if (session != null) {
+                        if (session.isVideo && session.videoDecoder != null && session.outputSurface != null && pipOesFilter != null) {
+                            val relTimeUs = (timelinePtsUs - pip.timelineStartUs) + pip.trimStartUs
+                            val dec = session.videoDecoder!!
+                            val outSurf = session.outputSurface!!
+                            while (session.lastDecodedPtsUs < relTimeUs) {
+                                val pts = dec.decodeNextFrame(timeoutUs = 2_500L)
+                                if (pts < 0) break
+                                if (outSurf.awaitNewImage(timeoutMs = 50)) {
+                                    session.lastDecodedPtsUs = pts
+                                    outSurf.getTransformMatrix(session.texMatrix)
                                 }
-                            } catch (_: Throwable) { null }
+                            }
+                            GLES20.glEnable(GLES20.GL_BLEND)
+                            GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+                            pipOesFilter.draw(session.oesTexId, session.texMatrix, pipMvp, config.width, config.height, GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
+                            GLES20.glDisable(GLES20.GL_BLEND)
+                        } else if (!session.isVideo && session.imageTexId != -1) {
+                            GLES20.glEnable(GLES20.GL_BLEND)
+                            GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+                            passthrough.draw(session.imageTexId, GlUtil.FLIP_Y_MATRIX, pipMvp, config.width, config.height)
+                            GLES20.glDisable(GLES20.GL_BLEND)
                         }
                     } else {
-                        val filePath = if (pip.uri.startsWith("file://")) Uri.parse(pip.uri).path ?: pip.uri.removePrefix("file://") else pip.uri
-                        val retr = getPipRetriever(filePath)
+                        // Safe fallback for rare video formats using cached retriever
+                        val retr = getPipRetriever(pip.uri)
                         val relTime = (timelinePtsUs - pip.timelineStartUs) + pip.trimStartUs
-                        val videoFrame = try {
-                            retr?.getFrameAtTime(relTime, android.media.MediaMetadataRetriever.OPTION_CLOSEST)
+                        val frameBmp = try {
+                            retr?.getFrameAtTime(relTime, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                         } catch (_: Throwable) { null }
-                        videoFrame ?: android.graphics.BitmapFactory.decodeFile(filePath)
-                    }
-                    if (pipBmp != null) {
-                        val pipTexId = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
-                        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, pipTexId)
-                        android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, pipBmp, 0)
-                        pipBmp.recycle()
-
-                        val pipMvp = FloatArray(16)
-                        android.opengl.Matrix.setIdentityM(pipMvp, 0)
-                        val tx = (pip.normalizedX * 2f) - 1f
-                        val ty = 1f - (pip.normalizedY * 2f)
-                        android.opengl.Matrix.translateM(pipMvp, 0, tx, ty, 0f)
-                        if (pip.rotation != 0f) {
-                            android.opengl.Matrix.rotateM(pipMvp, 0, -pip.rotation, 0f, 0f, 1f)
+                        if (frameBmp != null) {
+                            val fallbackTexId = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D)
+                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fallbackTexId)
+                            android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, frameBmp, 0)
+                            frameBmp.recycle()
+                            GLES20.glEnable(GLES20.GL_BLEND)
+                            GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+                            passthrough.draw(fallbackTexId, GlUtil.FLIP_Y_MATRIX, pipMvp, config.width, config.height)
+                            GLES20.glDisable(GLES20.GL_BLEND)
+                            GLES20.glDeleteTextures(1, intArrayOf(fallbackTexId), 0)
                         }
-                        android.opengl.Matrix.scaleM(pipMvp, 0, pip.scale, pip.scale, 1f)
-
-                        GLES20.glEnable(GLES20.GL_BLEND)
-                        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-                        passthrough.draw(pipTexId, GlUtil.FLIP_Y_MATRIX, pipMvp, config.width, config.height)
-                        GLES20.glDisable(GLES20.GL_BLEND)
-                        GLES20.glDeleteTextures(1, intArrayOf(pipTexId), 0)
                     }
                 } catch (t: Throwable) {
                     AppLog.w(tag, "PiP frame draw error: ${t.message}")

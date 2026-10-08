@@ -63,7 +63,7 @@ class VideoDecoder(context: Context, clip: TimelineItem, outputSurface: OutputSu
         extractor.seekTo(targetUs.coerceAtLeast(0L), MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
     }
 
-    fun decodeNextFrame(timeoutUs: Long = 10_000L): Long {
+    fun decodeNextFrame(timeoutUs: Long = 2_500L): Long {
         val dec = decoder ?: return -1L
         val info = MediaCodec.BufferInfo()
         val startMs = System.currentTimeMillis()
@@ -91,7 +91,7 @@ class VideoDecoder(context: Context, clip: TimelineItem, outputSurface: OutputSu
                 if (render) return info.presentationTimeUs
             }
             if (outIdx == MediaCodec.INFO_TRY_AGAIN_LATER && inIdx < 0) {
-                Thread.sleep(2)
+                Thread.yield()
                 continue
             }
         }
