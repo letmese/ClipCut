@@ -42,10 +42,20 @@ enum class AspectRatio(val label: String, val wRatio: Float, val hRatio: Float, 
 
     fun calculateExportDimensions(resolution: ExportResolution): Pair<Int, Int> {
         if (this == ORIGINAL || this == FREE) return resolution.width to resolution.height
-        val longSide = maxOf(resolution.width, resolution.height)
-        val shortSide = minOf(resolution.width, resolution.height)
-        return if (wRatio >= hRatio) longSide to (longSide * hRatio / wRatio).toInt()
-        else (shortSide * wRatio / hRatio).toInt() to shortSide
+        val baseDim = minOf(resolution.width, resolution.height) // e.g. 1080 for RES_1080P
+        val (w, h) = if (wRatio >= hRatio) {
+            // Landscape or square: short side is baseDim (e.g. 1080), long side is baseDim * (wRatio / hRatio) (e.g. 1920)
+            val hVal = baseDim
+            val wVal = (baseDim * (wRatio / hRatio)).toInt()
+            wVal to hVal
+        } else {
+            // Portrait / Vertical (e.g. 9:16 TikTok): short side (width) is baseDim (e.g. 1080), height is baseDim * (hRatio / wRatio) (e.g. 1920)
+            val wVal = baseDim
+            val hVal = (baseDim * (hRatio / wRatio)).toInt()
+            wVal to hVal
+        }
+        // Codecs require even dimensions
+        return (w + (w % 2)) to (h + (h % 2))
     }
 
     companion object {

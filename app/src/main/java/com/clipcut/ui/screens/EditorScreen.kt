@@ -517,15 +517,17 @@ fun EditorScreen(
                                 var localPipNormX by remember(pip.id) { mutableFloatStateOf(pip.normalizedX) }
                                 var localPipNormY by remember(pip.id) { mutableFloatStateOf(pip.normalizedY) }
                                 var localPipScale by remember(pip.id) { mutableFloatStateOf(pip.scale) }
+                                var localPipRotation by remember(pip.id) { mutableFloatStateOf(pip.rotation) }
                                 var pipContentSize by remember(pip.id) { mutableStateOf(IntSize.Zero) }
                                 var pipRotateHandleCoords by remember(pip.id) { mutableStateOf<LayoutCoordinates?>(null) }
                                 var pipRotateStartAngleDeg by remember(pip.id) { mutableFloatStateOf(0f) }
                                 var pipRotateStartRotation by remember(pip.id) { mutableFloatStateOf(0f) }
 
-                                LaunchedEffect(pip.normalizedX, pip.normalizedY, pip.scale) {
+                                LaunchedEffect(pip.normalizedX, pip.normalizedY, pip.scale, pip.rotation) {
                                     localPipNormX = pip.normalizedX
                                     localPipNormY = pip.normalizedY
                                     localPipScale = pip.scale
+                                    localPipRotation = pip.rotation
                                 }
 
                                 val pipPixelX = localPipNormX * bw
@@ -544,7 +546,7 @@ fun EditorScreen(
                                         .graphicsLayer {
                                             scaleX = localPipScale
                                             scaleY = localPipScale
-                                            rotationZ = pip.rotation
+                                            rotationZ = localPipRotation
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -573,10 +575,10 @@ fun EditorScreen(
                                                         localPipNormY = (localPipNormY + dragAmount.y / bh).coerceIn(0.02f, 0.98f)
                                                     },
                                                     onDragEnd = {
-                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
                                                     },
                                                     onDragCancel = {
-                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
                                                     }
                                                 )
                                             }
@@ -640,10 +642,10 @@ fun EditorScreen(
                                                         localPipScale = (localPipScale + scaleDelta).coerceIn(0.15f, 3.0f)
                                                     },
                                                     onDragEnd = {
-                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
                                                     },
                                                     onDragCancel = {
-                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
                                                     }
                                                 )
                                             },
@@ -669,7 +671,7 @@ fun EditorScreen(
                                                 detectDragGestures(
                                                     onDragStart = { offset ->
                                                         selectedPipId = pip.id
-                                                        pipRotateStartRotation = pip.rotation
+                                                        pipRotateStartRotation = localPipRotation
                                                         val touchPos = try {
                                                             if (previewCoords?.isAttached == true && pipRotateHandleCoords?.isAttached == true) {
                                                                 previewCoords?.localPositionOf(pipRotateHandleCoords!!, offset)
@@ -695,19 +697,17 @@ fun EditorScreen(
                                                             var deltaDeg = currentAngleDeg - pipRotateStartAngleDeg
                                                             while (deltaDeg > 180f) deltaDeg -= 360f
                                                             while (deltaDeg < -180f) deltaDeg += 360f
-                                                            val newRot = ((pipRotateStartRotation + deltaDeg) % 360f + 360f) % 360f
-                                                            viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, newRot)
+                                                            localPipRotation = ((pipRotateStartRotation + deltaDeg) % 360f + 360f) % 360f
                                                         } else {
                                                             val rotDelta = dragAmount.x * 1.0f
-                                                            val newRot = ((pip.rotation + rotDelta) % 360f + 360f) % 360f
-                                                            viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, newRot)
+                                                            localPipRotation = ((localPipRotation + rotDelta) % 360f + 360f) % 360f
                                                         }
                                                     },
                                                     onDragEnd = {
-                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
                                                     },
                                                     onDragCancel = {
-                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, pip.rotation)
+                                                        viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
                                                     }
                                                 )
                                             },
@@ -732,6 +732,7 @@ fun EditorScreen(
                                                 interactionSource = remember { MutableInteractionSource() },
                                                 indication = null
                                             ) {
+                                                localPipRotation = 0f
                                                 viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, 0f)
                                             },
                                         contentAlignment = Alignment.Center

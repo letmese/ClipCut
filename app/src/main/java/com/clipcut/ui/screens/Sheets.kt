@@ -924,13 +924,15 @@ fun ExportDialog(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             SecondaryButton("View Logs", onClick = onViewLogsClick, modifier = Modifier.weight(1f))
                             PrimaryButton("Retry", onClick = {
-                                onStartExport(ExportConfig(resolution = resolution, codec = codec, frameRate = fps))
+                                val (w, h) = projectAspectRatio.calculateExportDimensions(resolution)
+                                onStartExport(ExportConfig(resolution = resolution, customWidth = w, customHeight = h, codec = codec, frameRate = fps))
                             }, modifier = Modifier.weight(1f))
                         }
                     }
                     com.clipcut.ui.viewmodel.ExportState.Idle -> {
                         PrimaryButton("Export", onClick = {
-                            onStartExport(ExportConfig(resolution = resolution, codec = codec, frameRate = fps))
+                            val (w, h) = projectAspectRatio.calculateExportDimensions(resolution)
+                            onStartExport(ExportConfig(resolution = resolution, customWidth = w, customHeight = h, codec = codec, frameRate = fps))
                         }, modifier = Modifier.fillMaxWidth())
                     }
                 }
