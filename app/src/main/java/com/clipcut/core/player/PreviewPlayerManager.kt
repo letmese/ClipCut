@@ -77,13 +77,15 @@ class PreviewPlayerManager(private val context: Context) {
                                     accumulatedUs += clips[i].effectiveDurationUs
                                 }
                                 val currentClip = clips[idx]
-                                if (currentClip.speedRamp.isActive) {
+                                val targetSpeed = if (currentClip.speedRamp.isActive) {
                                     val currentOffsetUs = (p.currentPosition * 1000L).coerceAtLeast(0L)
-                                    val rampSpeed = currentClip.speedRamp.speedAt(currentOffsetUs).coerceIn(0.1f, 8.0f)
-                                    if (Math.abs(p.playbackParameters.speed - rampSpeed) > 0.05f) {
-                                        runOnMainThread {
-                                            p.playbackParameters = androidx.media3.common.PlaybackParameters(rampSpeed)
-                                        }
+                                    currentClip.speedRamp.speedAt(currentOffsetUs).coerceIn(0.1f, 8.0f)
+                                } else {
+                                    currentClip.speed.coerceIn(0.1f, 10.0f)
+                                }
+                                if (Math.abs(p.playbackParameters.speed - targetSpeed) > 0.02f) {
+                                    runOnMainThread {
+                                        p.playbackParameters = androidx.media3.common.PlaybackParameters(targetSpeed)
                                     }
                                 }
                                 val speed = if (currentClip.speedRamp.isActive) {

@@ -496,6 +496,12 @@ class ExportEngine(
             if (Build.VERSION.SDK_INT >= 29) {
                 put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "Movies/ClipCut")
                 put(android.provider.MediaStore.Video.Media.IS_PENDING, 1)
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES), "ClipCut")
+                if (!dir.exists()) dir.mkdirs()
+                val legacyFile = File(dir, name)
+                put(android.provider.MediaStore.Video.Media.DATA, legacyFile.absolutePath)
             }
         }
         var pendingUri: Uri? = null
@@ -601,6 +607,9 @@ class MediaMuxerWrapper(outputPath: String, private val expectedTrackCount: Int 
                 val trackIdx = tracks[0] ?: return@synchronized
                 muxer.writeSampleData(trackIdx, buffer, bufferInfo)
             } else {
+                if (pendingSamples.size > 300) {
+                    pendingSamples.removeAt(0)
+                }
                 val copy = ByteBuffer.allocateDirect(bufferInfo.size)
                 buffer.position(bufferInfo.offset)
                 buffer.limit(bufferInfo.offset + bufferInfo.size)
@@ -620,6 +629,9 @@ class MediaMuxerWrapper(outputPath: String, private val expectedTrackCount: Int 
                 val trackIdx = tracks[1] ?: return@synchronized
                 muxer.writeSampleData(trackIdx, buffer, bufferInfo)
             } else {
+                if (pendingSamples.size > 300) {
+                    pendingSamples.removeAt(0)
+                }
                 val copy = ByteBuffer.allocateDirect(bufferInfo.size)
                 buffer.position(bufferInfo.offset)
                 buffer.limit(bufferInfo.offset + bufferInfo.size)

@@ -4,6 +4,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -38,15 +42,24 @@ fun UnifiedBottomSheetHost(
     if (!visible) return
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var isClosing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     val animateAndClose: (() -> Unit) -> Unit = { callback ->
-        scope.launch {
-            try { state.hide() } catch (_: Throwable) {}
-        }.invokeOnCompletion {
-            callback()
+        if (!isClosing) {
+            isClosing = true
+            scope.launch {
+                try { state.hide() } catch (_: Throwable) {}
+            }.invokeOnCompletion {
+                callback()
+            }
         }
     }
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            if (!isClosing) {
+                isClosing = true
+                onDismiss()
+            }
+        },
         sheetState = state,
         shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
         containerColor = DarkSurface,
@@ -61,7 +74,10 @@ fun UnifiedBottomSheetHost(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(title, style = MaterialTheme.typography.titleMedium, color = Color.White, fontWeight = FontWeight.Bold)
-                TextButton(onClick = { animateAndClose(onDone) }) {
+                TextButton(
+                    onClick = { animateAndClose(onDone) },
+                    enabled = !isClosing
+                ) {
                     Text("Done", color = AccentPrimary, style = MaterialTheme.typography.labelLarge)
                 }
             }
