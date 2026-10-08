@@ -550,7 +550,7 @@ fun EditorScreen(
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    // PiP visual card body with smooth rotation-compensated 1-finger drag physics
+                                    // PiP visual card bounding box with transparent body and live drag feedback
                                     Box(
                                         modifier = Modifier
                                             .size(150.dp, 90.dp)
@@ -560,7 +560,7 @@ fun EditorScreen(
                                                 shape = RoundedCornerShape(10.dp)
                                             )
                                             .background(
-                                                color = Surface2.copy(alpha = 0.90f),
+                                                color = Color.Transparent,
                                                 shape = RoundedCornerShape(10.dp)
                                             )
                                             .pointerInput(pip.id, bw, bh) {
@@ -573,35 +573,19 @@ fun EditorScreen(
                                                         change.consume()
                                                         localPipNormX = (localPipNormX + dragAmount.x / bw).coerceIn(0.02f, 0.98f)
                                                         localPipNormY = (localPipNormY + dragAmount.y / bh).coerceIn(0.02f, 0.98f)
+                                                        viewModel.previewRenderer.setEditingPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
+                                                        viewModel.previewRenderer.setEditingPipTransform(pip.id, null, null, null, null)
                                                     },
                                                     onDragCancel = {
                                                         viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
+                                                        viewModel.previewRenderer.setEditingPipTransform(pip.id, null, null, null, null)
                                                     }
                                                 )
                                             }
-                                            .padding(8.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Icon(
-                                                imageVector = Icons.Filled.Layers,
-                                                contentDescription = "PiP Layer",
-                                                tint = AccentPrimary,
-                                                modifier = Modifier.size(26.dp)
-                                            )
-                                            Spacer(Modifier.height(4.dp))
-                                            Text(
-                                                text = pip.uri.substringAfterLast('/').take(14).ifEmpty { "Overlay PiP" },
-                                                color = Color.White,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                maxLines = 1
-                                            )
-                                        }
-                                    }
+                                    )
 
                                     // Top-Right: Delete PiP button (40dp easy tap target)
                                     Box(
@@ -615,6 +599,7 @@ fun EditorScreen(
                                                 indication = null
                                             ) {
                                                 selectedPipId = null
+                                                viewModel.previewRenderer.setEditingPipTransform(null, null, null, null, null)
                                                 viewModel.removePipTrack(pip.id)
                                             },
                                         contentAlignment = Alignment.Center
@@ -640,12 +625,15 @@ fun EditorScreen(
                                                         change.consume()
                                                         val scaleDelta = (dragAmount.x + dragAmount.y) / (bw * 0.30f)
                                                         localPipScale = (localPipScale + scaleDelta).coerceIn(0.15f, 3.0f)
+                                                        viewModel.previewRenderer.setEditingPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
+                                                        viewModel.previewRenderer.setEditingPipTransform(pip.id, null, null, null, null)
                                                     },
                                                     onDragCancel = {
                                                         viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
+                                                        viewModel.previewRenderer.setEditingPipTransform(pip.id, null, null, null, null)
                                                     }
                                                 )
                                             },
@@ -702,12 +690,15 @@ fun EditorScreen(
                                                             val rotDelta = dragAmount.x * 1.0f
                                                             localPipRotation = ((localPipRotation + rotDelta) % 360f + 360f) % 360f
                                                         }
+                                                        viewModel.previewRenderer.setEditingPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
+                                                        viewModel.previewRenderer.setEditingPipTransform(pip.id, null, null, null, null)
                                                     },
                                                     onDragCancel = {
                                                         viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, localPipRotation)
+                                                        viewModel.previewRenderer.setEditingPipTransform(pip.id, null, null, null, null)
                                                     }
                                                 )
                                             },
@@ -733,6 +724,7 @@ fun EditorScreen(
                                                 indication = null
                                             ) {
                                                 localPipRotation = 0f
+                                                viewModel.previewRenderer.setEditingPipTransform(pip.id, null, null, null, null)
                                                 viewModel.commitPipTransform(pip.id, localPipNormX, localPipNormY, localPipScale, 0f)
                                             },
                                         contentAlignment = Alignment.Center
