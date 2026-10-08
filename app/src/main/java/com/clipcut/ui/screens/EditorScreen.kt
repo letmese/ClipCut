@@ -1079,6 +1079,9 @@ fun EditorScreen(
                         viewModel.setClipTransition(it, type, dur)
                     }
                 },
+                onApplyToAll = { type, dur ->
+                    viewModel.setAllClipsTransition(type, dur)
+                },
                 onDismiss = { selectedTool = null }
             )
             EditorTool.TRIM -> TrimSheet(

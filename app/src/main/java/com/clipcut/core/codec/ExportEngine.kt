@@ -141,6 +141,32 @@ class ExportEngine(
         }
     }
 
+    private fun detectAudioSampleRate(project: Project): Int? {
+        val firstAudioUri = project.videoClips.firstOrNull { it.mediaType == MediaType.VIDEO && it.volume > 0f && hasAudioTrack(it.uri) }?.uri
+            ?: project.audioTracks.firstOrNull()?.uri ?: return null
+        return try {
+            val ext = android.media.MediaExtractor().apply { setDataSource(context, Uri.parse(firstAudioUri), null) }
+            var rate: Int? = null
+            for (i in 0 until ext.trackCount) {
+                val fmt = ext.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    if (fmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                        val r = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                        if (r in listOf(44100, 48000, 32000, 24000, 16000)) {
+                            rate = r
+                        }
+                    }
+                    break
+                }
+            }
+            ext.release()
+            rate
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     suspend fun export(onProgress: (progress: Float, status: String) -> Unit): Result<ExportResult> = withContext(Dispatchers.IO) {
         var pipeline: PipelineRenderer? = null
         var overlayRenderer: OverlayRenderer? = null
@@ -160,16 +186,25 @@ class ExportEngine(
             val hasAudio = project.audioTracks.isNotEmpty() || project.videoClips.any { clip ->
                 clip.mediaType == MediaType.VIDEO && clip.volume > 0f && hasAudioTrack(clip.uri)
             }
+
+            // Auto-detect native source sample rate (44.1kHz vs 48kHz) to eliminate resampling distortion
+            val activeAudioSampleRate = if (hasAudio) {
+                detectAudioSampleRate(project) ?: config.audioSampleRate
+            } else config.audioSampleRate
+            val activeConfig = if (activeAudioSampleRate != config.audioSampleRate) {
+                config.copy(audioSampleRate = activeAudioSampleRate)
+            } else config
+
             val expectedTracks = if (hasAudio) 2 else 1
             mux = MediaMuxerWrapper(outFile.absolutePath, expectedTrackCount = expectedTracks)
             muxer = mux
 
             if (hasAudio) {
                 try {
-                    val aacFmt = MediaFormat.createAudioFormat("audio/mp4a-latm", config.audioSampleRate, config.audioChannels).apply {
+                    val aacFmt = MediaFormat.createAudioFormat("audio/mp4a-latm", activeConfig.audioSampleRate, activeConfig.audioChannels).apply {
                         setInteger(MediaFormat.KEY_AAC_PROFILE, 2)
-                        setInteger(MediaFormat.KEY_BIT_RATE, config.audioBitRate)
-                        val csd = getAacCsd(config.audioSampleRate, config.audioChannels)
+                        setInteger(MediaFormat.KEY_BIT_RATE, activeConfig.audioBitRate)
+                        val csd = getAacCsd(activeConfig.audioSampleRate, activeConfig.audioChannels)
                         setByteBuffer("csd-0", ByteBuffer.wrap(csd))
                     }
                     mux.addAudioTrack(aacFmt)
@@ -280,7 +315,7 @@ class ExportEngine(
             // Audio
             if (hasAudio && !cancelled) {
                 onProgress(0.92f, "Processing audio")
-                val ap = AudioProcessor(context, project, config)
+                val ap = AudioProcessor(context, project, activeConfig)
                 ap.processAudio(mux, totalUs) { /* per-clip audio progress */ }
             }
 

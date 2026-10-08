@@ -144,27 +144,35 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun splitClipAtPlayhead() {
         val playheadUs = playerManager.currentPositionUs.value
+        var newSelectedId: String? = null
         mutate { p ->
             val clips = p.videoClips.toMutableList()
             var acc = 0L
+            val minBoundaryUs = 150_000L // 150ms buffer from clip start/end
             for (i in clips.indices) {
                 val c = clips[i]
                 val local = playheadUs - acc
-                if (local in 0L..c.effectiveDurationUs) {
+                if (local in minBoundaryUs..(c.effectiveDurationUs - minBoundaryUs)) {
                     val splitAt = c.trimStartUs + (local * c.speed).toLong()
                     val left = c.copy(trimEndUs = splitAt)
+                    val newRightId = UUID.randomUUID().toString()
                     val right = c.copy(
-                        id = UUID.randomUUID().toString(),
+                        id = newRightId,
                         trimStartUs = splitAt,
-                        trimEndUs = c.trimEndUs
+                        trimEndUs = c.trimEndUs,
+                        transitionType = TransitionType.NONE
                     )
                     clips[i] = left
                     clips.add(i + 1, right)
+                    newSelectedId = newRightId
                     break
                 }
                 acc += c.effectiveDurationUs
             }
             p.copy(videoClips = clips)
+        }
+        if (newSelectedId != null) {
+            _selectedClipId.value = newSelectedId
         }
     }
 
@@ -175,6 +183,15 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun setClipSpeed(clipId: String, speed: Float) = mutateClip(clipId) { it.copy(speed = speed.coerceIn(0.1f, 10f)) }
     fun setClipFilter(clipId: String, filter: FilterConfig) = mutateClip(clipId) { it.copy(filterConfig = filter) }
     fun setClipTransition(clipId: String, type: TransitionType, durationUs: Long = 500_000L) = mutateClip(clipId) { it.copy(transitionType = type, transitionDurationUs = durationUs) }
+    fun setAllClipsTransition(type: TransitionType, durationUs: Long = 500_000L) {
+        mutate { p ->
+            val updated = p.videoClips.mapIndexed { idx, clip ->
+                if (idx == 0) clip.copy(transitionType = TransitionType.NONE)
+                else clip.copy(transitionType = type, transitionDurationUs = durationUs)
+            }
+            p.copy(videoClips = updated)
+        }
+    }
     fun setClipVolume(clipId: String, vol: Float) = mutateClip(clipId) { it.copy(volume = vol.coerceIn(0f, 2f)) }
     fun setClipRotation(clipId: String, deg: Int) = mutateClip(clipId) { it.copy(rotationDegrees = ((deg % 360) + 360) % 360) }
     fun setClipFlipH(clipId: String, flip: Boolean) = mutateClip(clipId) { it.copy(flipHorizontal = flip) }

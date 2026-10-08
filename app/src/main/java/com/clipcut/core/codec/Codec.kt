@@ -348,60 +348,92 @@ class AudioProcessor(
                                                 val s = shortBuf.get().toFloat() * track.volume
                                                 inLeft[f] = s
                                                 inRight[f] = s
-                                            } else {
+                                            } else if (srcChannels == 2) {
                                                 val l = shortBuf.get().toFloat() * track.volume
                                                 val r = shortBuf.get().toFloat() * track.volume
                                                 inLeft[f] = l
                                                 inRight[f] = r
-                                                for (c in 2 until srcChannels) {
+                                            } else {
+                                                // High-fidelity downmix for multi-channel / 5.1 phone recordings (L, R, C, LFE, Ls, Rs)
+                                                val l = shortBuf.get().toFloat()
+                                                val r = shortBuf.get().toFloat()
+                                                val c = if (shortBuf.hasRemaining()) shortBuf.get().toFloat() else 0f
+                                                val lfe = if (shortBuf.hasRemaining()) shortBuf.get().toFloat() else 0f
+                                                val ls = if (shortBuf.hasRemaining()) shortBuf.get().toFloat() else 0f
+                                                val rs = if (shortBuf.hasRemaining()) shortBuf.get().toFloat() else 0f
+                                                for (extra in 6 until srcChannels) {
                                                     if (shortBuf.hasRemaining()) shortBuf.get()
                                                 }
+                                                // ITU-R standard downmix to stereo: preserve dialogue in Center channel
+                                                inLeft[f] = (l + 0.707f * c + 0.5f * ls) * track.volume
+                                                inRight[f] = (r + 0.707f * c + 0.5f * rs) * track.volume
                                             }
                                         }
 
-                                        val step = (srcSampleRate.toDouble() / targetSampleRate.toDouble()) * track.speed.toDouble()
+                                        if (srcSampleRate == targetSampleRate && track.speed == 1.0f) {
+                                            // Bit-accurate 1:1 direct passthrough: ZERO resampling math, ZERO phase comb filtering, ZERO noise
+                                            for (f in 0 until inFrames) {
+                                                var finalL = inLeft[f]
+                                                var finalR = inRight[f]
+                                                if (track.isBackgroundTrack && project.audioDuckingEnabled) {
+                                                    val currentPtsUs = (currentTargetFrame.toLong() * 1_000_000L) / targetSampleRate.toLong()
+                                                    val isVoiceActive = voiceIntervals.any { currentPtsUs in it }
+                                                    val targetMultiplier = if (isVoiceActive) project.audioDuckLevel.coerceIn(0f, 1.0f) else 1.0f
+                                                    val slewAlpha = (1f / (0.03f * targetSampleRate.toFloat())).coerceIn(0.0001f, 0.05f)
+                                                    smoothedDuckMultiplier += (targetMultiplier - smoothedDuckMultiplier) * slewAlpha
+                                                    finalL *= smoothedDuckMultiplier
+                                                    finalR *= smoothedDuckMultiplier
+                                                }
 
-                                        var srcPos = resamplePhase
-                                        while (srcPos < inFrames) {
-                                            val base = srcPos.toInt()
-                                            val frac = (srcPos - base).toFloat()
-                                            val sampleL: Float
-                                            val sampleR: Float
-                                            if (base + 1 < inFrames) {
-                                                sampleL = inLeft[base] * (1f - frac) + inLeft[base + 1] * frac
-                                                sampleR = inRight[base] * (1f - frac) + inRight[base + 1] * frac
-                                            } else if (base < inFrames) {
-                                                sampleL = inLeft[base]
-                                                sampleR = inRight[base]
-                                            } else {
-                                                break
+                                                val targetIdx = currentTargetFrame * targetChannels
+                                                if (targetIdx >= 0 && targetIdx + 1 < mixBuffer.size) {
+                                                    mixBuffer[targetIdx] += finalL
+                                                    mixBuffer[targetIdx + 1] += finalR
+                                                }
+                                                currentTargetFrame++
                                             }
+                                        } else {
+                                            // Continuous linear resampling with cross-chunk phase carryover
+                                            val step = (srcSampleRate.toDouble() / targetSampleRate.toDouble()) * track.speed.toDouble()
+                                            var srcPos = resamplePhase
+                                            while (srcPos < inFrames) {
+                                                val base = srcPos.toInt()
+                                                val frac = (srcPos - base).toFloat()
+                                                val sampleL: Float
+                                                val sampleR: Float
+                                                if (base + 1 < inFrames) {
+                                                    sampleL = inLeft[base] * (1f - frac) + inLeft[base + 1] * frac
+                                                    sampleR = inRight[base] * (1f - frac) + inRight[base + 1] * frac
+                                                } else if (base < inFrames) {
+                                                    sampleL = inLeft[base]
+                                                    sampleR = inRight[base]
+                                                } else {
+                                                    break
+                                                }
 
-                                            // Dynamic ducking envelope with attack/release ramp (M-1 & M-2)
-                                            var finalL = sampleL
-                                            var finalR = sampleR
-                                            if (track.isBackgroundTrack && project.audioDuckingEnabled) {
-                                                val currentPtsUs = (currentTargetFrame.toLong() * 1_000_000L) / targetSampleRate.toLong()
-                                                val isVoiceActive = voiceIntervals.any { currentPtsUs in it }
-                                                val targetMultiplier = if (isVoiceActive) project.audioDuckLevel.coerceIn(0f, 1.0f) else 1.0f
-                                                // Smooth ramp over ~30ms at target sample rate to eliminate pops/clicks
-                                                val slewAlpha = (1f / (0.03f * targetSampleRate.toFloat())).coerceIn(0.0001f, 0.05f)
-                                                smoothedDuckMultiplier += (targetMultiplier - smoothedDuckMultiplier) * slewAlpha
-                                                finalL *= smoothedDuckMultiplier
-                                                finalR *= smoothedDuckMultiplier
+                                                var finalL = sampleL
+                                                var finalR = sampleR
+                                                if (track.isBackgroundTrack && project.audioDuckingEnabled) {
+                                                    val currentPtsUs = (currentTargetFrame.toLong() * 1_000_000L) / targetSampleRate.toLong()
+                                                    val isVoiceActive = voiceIntervals.any { currentPtsUs in it }
+                                                    val targetMultiplier = if (isVoiceActive) project.audioDuckLevel.coerceIn(0f, 1.0f) else 1.0f
+                                                    val slewAlpha = (1f / (0.03f * targetSampleRate.toFloat())).coerceIn(0.0001f, 0.05f)
+                                                    smoothedDuckMultiplier += (targetMultiplier - smoothedDuckMultiplier) * slewAlpha
+                                                    finalL *= smoothedDuckMultiplier
+                                                    finalR *= smoothedDuckMultiplier
+                                                }
+
+                                                val targetIdx = currentTargetFrame * targetChannels
+                                                if (targetIdx >= 0 && targetIdx + 1 < mixBuffer.size) {
+                                                    mixBuffer[targetIdx] += finalL
+                                                    mixBuffer[targetIdx + 1] += finalR
+                                                }
+
+                                                currentTargetFrame++
+                                                srcPos += step
                                             }
-
-                                            val targetIdx = currentTargetFrame * targetChannels
-                                            if (targetIdx >= 0 && targetIdx + 1 < mixBuffer.size) {
-                                                mixBuffer[targetIdx] += finalL
-                                                mixBuffer[targetIdx + 1] += finalR
-                                            }
-
-                                            currentTargetFrame++
-                                            srcPos += step
+                                            resamplePhase = srcPos - inFrames
                                         }
-                                        // Carry over fractional phase to eliminate phase tears and buzzing across chunk boundaries
-                                        resamplePhase = srcPos - inFrames
                                     }
                                 }
                             }
@@ -444,9 +476,9 @@ class AudioProcessor(
             }
             val inBuf = enc.getInputBuffer(inIdx) ?: continue
             inBuf.clear()
+            inBuf.order(ByteOrder.LITTLE_ENDIAN)
 
             val samplesToRead = minOf(pcmChunkSamples, mixBuffer.size - sampleCursor)
-            val bytesToWrite = samplesToRead * 2
             pcmByteBuffer.clear()
             for (i in 0 until samplesToRead) {
                 val sample = mixBuffer[sampleCursor + i]
@@ -461,11 +493,19 @@ class AudioProcessor(
                 val clamped = limited.toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
                 pcmByteBuffer.putShort(clamped)
             }
+            // Pad trailing chunk with silence to maintain exact 1024-frame AAC encoder boundaries
+            if (samplesToRead < pcmChunkSamples) {
+                for (p in samplesToRead until pcmChunkSamples) {
+                    pcmByteBuffer.putShort(0)
+                }
+            }
             pcmByteBuffer.flip()
             inBuf.put(pcmByteBuffer)
+            inBuf.position(0)
+            inBuf.limit(pcmChunkSamples * 2)
 
             val currentPts = (sampleCursor.toLong() * 1_000_000L) / (targetSampleRate.toLong() * targetChannels.toLong())
-            enc.queueInputBuffer(inIdx, 0, bytesToWrite, currentPts, 0)
+            enc.queueInputBuffer(inIdx, 0, pcmChunkSamples * 2, currentPts, 0)
             sampleCursor += samplesToRead
 
             drainAudioEnc(enc, muxerWrapper, endOfStream = false)

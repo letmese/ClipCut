@@ -259,7 +259,7 @@ class PreviewPlayerManager(private val context: Context) {
 
             if (currentFingerprint != lastClipsFingerprint) {
                 lastClipsFingerprint = currentFingerprint
-                val prevPositionMs = try { p.currentPosition } catch (_: Throwable) { 0L }
+                val prevTimelineUs = _positionUs.value
                 val wasPlaying = p.isPlaying
 
                 if (project.videoClips.isEmpty()) {
@@ -283,9 +283,7 @@ class PreviewPlayerManager(private val context: Context) {
                         }
                     }
                     p.prepare()
-                    if (prevPositionMs > 0) {
-                        p.seekTo(prevPositionMs)
-                    }
+                    seekToUs(prevTimelineUs)
                     if (wasPlaying) {
                         p.play()
                     }

@@ -2016,10 +2016,11 @@ fun TransitionsSheet(
     current: TransitionType,
     durationUs: Long,
     onApply: (TransitionType, Long) -> Unit,
+    onApplyToAll: ((TransitionType, Long) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     var sel by remember { mutableStateOf(current) }
-    var dur by remember { mutableStateOf(durationUs.toFloat()) }
+    var dur by remember { mutableStateOf(durationUs.toFloat().coerceIn(200_000f, 2_000_000f)) }
 
     val transitionVisuals = mapOf(
         TransitionType.NONE to Pair("Cut", Icons.Filled.Block),
@@ -2031,17 +2032,29 @@ fun TransitionsSheet(
         TransitionType.DISSOLVE to Pair("Dissolve", Icons.Filled.BlurOn),
         TransitionType.WIPE_LEFT to Pair("Wipe L", Icons.Filled.West),
         TransitionType.WIPE_RIGHT to Pair("Wipe R", Icons.Filled.East),
+        TransitionType.WIPE_UP to Pair("Wipe Up", Icons.Filled.ArrowUpward),
+        TransitionType.WIPE_DOWN to Pair("Wipe Dn", Icons.Filled.ArrowDownward),
         TransitionType.CIRCLE_CROP to Pair("Circle In", Icons.Filled.RadioButtonUnchecked),
         TransitionType.CIRCLE_CLOSE to Pair("Circle Out", Icons.Filled.Lens),
-        TransitionType.CROSS_ZOOM to Pair("Zoom", Icons.Filled.ZoomIn),
+        TransitionType.CROSS_ZOOM to Pair("Cross Zoom", Icons.Filled.ZoomIn),
+        TransitionType.ZOOM_IN to Pair("Zoom In", Icons.Filled.ZoomIn),
+        TransitionType.ZOOM_OUT to Pair("Zoom Out", Icons.Filled.ZoomOut),
         TransitionType.FLASH_WHITE to Pair("Flash W", Icons.Filled.FlashOn),
-        TransitionType.FLASH_BLACK to Pair("Flash B", Icons.Filled.FlashOff)
+        TransitionType.FLASH_BLACK to Pair("Flash B", Icons.Filled.FlashOff),
+        TransitionType.GLITCH to Pair("Glitch", Icons.Filled.Shuffle),
+        TransitionType.PIXELATE to Pair("Pixelate", Icons.Filled.GridView),
+        TransitionType.BLUR to Pair("Blur", Icons.Filled.BlurCircular),
+        TransitionType.ROTATE to Pair("Rotate", Icons.Filled.RotateRight),
+        TransitionType.RIPPLE to Pair("Ripple", Icons.Filled.Waves),
+        TransitionType.HEART to Pair("Heart", Icons.Filled.Favorite),
+        TransitionType.STAR to Pair("Star", Icons.Filled.Star),
+        TransitionType.CURTAIN to Pair("Curtain", Icons.Filled.CompareArrows)
     )
 
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         SheetHeader("Scene Transitions", onDismiss)
         Spacer(Modifier.height(10.dp))
-        Text("Seamless scene switches between clips", color = TextSecondary, fontSize = 12.sp)
+        Text("25 cinematic transitions with real-time shader rendering", color = TextSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(10.dp))
 
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2099,9 +2112,25 @@ fun TransitionsSheet(
         }
 
         Spacer(Modifier.height(14.dp))
-        SheetSlider("Transition Duration: ${String.format(java.util.Locale.US, "%.1f", dur / 1_000_000f)}s", dur / 1_000_000f, 0.1f..3f) { dur = it * 1_000_000f }
-        Spacer(Modifier.height(12.dp))
-        PrimaryButton("Apply Transition", onClick = { onApply(sel, dur.toLong()) }, modifier = Modifier.fillMaxWidth())
+        SheetSlider("Transition Duration: ${String.format(java.util.Locale.US, "%.1f", dur / 1_000_000f)}s", dur / 1_000_000f, 0.2f..2.0f) { dur = it * 1_000_000f }
+        Spacer(Modifier.height(14.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (onApplyToAll != null) {
+                SecondaryButton(
+                    "Apply to All",
+                    onClick = { onApplyToAll(sel, dur.toLong()) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            PrimaryButton(
+                "Apply Transition",
+                onClick = { onApply(sel, dur.toLong()) },
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
 
