@@ -305,6 +305,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         p.copy(pipTracks = p.pipTracks + dup)
     }
 
+    fun setPipVolume(id: String, volume: Float) = mutate { p ->
+        p.copy(pipTracks = p.pipTracks.map { if (it.id == id) it.copy(volume = volume.coerceIn(0f, 1f)) else it })
+    }
+
     fun setVolumes(orig: Float, music: Float) = mutate {
         it.copy(originalVideoVolume = orig.coerceIn(0f, 2f), backgroundMusicVolume = music.coerceIn(0f, 2f))
     }

@@ -181,7 +181,7 @@ data class PiPTrackItem(
     val normalizedY: Float = 0.25f,
     val scale: Float = 0.3f,
     val rotation: Float = 0.0f,
-    val volume: Float = 1.0f
+    val volume: Float = 0.0f
 )
 
 data class BeatMarker(

@@ -1075,12 +1075,17 @@ fun EditorScreen(
                 current = clip?.transitionType ?: com.clipcut.core.model.TransitionType.NONE,
                 durationUs = clip?.transitionDurationUs ?: 500_000L,
                 onApply = { type, dur ->
-                    sid?.let {
-                        viewModel.setClipTransition(it, type, dur)
+                    val targetId = sid ?: (project?.videoClips?.getOrNull(1)?.id ?: project?.videoClips?.firstOrNull()?.id)
+                    if (targetId != null) {
+                        viewModel.setClipTransition(targetId, type, dur)
+                        android.widget.Toast.makeText(ctx, "Applied ${type.displayName} transition", android.widget.Toast.LENGTH_SHORT).show()
                     }
+                    selectedTool = null
                 },
                 onApplyToAll = { type, dur ->
                     viewModel.setAllClipsTransition(type, dur)
+                    android.widget.Toast.makeText(ctx, "Applied ${type.displayName} to all clips", android.widget.Toast.LENGTH_SHORT).show()
+                    selectedTool = null
                 },
                 onDismiss = { selectedTool = null }
             )
@@ -1184,6 +1189,7 @@ fun EditorScreen(
                     viewModel.removePipTrack(id)
                 },
                 onTrimPip = { id, s, e -> viewModel.trimPipTrack(id, s, e) },
+                onSetPipVolume = { id, v -> viewModel.setPipVolume(id, v) },
                 onSeekPreview = { us -> viewModel.playerManager.seekToUs(us) },
                 onOpenPiP = {
                     selectedTool = null

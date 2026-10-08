@@ -17,11 +17,13 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.opengl.Matrix
 import com.clipcut.core.gl.PassthroughFilter
+import com.clipcut.core.gl.FramebufferTexture
 import com.clipcut.core.gl.OesFilter
 import com.clipcut.core.gl.PipelineRenderer
 import com.clipcut.core.log.AppLog
 import com.clipcut.core.model.Project
 import com.clipcut.core.model.TimelineItem
+import com.clipcut.core.model.TransitionType
 
 class GlPreviewRenderer(private val context: Context) {
 
@@ -56,6 +58,11 @@ class GlPreviewRenderer(private val context: Context) {
     @Volatile private var isRunning = false
     @Volatile var isDirty = true
     @Volatile private var hasReceivedFirstFrame = false
+
+    private var prevClipFbo: FramebufferTexture? = null
+    private var prevClipFboWidth = 0
+    private var prevClipFboHeight = 0
+    @Volatile private var hasPrevClip = false
     @Volatile var activeEditingOverlayId: String? = null
     @Volatile var activeEditingPipId: String? = null
     @Volatile var activeEditingPipX: Float? = null
@@ -197,6 +204,9 @@ class GlPreviewRenderer(private val context: Context) {
             try { pipe?.release() } catch (_: Throwable) {}
             try { outSurface?.release() } catch (_: Throwable) {}
             try { pipOutSurface?.release() } catch (_: Throwable) {}
+            try { prevClipFbo?.release() } catch (_: Throwable) {}
+            prevClipFbo = null
+            hasPrevClip = false
             if (oesTex != -1) {
                 try { GLES20.glDeleteTextures(1, intArrayOf(oesTex), 0) } catch (_: Throwable) {}
             }
@@ -294,21 +304,50 @@ class GlPreviewRenderer(private val context: Context) {
 
         out.getTransformMatrix(texMatrix)
         val posUs = positionProvider?.invoke() ?: 0L
-        val clip = findClipAt(posUs)
+        val (clip, clipStartUs) = findClipAndOffsetAt(posUs)
 
         GLES20.glViewport(0, 0, w, h)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
         if (clip != null) {
+            val offsetUs = (posUs - clipStartUs).coerceAtLeast(0L)
+            val transProgress = if (clip.transitionType != TransitionType.NONE && clip.transitionDurationUs > 0) {
+                (offsetUs.toFloat() / clip.transitionDurationUs.toFloat()).coerceIn(0f, 1f)
+            } else 1f
+
+            val useTransition = (hasPrevClip && prevClipFbo != null && clip.transitionType != TransitionType.NONE && transProgress in 0f..0.999f)
+
             pipe.applyPostProcessing(
                 sourceTexId = oesTex,
                 sourceTexMatrix = texMatrix,
                 sourceIsOes = true,
                 mvpMatrix = GlUtil.IDENTITY_MATRIX,
                 rotationDegrees = clip.rotationDegrees,
-                clip = clip
+                clip = clip,
+                transitionProgress = if (useTransition) transProgress else 0f,
+                prevClipTexId = if (useTransition) prevClipFbo?.textureId else null
             )
+
+            // When not actively transitioning, capture this decorated frame into prevClipFbo
+            // so when playback moves to the next clip, prevClipFbo has the last frame of this clip
+            if (!useTransition && pipe.lastDecoratedTexId > 0) {
+                try {
+                    if (prevClipFbo == null || prevClipFboWidth != w || prevClipFboHeight != h) {
+                        prevClipFbo?.release()
+                        prevClipFbo = FramebufferTexture(w, h).also { it.init() }
+                        prevClipFboWidth = w
+                        prevClipFboHeight = h
+                    }
+                    prevClipFbo?.bind()
+                    GLES20.glViewport(0, 0, w, h)
+                    filter.draw(pipe.lastDecoratedTexId, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, w, h)
+                    prevClipFbo?.unbind()
+                    hasPrevClip = true
+                } catch (t: Throwable) {
+                    AppLog.w(TAG, "Failed updating prevClipFbo: ${t.message}")
+                }
+            }
         }
 
         val proj = project
@@ -525,17 +564,21 @@ class GlPreviewRenderer(private val context: Context) {
         }
     }
 
-    private fun findClipAt(timelineUs: Long): TimelineItem? {
-        val clips = project?.videoClips ?: return null
-        if (clips.isEmpty()) return null
+    private fun findClipAndOffsetAt(timelineUs: Long): Pair<TimelineItem?, Long> {
+        val clips = project?.videoClips ?: return Pair(null, 0L)
+        if (clips.isEmpty()) return Pair(null, 0L)
         var accum = 0L
         for (c in clips) {
             val end = accum + c.effectiveDurationUs
-            if (timelineUs in accum until end) return c
+            if (timelineUs in accum until end) return Pair(c, accum)
             accum = end
         }
-        return clips.lastOrNull()
+        val last = clips.lastOrNull()
+        val startOfLast = (accum - (last?.effectiveDurationUs ?: 0L)).coerceAtLeast(0L)
+        return Pair(last, startOfLast)
     }
+
+    private fun findClipAt(timelineUs: Long): TimelineItem? = findClipAndOffsetAt(timelineUs).first
 
     fun setProject(project: Project) { this.project = project; isDirty = true }
     fun pause() { paused = true }
@@ -543,6 +586,9 @@ class GlPreviewRenderer(private val context: Context) {
     fun seekTo(@Suppress("UNUSED_PARAMETER") timelineUs: Long) { isDirty = true }
     fun release() {
         onSurfaceDestroyed()
+        try { prevClipFbo?.release() } catch (_: Throwable) {}
+        prevClipFbo = null
+        hasPrevClip = false
         pipRetrievers.values.forEach {
             try { it.release() } catch (_: Throwable) {}
         }

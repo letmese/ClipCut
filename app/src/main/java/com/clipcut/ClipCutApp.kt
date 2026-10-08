@@ -14,7 +14,7 @@ class ClipCutApp : Application() {
         super.onCreate()
         instance = this
         AppLog.init(this)
-        AppLog.i(TAG, "ClipCutApp.onCreate — v1.2.39 (Build 50)")
+        AppLog.i(TAG, "ClipCutApp.onCreate — v1.2.41 (Build 52)")
         ClipCutDatabase.getInstance(this) // warm the SQLiteOpenHelper
     }
 

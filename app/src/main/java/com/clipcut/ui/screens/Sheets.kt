@@ -775,6 +775,7 @@ fun OverlaySheet(
     onDeleteOverlay: (String) -> Unit = {},
     onDeletePip: (String) -> Unit = {},
     onTrimPip: (String, Long, Long) -> Unit = { _, _, _ -> },
+    onSetPipVolume: (String, Float) -> Unit = { _, _ -> },
     onSeekPreview: (Long) -> Unit = {},
     onOpenPiP: () -> Unit = {},
     onDismiss: () -> Unit
@@ -829,6 +830,40 @@ fun OverlaySheet(
                         )
                     )
                     Text("sec", color = TextSecondary, fontSize = 11.sp)
+                }
+
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IconButton(
+                        onClick = {
+                            val newVol = if (p.volume > 0f) 0f else 1f
+                            onSetPipVolume(p.id, newVol)
+                        },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            if (p.volume > 0f) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
+                            contentDescription = "PiP Volume",
+                            tint = if (p.volume > 0f) AccentPrimary else TextTertiary
+                        )
+                    }
+                    Text(
+                        text = if (p.volume <= 0f) "Muted" else "${(p.volume * 100).toInt()}%",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        modifier = Modifier.width(42.dp)
+                    )
+                    Slider(
+                        value = p.volume,
+                        onValueChange = { vol -> onSetPipVolume(p.id, vol) },
+                        valueRange = 0f..1f,
+                        colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary),
+                        modifier = Modifier.weight(1f).height(32.dp)
+                    )
                 }
             }
         }
@@ -1637,6 +1672,7 @@ fun PiPPanel(
     } else 5.0f
     var durationSec by remember { mutableFloatStateOf(initialSec) }
     var durationInputText by remember { mutableStateOf(String.format(java.util.Locale.US, "%.1f", initialSec)) }
+    var pipVolume by remember { mutableFloatStateOf(0.0f) }
 
     val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
@@ -1676,7 +1712,8 @@ fun PiPPanel(
                 timelineEndUs = playheadUs + durUs,
                 scale = 0.35f,
                 normalizedX = 0.75f,
-                normalizedY = 0.25f
+                normalizedY = 0.25f,
+                volume = pipVolume
             )
             onAdd(item)
             onDismiss()
@@ -1727,6 +1764,37 @@ fun PiPPanel(
                     focusedTextColor = Color.White,
                     unfocusedTextColor = Color.White
                 )
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            IconButton(
+                onClick = { pipVolume = if (pipVolume > 0f) 0f else 1f },
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    if (pipVolume > 0f) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
+                    contentDescription = "PiP Audio",
+                    tint = if (pipVolume > 0f) AccentPrimary else TextTertiary
+                )
+            }
+            Text(
+                text = if (pipVolume <= 0f) "Audio: Muted" else "Audio: ${(pipVolume * 100).toInt()}%",
+                color = Color.White,
+                fontSize = 12.sp,
+                modifier = Modifier.width(96.dp)
+            )
+            Slider(
+                value = pipVolume,
+                onValueChange = { pipVolume = it },
+                valueRange = 0f..1f,
+                colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary),
+                modifier = Modifier.weight(1f).height(32.dp)
             )
         }
 
@@ -2121,13 +2189,19 @@ fun TransitionsSheet(
             if (onApplyToAll != null) {
                 SecondaryButton(
                     "Apply to All",
-                    onClick = { onApplyToAll(sel, dur.toLong()) },
+                    onClick = {
+                        onApplyToAll(sel, dur.toLong())
+                        onDismiss()
+                    },
                     modifier = Modifier.weight(1f)
                 )
             }
             PrimaryButton(
                 "Apply Transition",
-                onClick = { onApply(sel, dur.toLong()) },
+                onClick = {
+                    onApply(sel, dur.toLong())
+                    onDismiss()
+                },
                 modifier = Modifier.weight(1f)
             )
         }

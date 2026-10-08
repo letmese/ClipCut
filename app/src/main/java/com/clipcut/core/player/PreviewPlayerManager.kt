@@ -198,11 +198,25 @@ class PreviewPlayerManager(private val context: Context) {
         player?.setVideoSurface(surface)
     }
 
+    private fun createLoadControl(): androidx.media3.exoplayer.DefaultLoadControl {
+        return androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs = */ 1000,
+                /* maxBufferMs = */ 3000,
+                /* bufferForPlaybackMs = */ 50,
+                /* bufferForPlaybackAfterRebufferMs = */ 100
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+    }
+
     fun initialize(): ExoPlayer {
         player?.let { return it }
         val p = ExoPlayer.Builder(context)
+            .setLoadControl(createLoadControl())
             .setLooper(Looper.getMainLooper())
             .build()
+        p.pauseAtEndOfMediaItems = false
         p.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { _isPlaying.value = playing }
             override fun onPlaybackStateChanged(state: Int) {
@@ -308,6 +322,7 @@ class PreviewPlayerManager(private val context: Context) {
                 if (existing == null) {
                     try {
                         val audioPlayer = ExoPlayer.Builder(context)
+                            .setLoadControl(createLoadControl())
                             .setLooper(Looper.getMainLooper())
                             .build()
                         val clippingBuilder = MediaItem.ClippingConfiguration.Builder()
@@ -376,6 +391,7 @@ class PreviewPlayerManager(private val context: Context) {
                 if (currentPip == null) {
                     try {
                         val p = ExoPlayer.Builder(context)
+                            .setLoadControl(createLoadControl())
                             .setLooper(Looper.getMainLooper())
                             .build()
                         p.setVideoSurface(pipVideoSurface)

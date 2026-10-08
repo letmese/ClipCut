@@ -254,6 +254,31 @@ class AudioProcessor(
             }
         }
 
+        // 3. Audio from PiP video tracks (when user has enabled audio on PiP overlay)
+        for (pip in project.pipTracks) {
+            if (pip.volume > 0.001f && pip.uri.isNotEmpty()) {
+                val isVideo = pip.uri.contains("video", ignoreCase = true) ||
+                        pip.uri.endsWith(".mp4", ignoreCase = true) ||
+                        pip.uri.endsWith(".mkv", ignoreCase = true) ||
+                        pip.uri.endsWith(".mov", ignoreCase = true) ||
+                        pip.uri.endsWith(".webm", ignoreCase = true) ||
+                        (pip.uri.startsWith("content://") && !pip.uri.contains("image", ignoreCase = true))
+                if (isVideo) {
+                    val trimStart = pip.trimStartUs.coerceAtLeast(0L)
+                    val trimEnd = if (pip.trimEndUs > trimStart) pip.trimEndUs else (pip.timelineEndUs - pip.timelineStartUs + trimStart)
+                    tracksToMix.add(AudioSource(
+                        uri = pip.uri,
+                        timelineStartUs = pip.timelineStartUs,
+                        trimStartUs = trimStart,
+                        trimEndUs = trimEnd,
+                        volume = pip.volume,
+                        speed = 1.0f,
+                        isBackgroundTrack = false
+                    ))
+                }
+            }
+        }
+
         if (tracksToMix.isEmpty()) {
             onProgress(1f)
             return
