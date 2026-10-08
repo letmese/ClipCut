@@ -152,7 +152,8 @@ class ExportEngine(
         var pipOesFilter: OesFilter? = null
 
         try {
-            val totalUs = project.totalDurationUs.coerceAtLeast(1L)
+            val videoDurationUs = project.videoClips.sumOf { it.effectiveDurationUs }
+            val totalUs = if (videoDurationUs > 0L) videoDurationUs else project.totalDurationUs.coerceAtLeast(1L)
             val outFile = File(context.cacheDir, "clipcut_export_${System.currentTimeMillis()}.mp4")
             if (outFile.exists()) outFile.delete()
 
@@ -372,7 +373,7 @@ class ExportEngine(
                     }
 
                     val timelineOffsetUs = (i * 1_000_000L / config.frameRate)
-                    val timelinePtsUs = progressUs + timelineOffsetUs
+                    val timelinePtsUs = (progressUs + timelineOffsetUs).coerceAtMost(totalUs)
 
                     if (i % 8 == 0) {
                         val p = 0.05f + 0.85f * (timelinePtsUs.toFloat() / totalUs.toFloat()).coerceIn(0f, 1f)
@@ -434,7 +435,8 @@ class ExportEngine(
 
                 val sourceOffsetUs = (pts - trimStart).coerceAtLeast(0L)
                 val timelineOffsetUs = SpeedRampProcessor.sourceToTimeline(sourceOffsetUs, clip.speedRamp, clip.speed)
-                val timelinePtsUs = progressUs + timelineOffsetUs
+                if (clip.effectiveDurationUs > 0L && timelineOffsetUs > clip.effectiveDurationUs + 50_000L) break
+                val timelinePtsUs = (progressUs + timelineOffsetUs).coerceAtMost(totalUs)
 
                 frameCount++
                 if (frameCount % 8 == 0) {
@@ -496,7 +498,7 @@ class ExportEngine(
                 for (i in 0 until totalFrames) {
                     if (cancelled) break
                     val timelineOffsetUs = (i * 1_000_000L / config.frameRate)
-                    val timelinePtsUs = progressUs + timelineOffsetUs
+                    val timelinePtsUs = (progressUs + timelineOffsetUs).coerceAtMost(totalUs)
 
                     if (i % 8 == 0) {
                         val p = 0.05f + 0.85f * (timelinePtsUs.toFloat() / totalUs.toFloat()).coerceIn(0f, 1f)

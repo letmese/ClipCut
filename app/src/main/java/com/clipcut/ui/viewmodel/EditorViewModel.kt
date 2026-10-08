@@ -349,13 +349,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 val projDur = _project.value?.totalDurationUs ?: durationUs
+                val targetEnd = if (projDur > 0L) minOf(durationUs, projDur) else durationUs
                 val item = AudioTrackItem(
                     uri = targetFileOrUri,
                     name = displayName,
                     sourceDurationUs = durationUs,
                     timelineStartUs = 0L,
                     trimStartUs = 0L,
-                    trimEndUs = if (durationUs > 0) durationUs else projDur.coerceAtLeast(1_000_000L)
+                    trimEndUs = if (targetEnd > 0L) targetEnd else durationUs.coerceAtLeast(1_000_000L)
                 )
                 addAudioTrack(item)
             }

@@ -323,6 +323,7 @@ data class Project(
     val totalDurationUs: Long
         get() {
             val video = videoClips.sumOf { it.effectiveDurationUs }
+            if (video > 0L) return video
             val audio = audioTracks.maxOfOrNull { it.timelineStartUs + it.effectiveDurationUs } ?: 0L
             val overlay = overlays.maxOfOrNull { it.timelineEndUs } ?: 0L
             val pip = pipTracks.maxOfOrNull { it.timelineEndUs } ?: 0L

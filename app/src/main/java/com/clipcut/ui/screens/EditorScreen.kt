@@ -1039,6 +1039,7 @@ fun EditorScreen(
                 )
                 "pip" -> PiPPanel(
                     playheadUs = positionUs,
+                    projectDurationUs = project?.totalDurationUs ?: 0L,
                     onAdd = {
                         viewModel.addPipTrack(it)
                         selectedPipId = it.id

@@ -1626,12 +1626,17 @@ fun KeyframeSheet(
 @Composable
 fun PiPPanel(
     playheadUs: Long = 0L,
+    projectDurationUs: Long = 0L,
     onAdd: (PiPTrackItem) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var durationSec by remember { mutableFloatStateOf(5.0f) }
-    var durationInputText by remember { mutableStateOf("5.0") }
+    val initialSec = if (projectDurationUs > playheadUs) {
+        val rem = (projectDurationUs - playheadUs) / 1_000_000f
+        minOf(5.0f, rem.coerceAtLeast(0.5f))
+    } else 5.0f
+    var durationSec by remember { mutableFloatStateOf(initialSec) }
+    var durationInputText by remember { mutableStateOf(String.format(java.util.Locale.US, "%.1f", initialSec)) }
 
     val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
@@ -1663,7 +1668,8 @@ fun PiPPanel(
                 com.clipcut.core.log.AppLog.w("PiPPanel", "Failed to cache PiP media locally: ${t.message}")
             }
 
-            val durUs = (durationSec * 1_000_000L).toLong().coerceIn(500_000L, 300_000_000L)
+            val maxAllowedDurUs = if (projectDurationUs > playheadUs) (projectDurationUs - playheadUs) else 300_000_000L
+            val durUs = (durationSec * 1_000_000L).toLong().coerceIn(500_000L, maxAllowedDurUs.coerceAtLeast(500_000L))
             val item = PiPTrackItem(
                 uri = finalUriString,
                 timelineStartUs = playheadUs,

@@ -261,7 +261,7 @@ class AudioProcessor(
 
         val targetSampleRate = exportConfig.audioSampleRate
         val targetChannels = exportConfig.audioChannels
-        val maxDurationUs = minOf(totalDurationUs.coerceAtLeast(100_000L), 600_000_000L) // up to 10 min
+        val maxDurationUs = totalDurationUs.coerceAtLeast(100_000L)
         val totalSamples = ((maxDurationUs * targetSampleRate) / 1_000_000L).toInt() * targetChannels
         val mixBuffer = FloatArray(totalSamples.coerceAtLeast(targetChannels * 1024))
 
@@ -455,7 +455,7 @@ class AudioProcessor(
             val inIdx = enc.dequeueInputBuffer(10_000)
             if (inIdx >= 0) {
                 val lastPts = (sampleCursor.toLong() * 1_000_000L) / (targetSampleRate.toLong() * targetChannels.toLong())
-                enc.queueInputBuffer(inIdx, 0, 0, lastPts, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                enc.queueInputBuffer(inIdx, 0, 0, minOf(lastPts, totalDurationUs), MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                 eosQueued = true
             } else {
                 drainAudioEnc(enc, muxerWrapper, endOfStream = false)
