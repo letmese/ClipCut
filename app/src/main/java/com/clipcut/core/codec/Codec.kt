@@ -293,6 +293,8 @@ class AudioProcessor(
                     var decEos = false
                     var inputEos = false
                     var smoothedDuckMultiplier = 1.0f
+                    var currentTargetFrame = -1
+                    var resamplePhase = 0.0
 
                     while (!decEos) {
                         if (!inputEos) {
@@ -328,7 +330,13 @@ class AudioProcessor(
                                 if (rawPts >= track.trimStartUs) {
                                     val ptsOffsetUs = ((rawPts - track.trimStartUs) / track.speed).toLong()
                                     val timelinePtsUs = track.timelineStartUs + ptsOffsetUs
-                                    val startTargetFrame = ((timelinePtsUs * targetSampleRate) / 1_000_000L).toInt()
+                                    val ptsTargetFrame = ((timelinePtsUs * targetSampleRate) / 1_000_000L).toInt()
+
+                                    // Resynchronize frame position only initially or on genuine seek / stream discontinuity (> 50ms)
+                                    if (currentTargetFrame < 0 || kotlin.math.abs(ptsTargetFrame - currentTargetFrame) > (targetSampleRate / 20)) {
+                                        currentTargetFrame = ptsTargetFrame
+                                        resamplePhase = 0.0
+                                    }
 
                                     val shortBuf = outBuf.asShortBuffer()
                                     val inFrames = shortBuf.remaining() / srcChannels
@@ -352,14 +360,13 @@ class AudioProcessor(
                                         }
 
                                         val step = (srcSampleRate.toDouble() / targetSampleRate.toDouble()) * track.speed.toDouble()
-                                        val outFrames = (inFrames.toDouble() / step).toInt().coerceAtLeast(0)
 
-                                        for (outF in 0 until outFrames) {
-                                            val srcPos = outF * step
+                                        var srcPos = resamplePhase
+                                        while (srcPos < inFrames) {
                                             val base = srcPos.toInt()
                                             val frac = (srcPos - base).toFloat()
-                                            var sampleL: Float
-                                            var sampleR: Float
+                                            val sampleL: Float
+                                            val sampleR: Float
                                             if (base + 1 < inFrames) {
                                                 sampleL = inLeft[base] * (1f - frac) + inLeft[base + 1] * frac
                                                 sampleR = inRight[base] * (1f - frac) + inRight[base + 1] * frac
@@ -371,23 +378,30 @@ class AudioProcessor(
                                             }
 
                                             // Dynamic ducking envelope with attack/release ramp (M-1 & M-2)
+                                            var finalL = sampleL
+                                            var finalR = sampleR
                                             if (track.isBackgroundTrack && project.audioDuckingEnabled) {
-                                                val currentPtsUs = timelinePtsUs + ((outF.toLong() * 1_000_000L) / targetSampleRate.toLong())
+                                                val currentPtsUs = (currentTargetFrame.toLong() * 1_000_000L) / targetSampleRate.toLong()
                                                 val isVoiceActive = voiceIntervals.any { currentPtsUs in it }
                                                 val targetMultiplier = if (isVoiceActive) project.audioDuckLevel.coerceIn(0f, 1.0f) else 1.0f
                                                 // Smooth ramp over ~30ms at target sample rate to eliminate pops/clicks
                                                 val slewAlpha = (1f / (0.03f * targetSampleRate.toFloat())).coerceIn(0.0001f, 0.05f)
                                                 smoothedDuckMultiplier += (targetMultiplier - smoothedDuckMultiplier) * slewAlpha
-                                                sampleL *= smoothedDuckMultiplier
-                                                sampleR *= smoothedDuckMultiplier
+                                                finalL *= smoothedDuckMultiplier
+                                                finalR *= smoothedDuckMultiplier
                                             }
 
-                                            val targetIdx = (startTargetFrame + outF) * targetChannels
+                                            val targetIdx = currentTargetFrame * targetChannels
                                             if (targetIdx >= 0 && targetIdx + 1 < mixBuffer.size) {
-                                                mixBuffer[targetIdx] += sampleL
-                                                mixBuffer[targetIdx + 1] += sampleR
+                                                mixBuffer[targetIdx] += finalL
+                                                mixBuffer[targetIdx + 1] += finalR
                                             }
+
+                                            currentTargetFrame++
+                                            srcPos += step
                                         }
+                                        // Carry over fractional phase to eliminate phase tears and buzzing across chunk boundaries
+                                        resamplePhase = srcPos - inFrames
                                     }
                                 }
                             }
@@ -435,7 +449,16 @@ class AudioProcessor(
             val bytesToWrite = samplesToRead * 2
             pcmByteBuffer.clear()
             for (i in 0 until samplesToRead) {
-                val clamped = mixBuffer[sampleCursor + i].toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+                val sample = mixBuffer[sampleCursor + i]
+                // Soft-knee limiter: smooth tanh compression above 30,000 to prevent harsh digital clipping
+                val limited = if (kotlin.math.abs(sample) <= 30000f) {
+                    sample
+                } else {
+                    val sign = if (sample > 0) 1f else -1f
+                    val excess = kotlin.math.abs(sample) - 30000f
+                    sign * (30000f + 2767f * kotlin.math.tanh(excess.toDouble() / 10000.0).toFloat())
+                }
+                val clamped = limited.toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
                 pcmByteBuffer.putShort(clamped)
             }
             pcmByteBuffer.flip()

@@ -19,7 +19,7 @@ data class ExportConfig(
     val bitRate: Int = resolution.defaultBitrate,
     val codec: ExportCodec = ExportCodec.H264,
     val audioBitRate: Int = 192_000,
-    val audioSampleRate: Int = 44100,
+    val audioSampleRate: Int = 48000,
     val audioChannels: Int = 2
 ) {
     val width: Int get() = customWidth
