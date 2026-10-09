@@ -319,7 +319,8 @@ class MaskFilter : GlFilter(
             MaskShape.RECTANGLE -> 3
             MaskShape.OVAL -> 4
         }
-        centerX = config.centerX; centerY = config.centerY
+        centerX = config.centerX
+        centerY = (1.0f - config.centerY).coerceIn(0f, 1f)
         width = config.width; height = config.height
         rotation = config.rotation; feather = config.feather
         inverted = if (config.inverted) 1f else 0f
@@ -777,7 +778,8 @@ class RegionalBlurFilter : GlFilter(
             com.clipcut.core.model.BlurShape.ROUNDED_RECT -> 2
         }
         centerX = cx.coerceIn(0f, 1f)
-        centerY = cy.coerceIn(0f, 1f)
+        // Flip Y: Android/Compose 0=top, 1=bottom -> OpenGL texture 0=bottom, 1=top
+        centerY = (1.0f - cy).coerceIn(0f, 1f)
         widthVal = w.coerceIn(0.01f, 1.5f)
         heightVal = h.coerceIn(0.01f, 1.5f)
         rotationDeg = rotationDegrees
@@ -801,7 +803,8 @@ class RegionalBlurFilter : GlFilter(
         GLES20.glUniform1i(uShapeLoc, shape)
         GLES20.glUniform2f(uCenterLoc, centerX, centerY)
         GLES20.glUniform2f(uSizeLoc, widthVal, heightVal)
-        GLES20.glUniform1f(uRotationLoc, Math.toRadians(rotationDeg.toDouble()).toFloat())
+        // Negate rotation so clockwise in Android matches OpenGL flipped Y space
+        GLES20.glUniform1f(uRotationLoc, -Math.toRadians(rotationDeg.toDouble()).toFloat())
         GLES20.glUniform1f(uFeatherLoc, feather)
         GLES20.glUniform1f(uIntensityLoc, intensity)
         GLES20.glUniform2f(uResolutionLoc, width.toFloat(), height.toFloat())
