@@ -70,6 +70,23 @@ class GlPreviewRenderer(private val context: Context) {
     @Volatile var activeEditingPipScale: Float? = null
     @Volatile var activeEditingPipRotation: Float? = null
 
+    @Volatile var activeEditingBlurId: String? = null
+    @Volatile var activeEditingBlurX: Float? = null
+    @Volatile var activeEditingBlurY: Float? = null
+    @Volatile var activeEditingBlurWidth: Float? = null
+    @Volatile var activeEditingBlurHeight: Float? = null
+    @Volatile var activeEditingBlurRotation: Float? = null
+
+    fun setEditingBlurTransform(id: String?, x: Float?, y: Float?, w: Float?, h: Float?, rotation: Float?) {
+        activeEditingBlurId = id
+        activeEditingBlurX = x
+        activeEditingBlurY = y
+        activeEditingBlurWidth = w
+        activeEditingBlurHeight = h
+        activeEditingBlurRotation = rotation
+        isDirty = true
+    }
+
     fun setEditingPipTransform(id: String?, x: Float?, y: Float?, scale: Float?, rotation: Float?) {
         activeEditingPipId = id
         activeEditingPipX = x
@@ -328,7 +345,13 @@ class GlPreviewRenderer(private val context: Context) {
                 transitionProgress = if (useTransition) transProgress else 0f,
                 prevClipTexId = if (useTransition) prevClipFbo?.textureId else null,
                 activeBlurs = project?.blurTracks ?: emptyList(),
-                timelinePtsUs = posUs
+                timelinePtsUs = posUs,
+                editingBlurId = activeEditingBlurId,
+                editingBlurX = activeEditingBlurX,
+                editingBlurY = activeEditingBlurY,
+                editingBlurW = activeEditingBlurWidth,
+                editingBlurH = activeEditingBlurHeight,
+                editingBlurRot = activeEditingBlurRotation
             )
 
             // When not actively transitioning, capture this decorated frame into prevClipFbo

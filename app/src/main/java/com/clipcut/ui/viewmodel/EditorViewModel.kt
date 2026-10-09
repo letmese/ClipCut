@@ -28,6 +28,7 @@ import com.clipcut.core.player.PreviewPlayerManager
 import com.clipcut.data.db.ClipCutDatabase
 import com.clipcut.data.db.ProjectEntity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -324,18 +325,57 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         })
     }
     fun updateBlurTrack(id: String, block: (com.clipcut.core.model.BlurTrackItem) -> com.clipcut.core.model.BlurTrackItem) = mutate { p ->
-        p.copy(blurTracks = p.blurTracks.map { if (it.id == id) block(it) else it })
+        p.copy(blurTracks = p.blurTracks.map { old ->
+            if (old.id == id) {
+                val next = block(old)
+                if (old.keyframes.isNotEmpty() && (next.width != old.width || next.height != old.height)) {
+                    val sw = next.width / old.width.coerceAtLeast(0.01f)
+                    val sh = next.height / old.height.coerceAtLeast(0.01f)
+                    next.copy(
+                        keyframes = old.keyframes.map { kf ->
+                            kf.copy(
+                                width = (kf.width * sw).coerceIn(0.03f, 1.2f),
+                                height = (kf.height * sh).coerceIn(0.03f, 1.2f)
+                            )
+                        }
+                    )
+                } else next
+            } else old
+        })
     }
     fun updateBlurTrack(item: com.clipcut.core.model.BlurTrackItem) = updateBlurTrack(item.id) { item }
+
     fun commitBlurTransform(id: String, normX: Float, normY: Float, width: Float, height: Float, rotation: Float = 0.0f) = mutate { p ->
-        p.copy(blurTracks = p.blurTracks.map {
-            if (it.id == id) it.copy(
-                normalizedX = normX.coerceIn(0.01f, 0.99f),
-                normalizedY = normY.coerceIn(0.01f, 0.99f),
-                width = width.coerceIn(0.03f, 1.2f),
-                height = height.coerceIn(0.03f, 1.2f),
-                rotation = (rotation % 360f + 360f) % 360f
-            ) else it
+        p.copy(blurTracks = p.blurTracks.map { old ->
+            if (old.id == id) {
+                val oldW = old.width.coerceAtLeast(0.01f)
+                val oldH = old.height.coerceAtLeast(0.01f)
+                val scaleW = width / oldW
+                val scaleH = height / oldH
+                val dx = normX - old.normalizedX
+                val dy = normY - old.normalizedY
+
+                val updatedKfs = if (old.keyframes.isNotEmpty()) {
+                    old.keyframes.map { kf ->
+                        kf.copy(
+                            normalizedX = (kf.normalizedX + dx).coerceIn(0.02f, 0.98f),
+                            normalizedY = (kf.normalizedY + dy).coerceIn(0.02f, 0.98f),
+                            width = (kf.width * scaleW).coerceIn(0.03f, 1.2f),
+                            height = (kf.height * scaleH).coerceIn(0.03f, 1.2f),
+                            rotation = (kf.rotation + (rotation - old.rotation))
+                        )
+                    }
+                } else emptyList()
+
+                old.copy(
+                    normalizedX = normX.coerceIn(0.01f, 0.99f),
+                    normalizedY = normY.coerceIn(0.01f, 0.99f),
+                    width = width.coerceIn(0.03f, 1.2f),
+                    height = height.coerceIn(0.03f, 1.2f),
+                    rotation = (rotation % 360f + 360f) % 360f,
+                    keyframes = updatedKfs
+                )
+            } else old
         })
     }
     fun clearBlurTracking(id: String) = updateBlurTrack(id) { it.copy(keyframes = emptyList()) }
@@ -343,6 +383,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun startMotionTracking(
         blurId: String,
         mode: com.clipcut.core.feature.TrackingMode,
+        anchorPtsUs: Long = playerManager.currentPositionUs.value,
         onFinished: (Boolean) -> Unit = {}
     ) {
         val proj = _project.value ?: return
@@ -350,22 +391,24 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val mainClip = proj.videoClips.firstOrNull() ?: return
         val tracker = com.clipcut.core.feature.MotionTracker(getApplication())
 
-        _trackingState.value = "Starting AI Motion Tracker..."
+        _trackingState.value = "Locking target at playhead..."
         viewModelScope.launch {
             try {
+                val currentTransform = blur.getTransformAt(anchorPtsUs)
                 val kfs = tracker.track(
                     videoUri = mainClip.uri,
-                    initialX = blur.normalizedX,
-                    initialY = blur.normalizedY,
-                    initialW = blur.width,
-                    initialH = blur.height,
-                    initialRotation = blur.rotation,
+                    initialX = currentTransform.normalizedX,
+                    initialY = currentTransform.normalizedY,
+                    initialW = currentTransform.width,
+                    initialH = currentTransform.height,
+                    initialRotation = currentTransform.rotation,
                     startTimeUs = blur.timelineStartUs,
                     endTimeUs = blur.timelineEndUs,
+                    anchorPtsUs = anchorPtsUs.coerceIn(blur.timelineStartUs, blur.timelineEndUs),
                     mode = mode,
                     onProgress = { prog ->
                         val pct = (prog * 100).toInt()
-                        _trackingState.value = "Tracking motion ($pct%)..."
+                        _trackingState.value = "Tracking target ($pct%)..."
                     }
                 )
 
@@ -378,6 +421,73 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             } catch (t: Throwable) {
                 AppLog.e(TAG, "Motion tracking failed: ${t.message}", t)
                 onFinished(false)
+            } finally {
+                _trackingState.value = null
+            }
+        }
+    }
+
+    fun autoBlurAllFaces(currentPlayheadUs: Long) {
+        val proj = _project.value ?: return
+        val mainClip = proj.videoClips.firstOrNull() ?: return
+        val tracker = com.clipcut.core.feature.MotionTracker(getApplication())
+
+        _trackingState.value = "Scanning frame for all faces..."
+        viewModelScope.launch {
+            try {
+                val faces = tracker.detectAllFacesAt(mainClip.uri, currentPlayheadUs)
+                if (faces.isEmpty()) {
+                    _trackingState.value = null
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(getApplication(), "No faces detected at current playhead", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+
+                _trackingState.value = "Found ${faces.size} faces! Tracking all across video..."
+                val totalDur = proj.totalDurationUs.coerceAtLeast(3_000_000L)
+                val newBlurTracks = mutableListOf<com.clipcut.core.model.BlurTrackItem>()
+
+                for ((idx, face) in faces.withIndex()) {
+                    val kfs = tracker.track(
+                        videoUri = mainClip.uri,
+                        initialX = face.normCenterX,
+                        initialY = face.normCenterY,
+                        initialW = face.normWidth,
+                        initialH = face.normHeight,
+                        initialRotation = 0f,
+                        startTimeUs = 0L,
+                        endTimeUs = totalDur,
+                        anchorPtsUs = currentPlayheadUs,
+                        mode = com.clipcut.core.feature.TrackingMode.FACE,
+                        onProgress = { p ->
+                            val pct = (p * 100).toInt()
+                            _trackingState.value = "Tracking Face ${idx + 1}/${faces.size} ($pct%)..."
+                        }
+                    )
+
+                    val blurTrack = com.clipcut.core.model.BlurTrackItem(
+                        timelineStartUs = 0L,
+                        timelineEndUs = totalDur,
+                        normalizedX = face.normCenterX,
+                        normalizedY = face.normCenterY,
+                        width = face.normWidth,
+                        height = face.normHeight,
+                        shape = com.clipcut.core.model.BlurShape.OVAL,
+                        blurType = com.clipcut.core.model.BlurType.GAUSSIAN,
+                        intensity = 0.65f,
+                        feather = 0.20f,
+                        keyframes = kfs
+                    )
+                    newBlurTracks.add(blurTrack)
+                }
+
+                mutate { p -> p.copy(blurTracks = p.blurTracks + newBlurTracks) }
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(getApplication(), "Auto-blurred and tracked ${faces.size} faces!", android.widget.Toast.LENGTH_LONG).show()
+                }
+            } catch (t: Throwable) {
+                AppLog.e(TAG, "Bulk face tracking failed: ${t.message}", t)
             } finally {
                 _trackingState.value = null
             }

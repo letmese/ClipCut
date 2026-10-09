@@ -926,6 +926,7 @@ fun BlurSheet(
     trackingStatus: String?,
     onUpdate: (BlurTrackItem) -> Unit,
     onStartTracking: (com.clipcut.core.feature.TrackingMode) -> Unit,
+    onAutoBlurAllFaces: (() -> Unit)? = null,
     onClearTracking: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
@@ -1085,9 +1086,18 @@ fun BlurSheet(
             Spacer(Modifier.height(8.dp))
         }
 
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (onAutoBlurAllFaces != null) {
             PrimaryButton(
-                "⚡ Auto Track Face (AI)",
+                "⚡ Auto-Detect & Blur All Faces in Video",
+                onClick = onAutoBlurAllFaces,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SecondaryButton(
+                "⚡ Track Selected Face",
                 onClick = { onStartTracking(com.clipcut.core.feature.TrackingMode.FACE) },
                 modifier = Modifier.weight(1f)
             )

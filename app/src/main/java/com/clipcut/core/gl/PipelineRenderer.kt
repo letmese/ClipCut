@@ -93,7 +93,13 @@ class PipelineRenderer(private val context: Context) {
         transitionType: com.clipcut.core.model.TransitionType = com.clipcut.core.model.TransitionType.NONE,
         prevClipTexId: Int? = null,
         activeBlurs: List<BlurTrackItem> = emptyList(),
-        timelinePtsUs: Long = 0L
+        timelinePtsUs: Long = 0L,
+        editingBlurId: String? = null,
+        editingBlurX: Float? = null,
+        editingBlurY: Float? = null,
+        editingBlurW: Float? = null,
+        editingBlurH: Float? = null,
+        editingBlurRot: Float? = null
     ) {
         if (!initialised) return
 
@@ -223,15 +229,22 @@ class PipelineRenderer(private val context: Context) {
             if (blurF != null) {
                 for (blurItem in activeBlurs) {
                     if (timelinePtsUs in blurItem.timelineStartUs..blurItem.timelineEndUs) {
+                        val isEditing = (blurItem.id == editingBlurId && editingBlurX != null)
                         val tf = blurItem.getTransformAt(timelinePtsUs)
+                        val cx = if (isEditing) editingBlurX!! else tf.normalizedX
+                        val cy = if (isEditing) (editingBlurY ?: tf.normalizedY) else tf.normalizedY
+                        val w = if (isEditing) (editingBlurW ?: tf.width) else tf.width
+                        val h = if (isEditing) (editingBlurH ?: tf.height) else tf.height
+                        val rot = if (isEditing) (editingBlurRot ?: tf.rotation) else tf.rotation
+
                         blurF.updateConfig(
                             blurTypeEnum = blurItem.blurType,
                             shapeEnum = blurItem.shape,
-                            cx = tf.normalizedX,
-                            cy = tf.normalizedY,
-                            w = tf.width,
-                            h = tf.height,
-                            rotationDegrees = tf.rotation,
+                            cx = cx,
+                            cy = cy,
+                            w = w,
+                            h = h,
+                            rotationDegrees = rot,
                             featherVal = blurItem.feather,
                             intensityVal = blurItem.intensity
                         )
@@ -269,7 +282,13 @@ class PipelineRenderer(private val context: Context) {
         transitionProgress: Float = 0f,
         prevClipTexId: Int? = null,
         activeBlurs: List<BlurTrackItem> = emptyList(),
-        timelinePtsUs: Long = 0L
+        timelinePtsUs: Long = 0L,
+        editingBlurId: String? = null,
+        editingBlurX: Float? = null,
+        editingBlurY: Float? = null,
+        editingBlurW: Float? = null,
+        editingBlurH: Float? = null,
+        editingBlurRot: Float? = null
     ) {
         renderFrame(
             sourceTexId, sourceTexMatrix, sourceIsOes, mvpMatrix, rotationDegrees,
@@ -278,7 +297,8 @@ class PipelineRenderer(private val context: Context) {
             clip.lutConfig, clip.maskConfig, clip.blendMode, null,
             clip.effectId, clip.effectIntensity,
             transitionProgress, clip.transitionType, prevClipTexId,
-            activeBlurs, timelinePtsUs
+            activeBlurs, timelinePtsUs,
+            editingBlurId, editingBlurX, editingBlurY, editingBlurW, editingBlurH, editingBlurRot
         )
     }
 

@@ -903,12 +903,15 @@ fun EditorScreen(
                                                         change.consume()
                                                         localNormX = (localNormX + dragAmount.x / bw).coerceIn(0.02f, 0.98f)
                                                         localNormY = (localNormY + dragAmount.y / bh).coerceIn(0.02f, 0.98f)
+                                                        viewModel.previewRenderer.setEditingBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                        viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                     },
                                                     onDragCancel = {
                                                         viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                        viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                     }
                                                 )
                                             },
@@ -965,12 +968,15 @@ fun EditorScreen(
                                                         val deltaH = (dragAmount.y * 2f) / bh
                                                         localWidth = (localWidth + deltaW).coerceIn(0.04f, 1.0f)
                                                         localHeight = (localHeight + deltaH).coerceIn(0.04f, 1.0f)
+                                                        viewModel.previewRenderer.setEditingBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                        viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                     },
                                                     onDragCancel = {
                                                         viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                        viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                     }
                                                 )
                                             },
@@ -1027,12 +1033,15 @@ fun EditorScreen(
                                                             val rotDelta = dragAmount.x * 1.0f
                                                             localRotation = ((localRotation + rotDelta) % 360f + 360f) % 360f
                                                         }
+                                                        viewModel.previewRenderer.setEditingBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
                                                     },
                                                     onDragEnd = {
                                                         viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                        viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                     },
                                                     onDragCancel = {
                                                         viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                        viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                     }
                                                 )
                                             },
@@ -1321,11 +1330,20 @@ fun EditorScreen(
 
                                 IconButton(
                                     onClick = {
-                                        viewModel.startMotionTracking(activeBlur.id, com.clipcut.core.feature.TrackingMode.FACE)
+                                        viewModel.startMotionTracking(activeBlur.id, com.clipcut.core.feature.TrackingMode.FACE, positionUs)
                                     },
                                     modifier = Modifier.size(32.dp)
                                 ) {
-                                    Icon(Icons.Filled.PlayArrow, "Auto Face Track", tint = Color.White, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Filled.PlayArrow, "Track Target", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        viewModel.autoBlurAllFaces(positionUs)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Layers, "Blur All Faces", tint = Color(0xFF00E5FF), modifier = Modifier.size(18.dp))
                                 }
 
                                 Box(modifier = Modifier.width(1.dp).height(18.dp).background(Color.White.copy(alpha = 0.2f)))
@@ -1719,7 +1737,11 @@ fun EditorScreen(
                         viewModel.updateBlurTrack(updated)
                     },
                     onStartTracking = { mode ->
-                        viewModel.startMotionTracking(itemToEdit.id, mode)
+                        viewModel.startMotionTracking(itemToEdit.id, mode, positionUs)
+                    },
+                    onAutoBlurAllFaces = {
+                        viewModel.autoBlurAllFaces(positionUs)
+                        selectedTool = null
                     },
                     onClearTracking = {
                         viewModel.clearBlurTracking(itemToEdit.id)
