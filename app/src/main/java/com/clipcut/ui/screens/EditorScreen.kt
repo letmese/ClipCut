@@ -932,7 +932,8 @@ fun EditorScreen(
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.TopEnd)
-                                            .size(36.dp)
+                                            .offset(x = 6.dp, y = (-6).dp)
+                                            .size(34.dp)
                                             .background(Color(0xFFE53935), CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
                                             .clickable(
@@ -949,18 +950,19 @@ fun EditorScreen(
                                             imageVector = Icons.Filled.Close,
                                             contentDescription = "Delete Blur",
                                             tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
 
-                                    // Bottom-Right: Freeform Resize handle
+                                    // Bottom-Right: Freeform Resize handle (prominent 44dp touch target)
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.BottomEnd)
-                                            .size(36.dp)
+                                            .offset(x = 8.dp, y = 8.dp)
+                                            .size(44.dp)
                                             .background(Color(0xFF00E5FF), CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
-                                            .pointerInput(blur.id) {
+                                            .pointerInput(blur.id, bw, bh) {
                                                 detectDragGestures(
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
@@ -986,97 +988,102 @@ fun EditorScreen(
                                             imageVector = Icons.Filled.OpenInFull,
                                             contentDescription = "Resize Blur",
                                             tint = Color.Black,
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
 
-                                    // Bottom-Left: Rotate handle
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.BottomStart)
-                                            .size(36.dp)
-                                            .background(Surface3, CircleShape)
-                                            .border(2.dp, Color.White, CircleShape)
-                                            .onGloballyPositioned { blurRotateHandleCoords = it }
-                                            .pointerInput(blur.id, bw, bh) {
-                                                detectDragGestures(
-                                                    onDragStart = { offset ->
-                                                        selectedBlurId = blur.id
-                                                        blurRotateStartRotation = localRotation
-                                                        val touchPos = try {
-                                                            if (previewCoords?.isAttached == true && blurRotateHandleCoords?.isAttached == true) {
-                                                                previewCoords?.localPositionOf(blurRotateHandleCoords!!, offset)
-                                                            } else null
-                                                        } catch (_: Throwable) { null }
-                                                        if (touchPos != null) {
-                                                            val dx = touchPos.x - (localNormX * bw)
-                                                            val dy = touchPos.y - (localNormY * bh)
-                                                            blurRotateStartAngleDeg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                                    // Only show Rotate & Edit corners when box is spacious enough to avoid touch overlap
+                                    if (boxW > 85f && boxH > 85f) {
+                                        // Bottom-Left: Rotate handle
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomStart)
+                                                .offset(x = (-6).dp, y = 6.dp)
+                                                .size(34.dp)
+                                                .background(Surface3, CircleShape)
+                                                .border(2.dp, Color.White, CircleShape)
+                                                .onGloballyPositioned { blurRotateHandleCoords = it }
+                                                .pointerInput(blur.id, bw, bh) {
+                                                    detectDragGestures(
+                                                        onDragStart = { offset ->
+                                                            selectedBlurId = blur.id
+                                                            blurRotateStartRotation = localRotation
+                                                            val touchPos = try {
+                                                                if (previewCoords?.isAttached == true && blurRotateHandleCoords?.isAttached == true) {
+                                                                    previewCoords?.localPositionOf(blurRotateHandleCoords!!, offset)
+                                                                } else null
+                                                            } catch (_: Throwable) { null }
+                                                            if (touchPos != null) {
+                                                                val dx = touchPos.x - (localNormX * bw)
+                                                                val dy = touchPos.y - (localNormY * bh)
+                                                                blurRotateStartAngleDeg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                                                            }
+                                                        },
+                                                        onDrag = { change, dragAmount ->
+                                                            change.consume()
+                                                            val touchPos = try {
+                                                                if (previewCoords?.isAttached == true && blurRotateHandleCoords?.isAttached == true) {
+                                                                    previewCoords?.localPositionOf(blurRotateHandleCoords!!, change.position)
+                                                                } else null
+                                                            } catch (_: Throwable) { null }
+                                                            if (touchPos != null) {
+                                                                val dx = touchPos.x - (localNormX * bw)
+                                                                val dy = touchPos.y - (localNormY * bh)
+                                                                val currentAngleDeg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                                                                var deltaDeg = currentAngleDeg - blurRotateStartAngleDeg
+                                                                while (deltaDeg > 180f) deltaDeg -= 360f
+                                                                while (deltaDeg < -180f) deltaDeg += 360f
+                                                                localRotation = ((blurRotateStartRotation + deltaDeg) % 360f + 360f) % 360f
+                                                            } else {
+                                                                val rotDelta = dragAmount.x * 1.0f
+                                                                localRotation = ((localRotation + rotDelta) % 360f + 360f) % 360f
+                                                            }
+                                                            viewModel.previewRenderer.setEditingBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                        },
+                                                        onDragEnd = {
+                                                            viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                            viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
+                                                        },
+                                                        onDragCancel = {
+                                                            viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                            viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                         }
-                                                    },
-                                                    onDrag = { change, dragAmount ->
-                                                        change.consume()
-                                                        val touchPos = try {
-                                                            if (previewCoords?.isAttached == true && blurRotateHandleCoords?.isAttached == true) {
-                                                                previewCoords?.localPositionOf(blurRotateHandleCoords!!, change.position)
-                                                            } else null
-                                                        } catch (_: Throwable) { null }
-                                                        if (touchPos != null) {
-                                                            val dx = touchPos.x - (localNormX * bw)
-                                                            val dy = touchPos.y - (localNormY * bh)
-                                                            val currentAngleDeg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
-                                                            var deltaDeg = currentAngleDeg - blurRotateStartAngleDeg
-                                                            while (deltaDeg > 180f) deltaDeg -= 360f
-                                                            while (deltaDeg < -180f) deltaDeg += 360f
-                                                            localRotation = ((blurRotateStartRotation + deltaDeg) % 360f + 360f) % 360f
-                                                        } else {
-                                                            val rotDelta = dragAmount.x * 1.0f
-                                                            localRotation = ((localRotation + rotDelta) % 360f + 360f) % 360f
-                                                        }
-                                                        viewModel.previewRenderer.setEditingBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
-                                                    },
-                                                    onDragEnd = {
-                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
-                                                        viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
-                                                    },
-                                                    onDragCancel = {
-                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
-                                                        viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
-                                                    }
-                                                )
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.RotateRight,
-                                            contentDescription = "Rotate Blur",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
+                                                    )
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.RotateRight,
+                                                contentDescription = "Rotate Blur",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
 
-                                    // Top-Left: Edit button
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.TopStart)
-                                            .size(36.dp)
-                                            .background(Color(0xFF00E5FF), CircleShape)
-                                            .border(2.dp, Color.White, CircleShape)
-                                            .clickable(
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = null
-                                            ) {
-                                                selectedBlurId = blur.id
-                                                selectedTool = EditorTool.BLUR
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Edit,
-                                            contentDescription = "Edit Blur",
-                                            tint = Color.Black,
-                                            modifier = Modifier.size(18.dp)
-                                        )
+                                        // Top-Left: Edit button
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopStart)
+                                                .offset(x = (-6).dp, y = (-6).dp)
+                                                .size(34.dp)
+                                                .background(Color(0xFF00E5FF), CircleShape)
+                                                .border(2.dp, Color.White, CircleShape)
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null
+                                                ) {
+                                                    selectedBlurId = blur.id
+                                                    selectedTool = EditorTool.BLUR
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Edit,
+                                                contentDescription = "Edit Blur",
+                                                tint = Color.Black,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
                                     }
                                 }
                             } else {
@@ -1326,6 +1333,26 @@ fun EditorScreen(
                                     modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(Icons.Filled.Edit, "Edit Blur", tint = Color(0xFF00E5FF), modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        val cur = activeBlur.getTransformAt(positionUs)
+                                        viewModel.commitBlurTransform(activeBlur.id, cur.normalizedX, cur.normalizedY, (cur.width * 0.82f).coerceAtLeast(0.04f), (cur.height * 0.82f).coerceAtLeast(0.04f), cur.rotation)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Remove, "Smaller", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        val cur = activeBlur.getTransformAt(positionUs)
+                                        viewModel.commitBlurTransform(activeBlur.id, cur.normalizedX, cur.normalizedY, (cur.width * 1.20f).coerceAtMost(0.95f), (cur.height * 1.20f).coerceAtMost(0.95f), cur.rotation)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Add, "Bigger", tint = Color.White, modifier = Modifier.size(18.dp))
                                 }
 
                                 IconButton(

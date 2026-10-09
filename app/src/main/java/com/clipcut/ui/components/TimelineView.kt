@@ -5,9 +5,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -98,8 +98,9 @@ fun TimelineView(
     val timelineWidthDp = ((totalUs / usPerDp).coerceIn(400f, 100_000f) + 240f).dp
     val playheadDp = (currentPositionUs.coerceAtLeast(0L) / usPerDp).dp
 
-    // Auto-scroll timeline to follow playhead during playback
-    LaunchedEffect(currentPositionUs) {
+    // Auto-scroll timeline to follow playhead only during active playback
+    LaunchedEffect(currentPositionUs, isPlaying) {
+        if (!isPlaying) return@LaunchedEffect
         val playheadPx = with(density) { playheadDp.toPx() }
         val viewportWidth = scrollState.viewportSize
         if (viewportWidth > 0) {
@@ -206,16 +207,25 @@ fun TimelineView(
             }
         }
 
-        // Shared scrollable track area with pinch-to-zoom
+        // Shared scrollable track area with 2-finger pinch-to-zoom (1 finger scrolls smoothly)
         Box(
             modifier = Modifier
                 .weight(1f)
                 .horizontalScroll(scrollState)
                 .pointerInput(Unit) {
-                    detectTransformGestures { _, _, zoom, _ ->
-                        if (zoom != 1f) {
-                            zoomLevel = (zoomLevel * zoom).coerceIn(0.5f, 3.0f)
-                        }
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        do {
+                            val event = awaitPointerEvent()
+                            val pressedChanges = event.changes.filter { it.pressed }
+                            if (pressedChanges.size >= 2) {
+                                val zoomChange = event.calculateZoom()
+                                if (zoomChange != 1f) {
+                                    zoomLevel = (zoomLevel * zoomChange).coerceIn(0.5f, 3.0f)
+                                    pressedChanges.forEach { it.consume() }
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
                     }
                 }
         ) {
