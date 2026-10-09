@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.FilterCenterFocus
@@ -495,11 +496,35 @@ fun EditorScreen(
                                         )
                                     }
 
-                                    // Top-Left: Reset Rotation to 0°
+                                    // Top-Left: Dedicated Edit Button (40dp easy tap target)
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.TopStart)
                                             .size(40.dp)
+                                            .background(Color(0xFF29B6F6), CircleShape)
+                                            .border(2.dp, Color.White, CircleShape)
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                selectedOverlayId = overlay.id
+                                                selectedTool = EditorTool.TEXT
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Edit,
+                                            contentDescription = "Edit Text",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+
+                                    // Top-Center: Reset Rotation to 0°
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopCenter)
+                                            .size(36.dp)
                                             .background(Surface2, CircleShape)
                                             .border(1.5.dp, Color.White.copy(alpha = 0.8f), CircleShape)
                                             .clickable(
@@ -515,7 +540,7 @@ fun EditorScreen(
                                             imageVector = Icons.Filled.FilterCenterFocus,
                                             contentDescription = "Reset Angle",
                                             tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
                                 }
@@ -1049,8 +1074,20 @@ fun EditorScreen(
 
     // Bottom sheet host routes content based on selectedTool.
     val tool = selectedTool
-    val sid = selectedClipId
-    val clip = project?.videoClips?.firstOrNull { it.id == sid }
+    val currentPlayheadUs = positionUs
+    val targetClip = if (selectedClipId != null) {
+        project?.videoClips?.firstOrNull { it.id == selectedClipId }
+    } else {
+        var acc = 0L
+        project?.videoClips?.find { c ->
+            val end = acc + c.effectiveDurationUs
+            val hit = currentPlayheadUs in acc until end
+            acc = end
+            hit
+        } ?: project?.videoClips?.firstOrNull()
+    }
+    val sid = selectedClipId ?: targetClip?.id
+    val clip = targetClip
     UnifiedBottomSheetHost(
         title = when (activeSpecialSheet) {
             "voiceover" -> "Voiceover"
@@ -1166,29 +1203,58 @@ fun EditorScreen(
                 initialColor = clip?.chromaKeyColor ?: floatArrayOf(0f, 1f, 0f),
                 initialThreshold = clip?.chromaKeyThreshold ?: 0.15f,
                 initialSmoothness = clip?.chromaKeySmoothness ?: 0.05f,
-                onApply = { c, t, s -> sid?.let { viewModel.setClipChromaKey(it, c, t, s) } },
+                onApply = { c, t, s ->
+                    sid?.let {
+                        viewModel.setClipChromaKey(it, c, t, s)
+                        android.widget.Toast.makeText(ctx, "Chroma key applied", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    selectedTool = null
+                },
                 onDismiss = { selectedTool = null }
             )
             EditorTool.MASK -> MaskDialog(
                 initial = clip?.maskConfig ?: com.clipcut.core.model.MaskConfig(),
-                onApply = { m -> sid?.let { viewModel.setClipMask(it, m) } },
+                onApply = { m ->
+                    sid?.let {
+                        viewModel.setClipMask(it, m)
+                        android.widget.Toast.makeText(ctx, "Mask applied", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    selectedTool = null
+                },
                 onDismiss = { selectedTool = null }
             )
             EditorTool.BLEND -> BlendModeDialog(
                 initial = clip?.blendMode ?: com.clipcut.core.model.BlendMode.NORMAL,
-                onApply = { b -> sid?.let { viewModel.setClipBlendMode(it, b) } },
-                onDismiss = { selectedTool = null }
-            )
-            EditorTool.TEXT -> TextSheet(
-                playheadUs = positionUs,
-                totalDurationUs = project?.totalDurationUs ?: 5_000_000L,
-                onApply = { overlay ->
-                    viewModel.addOverlay(overlay)
-                    selectedOverlayId = overlay.id
+                onApply = { b ->
+                    sid?.let {
+                        viewModel.setClipBlendMode(it, b)
+                        android.widget.Toast.makeText(ctx, "Blend mode applied: ${b.displayName}", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    selectedTool = null
                 },
-                onOpenCaptions = { activeSpecialSheet = "captions" },
                 onDismiss = { selectedTool = null }
             )
+            EditorTool.TEXT -> {
+                val editingOverlay = project?.overlays?.firstOrNull { it.id == selectedOverlayId }
+                TextSheet(
+                    initialOverlay = editingOverlay,
+                    playheadUs = positionUs,
+                    totalDurationUs = project?.totalDurationUs ?: 5_000_000L,
+                    onApply = { overlay ->
+                        if (editingOverlay != null) {
+                            viewModel.updateOverlay(editingOverlay.id) { overlay }
+                            android.widget.Toast.makeText(ctx, "Text updated", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.addOverlay(overlay)
+                            selectedOverlayId = overlay.id
+                            android.widget.Toast.makeText(ctx, "Text added", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        selectedTool = null
+                    },
+                    onOpenCaptions = { activeSpecialSheet = "captions" },
+                    onDismiss = { selectedTool = null }
+                )
+            }
             EditorTool.STICKER -> StickerSheet(
                 onPick = { stickerRes ->
                     val newSticker = com.clipcut.core.model.OverlayItem(
@@ -1215,6 +1281,10 @@ fun EditorScreen(
                     viewModel.addOverlay(o)
                     selectedOverlayId = o.id
                     selectedPipId = null
+                },
+                onEditOverlay = { id ->
+                    selectedOverlayId = id
+                    selectedTool = EditorTool.TEXT
                 },
                 onDeleteOverlay = { id ->
                     if (selectedOverlayId == id) selectedOverlayId = null

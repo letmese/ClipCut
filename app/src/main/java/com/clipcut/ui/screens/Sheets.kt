@@ -793,6 +793,7 @@ fun OverlaySheet(
     existingOverlays: List<OverlayItem> = emptyList(),
     existingPips: List<PiPTrackItem> = emptyList(),
     onAddOverlay: (OverlayItem) -> Unit,
+    onEditOverlay: (String) -> Unit = {},
     onDeleteOverlay: (String) -> Unit = {},
     onDeletePip: (String) -> Unit = {},
     onTrimPip: (String, Long, Long) -> Unit = { _, _, _ -> },
@@ -809,7 +810,12 @@ fun OverlaySheet(
         existingOverlays.forEach { o ->
             Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Text: ${o.text.ifEmpty { "Caption" }}", color = Color.White, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                IconButton(onClick = { onDeleteOverlay(o.id) }) { Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = AccentPrimary) }
+                IconButton(onClick = { onEditOverlay(o.id) }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.Edit, contentDescription = "Edit Text", tint = Color(0xFF29B6F6), modifier = Modifier.size(18.dp))
+                }
+                IconButton(onClick = { onDeleteOverlay(o.id) }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = AccentPrimary, modifier = Modifier.size(18.dp))
+                }
             }
         }
         existingPips.forEach { p ->
@@ -1306,23 +1312,24 @@ fun TrimSheet(startUs: Long, endUs: Long, onApply: (Long, Long) -> Unit, onDismi
 
 @Composable
 fun TextSheet(
+    initialOverlay: OverlayItem? = null,
     playheadUs: Long = 0L,
     totalDurationUs: Long = 5_000_000L,
     onApply: (OverlayItem) -> Unit,
     onOpenCaptions: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
-    var text by remember { mutableStateOf("") }
-    var size by remember { mutableStateOf(28f) }
-    var bold by remember { mutableStateOf(true) }
-    var selectedColor by remember { mutableStateOf(0xFFFFFFFFL) }
-    var selectedBgColor by remember { mutableStateOf(0x00000000L) }
+    var text by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.text ?: "") }
+    var size by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.textSizeSp ?: 28f) }
+    var bold by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.textBold ?: true) }
+    var selectedColor by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.textColor ?: 0xFFFFFFFFL) }
+    var selectedBgColor by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.backgroundColor ?: 0x00000000L) }
 
-    var italic by remember { mutableStateOf(false) }
-    var selectedFont by remember { mutableStateOf(FontFamilyOption.DEFAULT) }
-    var selectedAnimation by remember { mutableStateOf(TextAnimation.NONE) }
-    var hasShadow by remember { mutableStateOf(true) }
-    var hasStroke by remember { mutableStateOf(false) }
+    var italic by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.textItalic ?: false) }
+    var selectedFont by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.fontFamily ?: FontFamilyOption.DEFAULT) }
+    var selectedAnimation by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.animation ?: TextAnimation.NONE) }
+    var hasShadow by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.dropShadow ?: true) }
+    var hasStroke by remember(initialOverlay?.id) { mutableStateOf((initialOverlay?.strokeWidthPx ?: 0f) > 0f) }
 
     val textColors = listOf(
         0xFFFFFFFFL to Color.White,
@@ -1343,7 +1350,7 @@ fun TextSheet(
     )
 
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-        SheetHeader("Text Overlay", onDismiss)
+        SheetHeader(if (initialOverlay != null) "Edit Text Overlay" else "Text Overlay", onDismiss)
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
             value = text, onValueChange = { text = it },
@@ -1433,27 +1440,26 @@ fun TextSheet(
         }
 
         Spacer(Modifier.height(12.dp))
-        PrimaryButton("Add Text to Timeline", onClick = {
+        PrimaryButton(if (initialOverlay != null) "Update Text Overlay" else "Add Text to Timeline", onClick = {
             if (text.isNotBlank()) {
-                val startUs = playheadUs.coerceAtLeast(0L)
-                val endUs = (startUs + 3_000_000L).let { if (totalDurationUs > startUs) it.coerceAtMost(totalDurationUs) else it }.coerceAtLeast(startUs + 500_000L)
-                onApply(
-                    OverlayItem(
-                        text = text,
-                        textSizeSp = size,
-                        textBold = bold,
-                        textItalic = italic,
-                        fontFamily = selectedFont,
-                        textColor = selectedColor,
-                        backgroundColor = selectedBgColor,
-                        strokeColor = if (hasStroke) 0xFF000000L else 0L,
-                        strokeWidthPx = if (hasStroke) 4f else 0f,
-                        dropShadow = hasShadow,
-                        animation = selectedAnimation,
-                        timelineStartUs = startUs,
-                        timelineEndUs = endUs
-                    )
+                val startUs = initialOverlay?.timelineStartUs ?: playheadUs.coerceAtLeast(0L)
+                val endUs = initialOverlay?.timelineEndUs ?: ((startUs + 3_000_000L).let { if (totalDurationUs > startUs) it.coerceAtMost(totalDurationUs) else it }.coerceAtLeast(startUs + 500_000L))
+                val targetItem = (initialOverlay ?: OverlayItem()).copy(
+                    text = text,
+                    textSizeSp = size,
+                    textBold = bold,
+                    textItalic = italic,
+                    fontFamily = selectedFont,
+                    textColor = selectedColor,
+                    backgroundColor = selectedBgColor,
+                    strokeColor = if (hasStroke) 0xFF000000L else 0L,
+                    strokeWidthPx = if (hasStroke) 4f else 0f,
+                    dropShadow = hasShadow,
+                    animation = selectedAnimation,
+                    timelineStartUs = startUs,
+                    timelineEndUs = endUs
                 )
+                onApply(targetItem)
                 onDismiss()
             }
         }, modifier = Modifier.fillMaxWidth())
