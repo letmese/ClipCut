@@ -186,6 +186,40 @@ fun EditorScreen(
                         EditorTool.UNDO -> viewModel.undo()
                         EditorTool.REDO -> viewModel.redo()
                         EditorTool.SPLIT -> viewModel.splitClipAtPlayhead()
+                        EditorTool.DELETE -> {
+                            val ovId = selectedOverlayId
+                            val pipId = selectedPipId
+                            val clipId = selectedClipId
+                            if (ovId != null) {
+                                viewModel.removeOverlay(ovId)
+                                selectedOverlayId = null
+                                android.widget.Toast.makeText(ctx, "Overlay deleted", android.widget.Toast.LENGTH_SHORT).show()
+                            } else if (pipId != null) {
+                                viewModel.removePipTrack(pipId)
+                                selectedPipId = null
+                                android.widget.Toast.makeText(ctx, "PiP layer deleted", android.widget.Toast.LENGTH_SHORT).show()
+                            } else if (clipId != null) {
+                                viewModel.deleteClip(clipId)
+                                viewModel.selectClip(null)
+                                android.widget.Toast.makeText(ctx, "Clip deleted", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                val currentPlayhead = viewModel.playerManager.currentPositionUs.value
+                                var acc = 0L
+                                val clipAtPlayhead = project?.videoClips?.find { c ->
+                                    val end = acc + c.effectiveDurationUs
+                                    val hit = currentPlayhead in acc until end
+                                    acc = end
+                                    hit
+                                } ?: project?.videoClips?.lastOrNull()
+                                if (clipAtPlayhead != null) {
+                                    viewModel.deleteClip(clipAtPlayhead.id)
+                                    viewModel.selectClip(null)
+                                    android.widget.Toast.makeText(ctx, "Clip deleted", android.widget.Toast.LENGTH_SHORT).show()
+                                } else {
+                                    android.widget.Toast.makeText(ctx, "No clip to delete", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
                         else -> selectedTool = tool
                     }
                 },
@@ -990,7 +1024,9 @@ fun EditorScreen(
                     viewModel.playerManager.pause()
                     viewModel.playerManager.seekToUs(0L)
                 },
-                onSelectClip = { viewModel.selectClip(it) },
+                onSelectClip = { id ->
+                    if (selectedClipId == id) viewModel.selectClip(null) else viewModel.selectClip(id)
+                },
                 onSeek = { viewModel.playerManager.seekToUs(it) },
                 onAddMediaClick = { pickMedia.launch(arrayOf("video/*", "image/*")) },
                 onTrimClip = { id, s, e -> viewModel.trimClip(id, s, e) },

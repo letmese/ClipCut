@@ -41,6 +41,7 @@ enum class EditorTool(val label: String, val icon: ImageVector) {
     UNDO("Undo", Icons.Filled.Undo),
     REDO("Redo", Icons.Filled.Redo),
     SPLIT("Split", Icons.Filled.ContentCut),
+    DELETE("Delete", Icons.Filled.Delete),
     TRIM("Trim", Icons.Filled.ArrowBack),
     SPEED("Speed", Icons.Filled.Speed),
     VOLUME("Volume", Icons.Filled.VolumeUp),

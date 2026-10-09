@@ -35,6 +35,16 @@ private data class PipVideoPlayerItem(
     var trimEndUs: Long
 )
 
+private data class PlayerSegment(
+    val uri: String,
+    val timelineStartUs: Long,
+    val timelineEndUs: Long,
+    val sourceStartUs: Long,
+    val sourceEndUs: Long,
+    val speed: Float,
+    val volume: Float
+)
+
 /**
  * PreviewPlayerManager — wraps a single ExoPlayer instance for preview.
  *
@@ -62,6 +72,7 @@ class PreviewPlayerManager(private val context: Context) {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     @Volatile private var cachedClips: List<TimelineItem> = emptyList()
+    @Volatile private var cachedSegments: List<PlayerSegment> = emptyList()
     @Volatile private var cachedAudioTracks: List<AudioTrackItem> = emptyList()
     @Volatile private var projectVideoVolume: Float = 1.0f
     @Volatile private var backgroundMusicVolume: Float = 1.0f
@@ -84,34 +95,15 @@ class PreviewPlayerManager(private val context: Context) {
                 val p = player
                 val isPlayingNow = _isPlaying.value
                 if (isPlayingNow) {
-                    if (p != null && cachedClips.isNotEmpty()) {
+                    if (p != null && (cachedSegments.isNotEmpty() || cachedClips.isNotEmpty())) {
                         try {
                             val idx = p.currentMediaItemIndex
-                            val clips = cachedClips
-                            if (clips.isNotEmpty() && idx in clips.indices) {
-                                var accumulatedUs = 0L
-                                for (i in 0 until idx) {
-                                    accumulatedUs += clips[i].effectiveDurationUs
-                                }
-                                val currentClip = clips[idx]
-                                val targetSpeed = if (currentClip.speedRamp.isActive) {
-                                    val currentOffsetUs = (p.currentPosition * 1000L).coerceAtLeast(0L)
-                                    currentClip.speedRamp.speedAt(currentOffsetUs).coerceIn(0.1f, 8.0f)
-                                } else {
-                                    currentClip.speed.coerceIn(0.1f, 10.0f)
-                                }
-                                if (Math.abs(p.playbackParameters.speed - targetSpeed) > 0.02f) {
-                                    runOnMainThread {
-                                        p.playbackParameters = androidx.media3.common.PlaybackParameters(targetSpeed)
-                                    }
-                                }
-                                val speed = if (currentClip.speedRamp.isActive) {
-                                    currentClip.speedRamp.speedAt((p.currentPosition * 1000L).coerceAtLeast(0L)).coerceAtLeast(0.1f)
-                                } else {
-                                    currentClip.speed.coerceAtLeast(0.1f)
-                                }
-                                val clipOffsetUs = (p.currentPosition * 1000L / speed).toLong()
-                                _positionUs.value = accumulatedUs + clipOffsetUs
+                            val segments = cachedSegments
+                            if (segments.isNotEmpty() && idx in segments.indices) {
+                                val seg = segments[idx]
+                                val speed = seg.speed.coerceAtLeast(0.1f)
+                                val segOffsetUs = (p.currentPosition * 1000L / speed).toLong()
+                                _positionUs.value = (seg.timelineStartUs + segOffsetUs).coerceIn(0L, totalUs.coerceAtLeast(0L))
                             } else {
                                 _positionUs.value = p.currentPosition * 1000L
                             }
@@ -210,6 +202,65 @@ class PreviewPlayerManager(private val context: Context) {
             .build()
     }
 
+    private fun buildSegments(clips: List<TimelineItem>): List<PlayerSegment> {
+        if (clips.isEmpty()) return emptyList()
+        val segments = mutableListOf<PlayerSegment>()
+        var curUri = clips[0].uri
+        var curTlStart = 0L
+        var curSourceStart = clips[0].trimStartUs
+        var curSourceEnd = if (clips[0].trimEndUs > clips[0].trimStartUs) clips[0].trimEndUs else (clips[0].trimStartUs + clips[0].effectiveDurationUs)
+        var curSpeed = clips[0].speed
+        var curVolume = clips[0].volume
+        var curTlDuration = clips[0].effectiveDurationUs
+
+        for (i in 1 until clips.size) {
+            val next = clips[i]
+            val nextSourceStart = next.trimStartUs
+            val nextSourceEnd = if (next.trimEndUs > next.trimStartUs) next.trimEndUs else (next.trimStartUs + next.effectiveDurationUs)
+            val isContiguous = (next.uri == curUri) &&
+                    (Math.abs(next.speed - curSpeed) < 0.01f) &&
+                    !next.speedRamp.isActive &&
+                    !clips[i - 1].speedRamp.isActive &&
+                    (Math.abs(nextSourceStart - curSourceEnd) <= 2000L)
+
+            if (isContiguous) {
+                curSourceEnd = nextSourceEnd
+                curTlDuration += next.effectiveDurationUs
+            } else {
+                segments.add(
+                    PlayerSegment(
+                        uri = curUri,
+                        timelineStartUs = curTlStart,
+                        timelineEndUs = curTlStart + curTlDuration,
+                        sourceStartUs = curSourceStart,
+                        sourceEndUs = curSourceEnd,
+                        speed = curSpeed,
+                        volume = curVolume
+                    )
+                )
+                curTlStart += curTlDuration
+                curUri = next.uri
+                curSourceStart = nextSourceStart
+                curSourceEnd = nextSourceEnd
+                curSpeed = next.speed
+                curVolume = next.volume
+                curTlDuration = next.effectiveDurationUs
+            }
+        }
+        segments.add(
+            PlayerSegment(
+                uri = curUri,
+                timelineStartUs = curTlStart,
+                timelineEndUs = curTlStart + curTlDuration,
+                sourceStartUs = curSourceStart,
+                sourceEndUs = curSourceEnd,
+                speed = curSpeed,
+                volume = curVolume
+            )
+        )
+        return segments
+    }
+
     fun initialize(): ExoPlayer {
         player?.let { return it }
         val p = ExoPlayer.Builder(context)
@@ -221,7 +272,9 @@ class PreviewPlayerManager(private val context: Context) {
             override fun onIsPlayingChanged(playing: Boolean) { _isPlaying.value = playing }
             override fun onPlaybackStateChanged(state: Int) {
                 _isBuffering.value = state == Player.STATE_BUFFERING
-                if (state == Player.STATE_READY) _totalDurationUs.value = p.duration.coerceAtLeast(0L) * 1000L
+                if (state == Player.STATE_READY) {
+                    _totalDurationUs.value = if (totalUs > 0L) totalUs else (p.duration.coerceAtLeast(0L) * 1000L)
+                }
                 if (state == Player.STATE_ENDED) {
                     _isPlaying.value = false
                     for (item in audioTrackPlayers) {
@@ -236,9 +289,9 @@ class PreviewPlayerManager(private val context: Context) {
             }
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val idx = p.currentMediaItemIndex
-                val clip = cachedClips.getOrNull(idx) ?: return
-                p.playbackParameters = androidx.media3.common.PlaybackParameters(clip.speed.coerceAtLeast(0.1f))
-                p.volume = (projectVideoVolume * clip.volume).coerceIn(0f, 1f)
+                val seg = cachedSegments.getOrNull(idx) ?: return
+                p.playbackParameters = androidx.media3.common.PlaybackParameters(seg.speed.coerceAtLeast(0.1f))
+                p.volume = (projectVideoVolume * seg.volume).coerceIn(0f, 1f)
             }
         })
         player = p
@@ -251,21 +304,23 @@ class PreviewPlayerManager(private val context: Context) {
         totalUs = project.totalDurationUs
         _totalDurationUs.value = totalUs
         cachedClips = project.videoClips
+        val newSegments = buildSegments(project.videoClips)
+        cachedSegments = newSegments
         cachedAudioTracks = project.audioTracks
         projectVideoVolume = project.originalVideoVolume
         backgroundMusicVolume = project.backgroundMusicVolume
         audioDuckingEnabled = project.audioDuckingEnabled
         audioDuckLevel = project.audioDuckLevel
-        AppLog.d(TAG, "syncWithProject: clips=${project.videoClips.size} audio=${project.audioTracks.size} total=${totalUs}us")
+        AppLog.d(TAG, "syncWithProject: clips=${project.videoClips.size} segments=${newSegments.size} audio=${project.audioTracks.size} total=${totalUs}us")
 
         runOnMainThread {
             val p = player ?: return@runOnMainThread
-            val currentFingerprint = project.videoClips.joinToString(";") { 
-                "${it.id}:${it.uri}:${it.trimStartUs}:${it.trimEndUs}" 
+            val currentFingerprint = newSegments.joinToString(";") { 
+                "${it.uri}:${it.sourceStartUs}:${it.sourceEndUs}:${it.speed}" 
             }
 
             val currentIdx = try { p.currentMediaItemIndex } catch (_: Throwable) { 0 }
-            val current = project.videoClips.getOrNull(currentIdx) ?: project.videoClips.firstOrNull()
+            val current = newSegments.getOrNull(currentIdx) ?: newSegments.firstOrNull()
             if (current != null) {
                 p.playbackParameters = androidx.media3.common.PlaybackParameters(current.speed.coerceAtLeast(0.1f))
                 p.volume = (project.originalVideoVolume * current.volume).coerceIn(0f, 1f)
@@ -276,24 +331,24 @@ class PreviewPlayerManager(private val context: Context) {
                 val prevTimelineUs = _positionUs.value
                 val wasPlaying = p.isPlaying
 
-                if (project.videoClips.isEmpty()) {
+                if (newSegments.isEmpty()) {
                     p.clearMediaItems()
                 } else {
                     p.clearMediaItems()
-                    for (clip in project.videoClips) {
+                    for (seg in newSegments) {
                         try {
                             val clippingBuilder = MediaItem.ClippingConfiguration.Builder()
-                                .setStartPositionMs((clip.trimStartUs / 1000L).coerceAtLeast(0L))
-                            if (clip.trimEndUs > clip.trimStartUs) {
-                                clippingBuilder.setEndPositionMs((clip.trimEndUs / 1000L).coerceAtLeast(clip.trimStartUs / 1000L + 1L))
+                                .setStartPositionMs((seg.sourceStartUs / 1000L).coerceAtLeast(0L))
+                            if (seg.sourceEndUs > seg.sourceStartUs) {
+                                clippingBuilder.setEndPositionMs((seg.sourceEndUs / 1000L).coerceAtLeast(seg.sourceStartUs / 1000L + 1L))
                             }
                             val mi = MediaItem.Builder()
-                                .setUri(clip.uri)
+                                .setUri(seg.uri)
                                 .setClippingConfiguration(clippingBuilder.build())
                                 .build()
                             p.addMediaItem(mi)
                         } catch (t: Throwable) {
-                            AppLog.e(TAG, "Failed adding clip: ${clip.uri}", t)
+                            AppLog.e(TAG, "Failed adding segment: ${seg.uri}", t)
                         }
                     }
                     p.prepare()
@@ -490,23 +545,21 @@ class PreviewPlayerManager(private val context: Context) {
 
     fun seekToUs(targetTimelineUs: Long) = runOnMainThread {
         val p = player ?: return@runOnMainThread
-        val clips = cachedClips
-        if (clips.isNotEmpty()) {
-            var accumulatedUs = 0L
-            var targetIdx = clips.lastIndex
-            var targetOffsetInClipMs = 0L
-            for ((idx, clip) in clips.withIndex()) {
-                val effDur = clip.effectiveDurationUs
-                if (targetTimelineUs < accumulatedUs + effDur || idx == clips.lastIndex) {
+        val segments = cachedSegments
+        if (segments.isNotEmpty()) {
+            var targetIdx = segments.lastIndex
+            var targetOffsetInSegMs = 0L
+            for ((idx, seg) in segments.withIndex()) {
+                if (targetTimelineUs in seg.timelineStartUs until seg.timelineEndUs || idx == segments.lastIndex) {
                     targetIdx = idx
-                    val offsetInClipUs = (targetTimelineUs - accumulatedUs).coerceAtLeast(0L)
-                    val speed = clip.speed.coerceAtLeast(0.1f)
-                    targetOffsetInClipMs = (offsetInClipUs * speed / 1000L).toLong()
+                    val offsetInSegTimelineUs = (targetTimelineUs - seg.timelineStartUs).coerceAtLeast(0L)
+                    val speed = seg.speed.coerceAtLeast(0.1f)
+                    val offsetInSegSourceUs = (offsetInSegTimelineUs * speed).toLong()
+                    targetOffsetInSegMs = (offsetInSegSourceUs / 1000L).coerceAtLeast(0L)
                     break
                 }
-                accumulatedUs += effDur
             }
-            p.seekTo(targetIdx, targetOffsetInClipMs)
+            p.seekTo(targetIdx, targetOffsetInSegMs)
         } else {
             val ms = targetTimelineUs / 1000L
             p.seekTo(ms.coerceAtLeast(0L))
