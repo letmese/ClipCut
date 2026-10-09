@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -927,12 +928,13 @@ fun BlurSheet(
     onUpdate: (BlurTrackItem) -> Unit,
     onStartTracking: (com.clipcut.core.feature.TrackingMode) -> Unit,
     onAutoBlurAllFaces: (() -> Unit)? = null,
+    onPickCustomImage: (() -> Unit)? = null,
     onClearTracking: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-        SheetHeader("Blur & Mosaic Censor", onDismiss)
+        SheetHeader("Censor, Blur & Stickers", onDismiss)
         Spacer(Modifier.height(10.dp))
 
         // Tracking status notification banner if active
@@ -961,10 +963,10 @@ fun BlurSheet(
             Spacer(Modifier.height(12.dp))
         }
 
-        // Section 1: Blur Type (Gaussian vs Mosaic)
-        Text("Blur Style", color = TextSecondary, fontSize = 12.sp)
+        // Section 1: Censor Type (Heavy Blur vs Mosaic vs Solid Blackout vs Picture/Sticker)
+        Text("Censor Style", color = TextSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
             BlurType.values().forEach { type ->
                 EditorFilterChip(
                     text = type.displayName,
@@ -976,6 +978,77 @@ fun BlurSheet(
         }
 
         Spacer(Modifier.height(14.dp))
+
+        // Section 1b: Picture / Sticker Picker (when IMAGE mode selected)
+        if (blurItem.blurType == BlurType.IMAGE) {
+            Text("Choose Sticker, Emoji or Picture", color = TextSecondary, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+
+            val emojis = listOf(
+                "sunglasses" to "😎",
+                "clown" to "🤡",
+                "mask" to "😷",
+                "cat" to "🐱",
+                "monkey" to "🙈",
+                "censor" to "🚫",
+                "star" to "⭐️",
+                "zipper" to "🤐",
+                "robot" to "🤖",
+                "dog" to "🐶",
+                "heart" to "❤️",
+                "fire" to "🔥"
+            )
+
+            val currentUri = blurItem.customImageUri ?: "emoji://sunglasses"
+
+            // Horizontal scrollable row of fun stickers/emojis
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                emojis.forEach { (key, emoji) ->
+                    val isSelected = currentUri == "emoji://$key"
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isSelected) AccentPrimary.copy(alpha = 0.25f) else Surface3)
+                            .border(1.5.dp, if (isSelected) AccentPrimary else HairlineBorder, RoundedCornerShape(10.dp))
+                            .clickable {
+                                onUpdate(blurItem.copy(customImageUri = "emoji://$key"))
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(emoji, fontSize = 22.sp)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // Pick custom picture from gallery button
+            OutlinedButton(
+                onClick = { onPickCustomImage?.invoke() },
+                modifier = Modifier.fillMaxWidth(),
+                border = BorderStroke(1.dp, if (currentUri.startsWith("content://") || currentUri.startsWith("file://")) AccentPrimary else HairlineBorder),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (currentUri.startsWith("content://") || currentUri.startsWith("file://")) AccentPrimary.copy(alpha = 0.15f) else Surface2,
+                    contentColor = Color.White
+                )
+            ) {
+                Icon(Icons.Filled.Image, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (currentUri.startsWith("content://") || currentUri.startsWith("file://")) "Custom Picture Selected ✓ (Tap to Change)" else "➕ Pick Custom Picture / Photo from Gallery",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Spacer(Modifier.height(14.dp))
+        }
 
         // Section 2: Free-form Shape
         Text("Shape Mask", color = TextSecondary, fontSize = 12.sp)
@@ -993,24 +1066,28 @@ fun BlurSheet(
 
         Spacer(Modifier.height(14.dp))
 
-        // Section 3: Blur Intensity & Feather Sliders
-        SheetSlider(
-            label = if (blurItem.blurType == BlurType.MOSAIC) "Mosaic Pixel Size" else "Blur Intensity",
-            value = blurItem.intensity,
-            range = 0.05f..1.0f
-        ) {
-            onUpdate(blurItem.copy(intensity = it))
-        }
+        // Section 3: Blur Intensity & Feather Sliders (for Blur/Mosaic/Blackout)
+        if (blurItem.blurType != BlurType.IMAGE) {
+            if (blurItem.blurType != BlurType.BLACKOUT) {
+                SheetSlider(
+                    label = if (blurItem.blurType == BlurType.MOSAIC) "Mosaic Block Size (Chunky Retro)" else "Blur Intensity (Heavy Frosted)",
+                    value = blurItem.intensity,
+                    range = 0.1f..1.0f
+                ) {
+                    onUpdate(blurItem.copy(intensity = it))
+                }
+            }
 
-        SheetSlider(
-            label = "Edge Feather (Softness)",
-            value = blurItem.feather,
-            range = 0.0f..0.45f
-        ) {
-            onUpdate(blurItem.copy(feather = it))
-        }
+            SheetSlider(
+                label = "Edge Softness / Feather",
+                value = blurItem.feather,
+                range = 0.0f..0.45f
+            ) {
+                onUpdate(blurItem.copy(feather = it))
+            }
 
-        Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(10.dp))
+        }
 
         // Section 4: Freeform Dimensions (Width & Height)
         Text("Free-form Dimensions", color = TextSecondary, fontSize = 12.sp)

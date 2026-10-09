@@ -681,30 +681,52 @@ class RegionalBlurFilter : GlFilter(
 
         void main() {
             float mask = computeMask(vTexCoord);
-            if (mask <= 0.002) {
+            if (mask <= 0.002 || uBlurType == 3) {
                 gl_FragColor = texture2D(sTexture, vTexCoord);
                 return;
             }
 
             vec4 blurred;
             if (uBlurType == 1) {
-                // MOSAIC / PIXELATE
-                float pixelStep = max(4.0, uIntensity * 48.0);
+                // HEAVY MOSAIC / PIXELATE (chunky retro censor blocks)
+                float pixelStep = max(8.0, uIntensity * 140.0);
                 vec2 uvBlock = (floor(vTexCoord * uResolution / pixelStep) * pixelStep + (pixelStep * 0.5)) / uResolution;
                 blurred = texture2D(sTexture, uvBlock);
+            } else if (uBlurType == 2) {
+                // SOLID BLACKOUT / REDACTED CENSOR BAR
+                blurred = vec4(0.04, 0.04, 0.04, 1.0);
             } else {
-                // GAUSSIAN MULTI-TAP BLUR
-                float r = max(1.0, uIntensity * 14.0);
+                // HEAVY FROSTED MULTI-RING GAUSSIAN BLUR
+                float r = max(4.0, uIntensity * 72.0);
                 vec2 texel = vec2(r) / uResolution;
-                vec4 sum = texture2D(sTexture, vTexCoord) * 0.227027;
-                sum += texture2D(sTexture, vTexCoord + vec2(texel.x * 1.3846, 0.0)) * 0.158108;
-                sum += texture2D(sTexture, vTexCoord - vec2(texel.x * 1.3846, 0.0)) * 0.158108;
-                sum += texture2D(sTexture, vTexCoord + vec2(0.0, texel.y * 1.3846)) * 0.158108;
-                sum += texture2D(sTexture, vTexCoord - vec2(0.0, texel.y * 1.3846)) * 0.158108;
-                sum += texture2D(sTexture, vTexCoord + vec2(texel.x * 3.2307, texel.y * 3.2307)) * 0.070270;
-                sum += texture2D(sTexture, vTexCoord - vec2(texel.x * 3.2307, texel.y * 3.2307)) * 0.070270;
-                sum += texture2D(sTexture, vTexCoord + vec2(-texel.x * 3.2307, texel.y * 3.2307)) * 0.070270;
-                sum += texture2D(sTexture, vTexCoord + vec2(texel.x * 3.2307, -texel.y * 3.2307)) * 0.070270;
+
+                // Center sample
+                vec4 sum = texture2D(sTexture, vTexCoord) * 0.16;
+
+                // Ring 1 (1.5x orthogonal)
+                sum += texture2D(sTexture, vTexCoord + vec2(texel.x * 1.5, 0.0)) * 0.11;
+                sum += texture2D(sTexture, vTexCoord - vec2(texel.x * 1.5, 0.0)) * 0.11;
+                sum += texture2D(sTexture, vTexCoord + vec2(0.0, texel.y * 1.5)) * 0.11;
+                sum += texture2D(sTexture, vTexCoord - vec2(0.0, texel.y * 1.5)) * 0.11;
+
+                // Ring 2 (2.1x diagonal)
+                sum += texture2D(sTexture, vTexCoord + vec2(texel.x * 2.1, texel.y * 2.1)) * 0.06;
+                sum += texture2D(sTexture, vTexCoord - vec2(texel.x * 2.1, texel.y * 2.1)) * 0.06;
+                sum += texture2D(sTexture, vTexCoord + vec2(-texel.x * 2.1, texel.y * 2.1)) * 0.06;
+                sum += texture2D(sTexture, vTexCoord + vec2(texel.x * 2.1, -texel.y * 2.1)) * 0.06;
+
+                // Ring 3 (4.5x orthogonal)
+                sum += texture2D(sTexture, vTexCoord + vec2(texel.x * 4.5, 0.0)) * 0.035;
+                sum += texture2D(sTexture, vTexCoord - vec2(texel.x * 4.5, 0.0)) * 0.035;
+                sum += texture2D(sTexture, vTexCoord + vec2(0.0, texel.y * 4.5)) * 0.035;
+                sum += texture2D(sTexture, vTexCoord - vec2(0.0, texel.y * 4.5)) * 0.035;
+
+                // Ring 4 (4.2x diagonal)
+                sum += texture2D(sTexture, vTexCoord + vec2(texel.x * 4.2, texel.y * 4.2)) * 0.015;
+                sum += texture2D(sTexture, vTexCoord - vec2(texel.x * 4.2, texel.y * 4.2)) * 0.015;
+                sum += texture2D(sTexture, vTexCoord + vec2(-texel.x * 4.2, texel.y * 4.2)) * 0.015;
+                sum += texture2D(sTexture, vTexCoord + vec2(texel.x * 4.2, -texel.y * 4.2)) * 0.015;
+
                 blurred = sum;
             }
 
@@ -713,7 +735,7 @@ class RegionalBlurFilter : GlFilter(
         }
     """
 ) {
-    var blurType: Int = 0       // 0: GAUSSIAN, 1: MOSAIC
+    var blurType: Int = 0       // 0: GAUSSIAN, 1: MOSAIC, 2: BLACKOUT, 3: IMAGE/PASSTHROUGH
     var shape: Int = 0          // 0: OVAL, 1: RECTANGLE, 2: ROUNDED_RECT
     var centerX: Float = 0.5f
     var centerY: Float = 0.5f
@@ -721,7 +743,7 @@ class RegionalBlurFilter : GlFilter(
     var heightVal: Float = 0.25f
     var rotationDeg: Float = 0f
     var feather: Float = 0.15f
-    var intensity: Float = 0.7f
+    var intensity: Float = 0.85f
 
     private var uBlurTypeLoc = -1
     private var uShapeLoc = -1
@@ -743,7 +765,12 @@ class RegionalBlurFilter : GlFilter(
         featherVal: Float,
         intensityVal: Float
     ) {
-        blurType = if (blurTypeEnum == com.clipcut.core.model.BlurType.MOSAIC) 1 else 0
+        blurType = when (blurTypeEnum) {
+            com.clipcut.core.model.BlurType.GAUSSIAN -> 0
+            com.clipcut.core.model.BlurType.MOSAIC -> 1
+            com.clipcut.core.model.BlurType.BLACKOUT -> 2
+            com.clipcut.core.model.BlurType.IMAGE -> 3
+        }
         shape = when (shapeEnum) {
             com.clipcut.core.model.BlurShape.OVAL -> 0
             com.clipcut.core.model.BlurShape.RECTANGLE -> 1

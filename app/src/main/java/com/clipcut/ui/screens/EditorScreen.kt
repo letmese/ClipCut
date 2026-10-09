@@ -136,6 +136,19 @@ fun EditorScreen(
             viewModel.addAudioTrack(uri)
         }
     }
+    val pickBlurImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        if (uri != null) {
+            val blurId = selectedBlurId
+            if (blurId != null) {
+                viewModel.updateBlurTrack(blurId) {
+                    it.copy(
+                        blurType = com.clipcut.core.model.BlurType.IMAGE,
+                        customImageUri = uri.toString()
+                    )
+                }
+            }
+        }
+    }
 
     LaunchedEffect(projectId) { viewModel.loadProject(projectId) }
 
@@ -918,7 +931,12 @@ fun EditorScreen(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
-                                            text = if (blur.blurType == com.clipcut.core.model.BlurType.MOSAIC) "MOSAIC" else "BLUR",
+                                            text = when (blur.blurType) {
+                                                com.clipcut.core.model.BlurType.IMAGE -> "STICKER"
+                                                com.clipcut.core.model.BlurType.BLACKOUT -> "BLACKOUT"
+                                                com.clipcut.core.model.BlurType.MOSAIC -> "MOSAIC"
+                                                com.clipcut.core.model.BlurType.GAUSSIAN -> "BLUR"
+                                            },
                                             color = Color.White,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
@@ -1769,6 +1787,9 @@ fun EditorScreen(
                     onAutoBlurAllFaces = {
                         viewModel.autoBlurAllFaces(positionUs)
                         selectedTool = null
+                    },
+                    onPickCustomImage = {
+                        pickBlurImage.launch("image/*")
                     },
                     onClearTracking = {
                         viewModel.clearBlurTracking(itemToEdit.id)

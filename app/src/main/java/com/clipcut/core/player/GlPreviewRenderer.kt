@@ -543,26 +543,37 @@ class GlPreviewRenderer(private val context: Context) {
                 }
             }
 
-            // Render Overlays / Text
-            if (proj.overlays.isNotEmpty()) {
+            // Render Overlays / Text & Blur Image Stickers
+            val imageBlurs = proj.blurTracks.filter { it.blurType == com.clipcut.core.model.BlurType.IMAGE }
+            if (proj.overlays.isNotEmpty() || imageBlurs.isNotEmpty()) {
                 val editingId = activeEditingOverlayId
                 val overlaysToRender = if (editingId != null) {
                     proj.overlays.filter { it.id != editingId }
                 } else {
                     proj.overlays
                 }
-                if (overlaysToRender.isNotEmpty()) {
-                    over.renderOverlays(overlaysToRender, posUs, w, h)
-                    val overId = over.textureId
-                    if (overId != -1) {
-                        GLES20.glEnable(GLES20.GL_BLEND)
-                        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-                        filter.draw(overId, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, w, h)
-                        GLES20.glDisable(GLES20.GL_BLEND)
-                    }
-                } else if (over.textureId != -1) {
-                    over.renderOverlays(emptyList(), posUs, w, h)
+                over.renderOverlays(
+                    overlays = overlaysToRender,
+                    blurTracks = imageBlurs,
+                    currentPtsUs = posUs,
+                    viewportWidth = w,
+                    viewportHeight = h,
+                    editingBlurId = activeEditingBlurId,
+                    editingBlurX = activeEditingBlurX,
+                    editingBlurY = activeEditingBlurY,
+                    editingBlurW = activeEditingBlurWidth,
+                    editingBlurH = activeEditingBlurHeight,
+                    editingBlurRot = activeEditingBlurRotation
+                )
+                val overId = over.textureId
+                if (overId != -1) {
+                    GLES20.glEnable(GLES20.GL_BLEND)
+                    GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+                    filter.draw(overId, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, w, h)
+                    GLES20.glDisable(GLES20.GL_BLEND)
                 }
+            } else if (over.textureId != -1) {
+                over.renderOverlays(emptyList(), emptyList(), posUs, w, h)
             }
         }
 

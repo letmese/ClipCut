@@ -310,8 +310,10 @@ data class TimelineItem(
 }
 
 enum class BlurType(val displayName: String) {
-    GAUSSIAN("Gaussian Blur"),
-    MOSAIC("Pixelate Mosaic")
+    GAUSSIAN("Heavy Blur"),
+    MOSAIC("Pixelate Mosaic"),
+    BLACKOUT("Solid Blackout"),
+    IMAGE("Picture / Sticker")
 }
 
 enum class BlurShape(val displayName: String) {
@@ -349,8 +351,9 @@ data class BlurTrackItem(
     val width: Float = 0.25f,
     val height: Float = 0.25f,
     val rotation: Float = 0f,
-    val intensity: Float = 0.7f,
+    val intensity: Float = 0.85f,
     val feather: Float = 0.15f,
+    val customImageUri: String? = null,
     val keyframes: List<BlurKeyframe> = emptyList()
 ) {
     val durationUs: Long get() = (timelineEndUs - timelineStartUs).coerceAtLeast(0L)

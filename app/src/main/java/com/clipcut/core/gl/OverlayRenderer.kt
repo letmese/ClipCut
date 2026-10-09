@@ -43,11 +43,53 @@ class OverlayRenderer(private val context: Context) {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
     }
 
+    private val imageCache = mutableMapOf<String, Bitmap>()
+    private val stickerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+    }
+
+    private fun getOrLoadBitmap(uriStr: String): Bitmap? {
+        val cached = imageCache[uriStr]
+        if (cached != null && !cached.isRecycled) return cached
+
+        return try {
+            val bmp = if (uriStr.startsWith("content://")) {
+                context.contentResolver.openInputStream(android.net.Uri.parse(uriStr))?.use {
+                    android.graphics.BitmapFactory.decodeStream(it)
+                }
+            } else {
+                val path = if (uriStr.startsWith("file://")) android.net.Uri.parse(uriStr).path ?: uriStr.removePrefix("file://") else uriStr
+                android.graphics.BitmapFactory.decodeFile(path)
+            }
+            if (bmp != null) {
+                val maxDim = maxOf(bmp.width, bmp.height)
+                val finalBmp = if (maxDim > 640) {
+                    val s = 640f / maxDim.toFloat()
+                    Bitmap.createScaledBitmap(bmp, (bmp.width * s).toInt(), (bmp.height * s).toInt(), true).also {
+                        if (it != bmp) bmp.recycle()
+                    }
+                } else bmp
+                imageCache[uriStr] = finalBmp
+                finalBmp
+            } else null
+        } catch (t: Throwable) {
+            com.clipcut.core.log.AppLog.w("OverlayRenderer", "Failed loading image for blur overlay: ${t.message}")
+            null
+        }
+    }
+
     fun renderOverlays(
         overlays: List<OverlayItem>,
+        blurTracks: List<com.clipcut.core.model.BlurTrackItem> = emptyList(),
         currentPtsUs: Long,
         viewportWidth: Int,
-        viewportHeight: Int
+        viewportHeight: Int,
+        editingBlurId: String? = null,
+        editingBlurX: Float? = null,
+        editingBlurY: Float? = null,
+        editingBlurW: Float? = null,
+        editingBlurH: Float? = null,
+        editingBlurRot: Float? = null
     ) {
         if (overlayTexId == -1) return
 
@@ -66,7 +108,12 @@ class OverlayRenderer(private val context: Context) {
 
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
-        if (overlays.isEmpty()) {
+        val activeOverlays = overlays.filter { currentPtsUs in it.timelineStartUs..it.timelineEndUs }
+        val activeImageBlurs = blurTracks.filter {
+            it.blurType == com.clipcut.core.model.BlurType.IMAGE && currentPtsUs in it.timelineStartUs..it.timelineEndUs
+        }
+
+        if (activeOverlays.isEmpty() && activeImageBlurs.isEmpty()) {
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
             GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
             return
@@ -159,6 +206,59 @@ class OverlayRenderer(private val context: Context) {
             }
         }
 
+        // Render Blur Image / Sticker / Emoji overlays
+        for (blurItem in activeImageBlurs) {
+            val isEditing = (blurItem.id == editingBlurId && editingBlurX != null)
+            val tf = blurItem.getTransformAt(currentPtsUs)
+            val cx = (if (isEditing) editingBlurX!! else tf.normalizedX) * width
+            val cy = (if (isEditing) (editingBlurY ?: tf.normalizedY) else tf.normalizedY) * height
+            val bw = (if (isEditing) (editingBlurW ?: tf.width) else tf.width) * width
+            val bh = (if (isEditing) (editingBlurH ?: tf.height) else tf.height) * height
+            val rot = if (isEditing) (editingBlurRot ?: tf.rotation) else tf.rotation
+
+            canvas.save()
+            canvas.translate(cx, cy)
+            if (rot != 0f) {
+                canvas.rotate(rot)
+            }
+
+            val uri = blurItem.customImageUri ?: "emoji://sunglasses"
+            if (uri.startsWith("emoji://")) {
+                val emojiStr = when (uri.removePrefix("emoji://").lowercase()) {
+                    "sunglasses" -> "😎"
+                    "clown" -> "🤡"
+                    "mask" -> "😷"
+                    "cat" -> "🐱"
+                    "monkey" -> "🙈"
+                    "censor" -> "🚫"
+                    "star" -> "⭐️"
+                    "zipper" -> "🤐"
+                    "robot" -> "🤖"
+                    "dog" -> "🐶"
+                    "heart" -> "❤️"
+                    "fire" -> "🔥"
+                    "poop" -> "💩"
+                    else -> "😎"
+                }
+                val fontSize = minOf(bw, bh) * 0.90f
+                stickerPaint.textSize = fontSize
+                val fontMetrics = stickerPaint.fontMetrics
+                val baseline = -(fontMetrics.ascent + fontMetrics.descent) / 2f
+                canvas.drawText(emojiStr, 0f, baseline, stickerPaint)
+            } else {
+                val bmp = getOrLoadBitmap(uri)
+                if (bmp != null) {
+                    val dstRect = android.graphics.RectF(-bw / 2f, -bh / 2f, bw / 2f, bh / 2f)
+                    if (blurItem.shape == com.clipcut.core.model.BlurShape.OVAL) {
+                        val path = android.graphics.Path().apply { addOval(dstRect, android.graphics.Path.Direction.CW) }
+                        canvas.clipPath(path)
+                    }
+                    canvas.drawBitmap(bmp, null, dstRect, null)
+                }
+            }
+            canvas.restore()
+        }
+
         // Upload: GLUtils.texImage2D stores row 0 at texture V=0 (bottom).
         // Canvas row 0 is visual top. Flip bitmap once vertically so texture V=0
         // corresponds to visual top. Now every caller uses IDENTITY tex-matrix!
@@ -223,6 +323,8 @@ class OverlayRenderer(private val context: Context) {
         flippedBitmap?.recycle()
         flippedBitmap = null
         flippedCanvas = null
+        imageCache.values.forEach { try { it.recycle() } catch (_: Throwable) {} }
+        imageCache.clear()
         if (overlayTexId != -1) {
             GLES20.glDeleteTextures(1, intArrayOf(overlayTexId), 0)
             overlayTexId = -1
