@@ -53,6 +53,7 @@ enum class EditorTool(val label: String, val icon: ImageVector) {
     MASK("Mask", Icons.Filled.FormatShapes),
     CHROMA("Chroma", Icons.Filled.Colorize),
     BLEND("Blend", Icons.Filled.Layers),
+    BLUR("Blur", Icons.Filled.BlurOn),
     TEXT("Text", Icons.Filled.TextFields),
     STICKER("Sticker", Icons.Filled.EmojiEmotions),
     AUDIO("Audio", Icons.Filled.MusicNote),

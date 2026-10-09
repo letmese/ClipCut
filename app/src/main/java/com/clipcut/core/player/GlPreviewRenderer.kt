@@ -326,7 +326,9 @@ class GlPreviewRenderer(private val context: Context) {
                 rotationDegrees = clip.rotationDegrees,
                 clip = clip,
                 transitionProgress = if (useTransition) transProgress else 0f,
-                prevClipTexId = if (useTransition) prevClipFbo?.textureId else null
+                prevClipTexId = if (useTransition) prevClipFbo?.textureId else null,
+                activeBlurs = project?.blurTracks ?: emptyList(),
+                timelinePtsUs = posUs
             )
 
             // When not actively transitioning, capture this decorated frame into prevClipFbo

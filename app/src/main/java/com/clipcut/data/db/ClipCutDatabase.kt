@@ -32,6 +32,7 @@ data class ProjectEntity(
     val audioTracksJson: String = "[]",
     val overlaysJson: String = "[]",
     val pipTracksJson: String = "[]",
+    val blurTracksJson: String = "[]",
     val beatMarkersJson: String = "[]",
     val originalVideoVolume: Float = 1.0f,
     val backgroundMusicVolume: Float = 1.0f,
@@ -45,13 +46,14 @@ data class ProjectEntity(
         val audio = gson.fromJson<List<AudioTrackItem>>(audioTracksJson, object : TypeToken<List<AudioTrackItem>>() {}.type) ?: emptyList()
         val overlays = gson.fromJson<List<OverlayItem>>(overlaysJson, object : TypeToken<List<OverlayItem>>() {}.type) ?: emptyList()
         val pips = gson.fromJson<List<PiPTrackItem>>(pipTracksJson, object : TypeToken<List<PiPTrackItem>>() {}.type) ?: emptyList()
+        val blurs = gson.fromJson<List<com.clipcut.core.model.BlurTrackItem>>(blurTracksJson, object : TypeToken<List<com.clipcut.core.model.BlurTrackItem>>() {}.type) ?: emptyList()
         val beats = gson.fromJson<List<BeatMarker>>(beatMarkersJson, object : TypeToken<List<BeatMarker>>() {}.type) ?: emptyList()
         val ar = com.clipcut.core.model.AspectRatio.fromLabel(aspectRatio)
         return Project(
             id = id, name = name, createdTime = createdTime, lastModifiedTime = lastModifiedTime,
             aspectRatio = ar,
             videoClips = clips, audioTracks = audio, overlays = overlays,
-            pipTracks = pips, beatMarkers = beats,
+            pipTracks = pips, blurTracks = blurs, beatMarkers = beats,
             originalVideoVolume = originalVideoVolume, backgroundMusicVolume = backgroundMusicVolume,
             audioDuckingEnabled = audioDuckingEnabled, audioDuckLevel = audioDuckLevel
         )
@@ -67,6 +69,7 @@ data class ProjectEntity(
             audioTracksJson = gson.toJson(project.audioTracks),
             overlaysJson = gson.toJson(project.overlays),
             pipTracksJson = gson.toJson(project.pipTracks),
+            blurTracksJson = gson.toJson(project.blurTracks),
             beatMarkersJson = gson.toJson(project.beatMarkers),
             originalVideoVolume = project.originalVideoVolume,
             backgroundMusicVolume = project.backgroundMusicVolume,
@@ -97,13 +100,14 @@ class ClipCutDatabase private constructor(context: Context) : SQLiteOpenHelper(c
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
-        db.execSQL(SQL_DROP)
-        onCreate(db)
+        if (oldV < 2) {
+            try { db.execSQL("ALTER TABLE $TBL ADD COLUMN blurTracksJson TEXT DEFAULT '[]'") } catch (_: Throwable) {}
+        }
     }
 
     companion object {
         private const val DB_NAME = "clipcut.db"
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 2
         private const val SQL_CREATE = """
             CREATE TABLE $TBL(
                 id TEXT PRIMARY KEY,
@@ -115,6 +119,7 @@ class ClipCutDatabase private constructor(context: Context) : SQLiteOpenHelper(c
                 audioTracksJson TEXT DEFAULT '[]',
                 overlaysJson TEXT DEFAULT '[]',
                 pipTracksJson TEXT DEFAULT '[]',
+                blurTracksJson TEXT DEFAULT '[]',
                 beatMarkersJson TEXT DEFAULT '[]',
                 originalVideoVolume REAL DEFAULT 1.0,
                 backgroundMusicVolume REAL DEFAULT 1.0,
@@ -180,6 +185,7 @@ private class ProjectDaoImpl(private val helper: ClipCutDatabase) : ProjectDao {
         audioTracksJson = c.getString(c.getColumnIndexOrThrow("audioTracksJson")),
         overlaysJson = c.getString(c.getColumnIndexOrThrow("overlaysJson")),
         pipTracksJson = c.getString(c.getColumnIndexOrThrow("pipTracksJson")),
+        blurTracksJson = c.getColumnIndex("blurTracksJson").takeIf { it != -1 }?.let { c.getString(it) } ?: "[]",
         beatMarkersJson = c.getString(c.getColumnIndexOrThrow("beatMarkersJson")),
         originalVideoVolume = c.getFloat(c.getColumnIndexOrThrow("originalVideoVolume")),
         backgroundMusicVolume = c.getFloat(c.getColumnIndexOrThrow("backgroundMusicVolume")),
@@ -197,6 +203,7 @@ private class ProjectDaoImpl(private val helper: ClipCutDatabase) : ProjectDao {
         put("audioTracksJson", e.audioTracksJson)
         put("overlaysJson", e.overlaysJson)
         put("pipTracksJson", e.pipTracksJson)
+        put("blurTracksJson", e.blurTracksJson)
         put("beatMarkersJson", e.beatMarkersJson)
         put("originalVideoVolume", e.originalVideoVolume)
         put("backgroundMusicVolume", e.backgroundMusicVolume)

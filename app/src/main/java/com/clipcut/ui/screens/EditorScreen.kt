@@ -120,6 +120,8 @@ fun EditorScreen(
     var showExportDialog by remember { mutableStateOf(false) }
     var selectedOverlayId by remember { mutableStateOf<String?>(null) }
     var selectedPipId by remember { mutableStateOf<String?>(null) }
+    var selectedBlurId by remember { mutableStateOf<String?>(null) }
+    val trackingStatus by viewModel.trackingState.collectAsState()
 
     val ctx = LocalContext.current
     val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
@@ -151,6 +153,7 @@ fun EditorScreen(
         if (isPlaying) {
             selectedOverlayId = null
             selectedPipId = null
+            selectedBlurId = null
         }
     }
 
@@ -188,10 +191,15 @@ fun EditorScreen(
                         EditorTool.REDO -> viewModel.redo()
                         EditorTool.SPLIT -> viewModel.splitClipAtPlayhead()
                         EditorTool.DELETE -> {
+                            val blurId = selectedBlurId
                             val ovId = selectedOverlayId
                             val pipId = selectedPipId
                             val clipId = selectedClipId
-                            if (ovId != null) {
+                            if (blurId != null) {
+                                viewModel.removeBlurTrack(blurId)
+                                selectedBlurId = null
+                                android.widget.Toast.makeText(ctx, "Blur deleted", android.widget.Toast.LENGTH_SHORT).show()
+                            } else if (ovId != null) {
                                 viewModel.removeOverlay(ovId)
                                 selectedOverlayId = null
                                 android.widget.Toast.makeText(ctx, "Overlay deleted", android.widget.Toast.LENGTH_SHORT).show()
@@ -276,6 +284,7 @@ fun EditorScreen(
                             detectTapGestures {
                                 selectedOverlayId = null
                                 selectedPipId = null
+                                selectedBlurId = null
                             }
                         }
                 ) {
@@ -815,6 +824,277 @@ fun EditorScreen(
                                         ) {
                                             selectedPipId = pip.id
                                             selectedOverlayId = null
+                                            selectedBlurId = null
+                                        }
+                                )
+                            }
+                        }
+
+                        // ── Render Interactive Blur / Censor Tracks ──
+                        val activeBlurs = project?.blurTracks?.filter {
+                            positionUs in it.timelineStartUs..it.timelineEndUs
+                        } ?: emptyList()
+
+                        activeBlurs.forEach { blur ->
+                            val isBlurSelected = blur.id == selectedBlurId
+
+                            if (isBlurSelected) {
+                                val currentTransform = blur.getTransformAt(positionUs)
+                                var localNormX by remember(blur.id) { mutableFloatStateOf(currentTransform.normalizedX) }
+                                var localNormY by remember(blur.id) { mutableFloatStateOf(currentTransform.normalizedY) }
+                                var localWidth by remember(blur.id) { mutableFloatStateOf(currentTransform.width) }
+                                var localHeight by remember(blur.id) { mutableFloatStateOf(currentTransform.height) }
+                                var localRotation by remember(blur.id) { mutableFloatStateOf(currentTransform.rotation) }
+                                var blurRotateHandleCoords by remember(blur.id) { mutableStateOf<LayoutCoordinates?>(null) }
+                                var blurRotateStartAngleDeg by remember(blur.id) { mutableFloatStateOf(0f) }
+                                var blurRotateStartRotation by remember(blur.id) { mutableFloatStateOf(0f) }
+
+                                LaunchedEffect(positionUs, blur.id, blur.keyframes.size, blur.width, blur.height) {
+                                    val t = blur.getTransformAt(positionUs)
+                                    localNormX = t.normalizedX
+                                    localNormY = t.normalizedY
+                                    localWidth = t.width
+                                    localHeight = t.height
+                                    localRotation = t.rotation
+                                }
+
+                                val blurPixelX = localNormX * bw
+                                val blurPixelY = localNormY * bh
+                                val boxW = (localWidth * bw).coerceIn(48f, bw)
+                                val boxH = (localHeight * bh).coerceIn(48f, bh)
+
+                                val borderShape = when (blur.shape) {
+                                    com.clipcut.core.model.BlurShape.OVAL -> CircleShape
+                                    com.clipcut.core.model.BlurShape.ROUNDED_RECT -> RoundedCornerShape(12.dp)
+                                    com.clipcut.core.model.BlurShape.RECTANGLE -> RoundedCornerShape(0.dp)
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .offset {
+                                            androidx.compose.ui.unit.IntOffset(
+                                                (blurPixelX - boxW / 2f).toInt(),
+                                                (blurPixelY - boxH / 2f).toInt()
+                                            )
+                                        }
+                                        .size(
+                                            with(androidx.compose.ui.platform.LocalDensity.current) { boxW.toDp() },
+                                            with(androidx.compose.ui.platform.LocalDensity.current) { boxH.toDp() }
+                                        )
+                                        .graphicsLayer {
+                                            rotationZ = localRotation
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    // Main blur bounding box with cyan highlight & 1-finger drag
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .border(2.dp, Color(0xFF00E5FF), borderShape)
+                                            .background(Color(0xFF00E5FF).copy(alpha = 0.12f), borderShape)
+                                            .pointerInput(blur.id, bw, bh) {
+                                                detectDragGestures(
+                                                    onDragStart = {
+                                                        selectedBlurId = blur.id
+                                                        selectedOverlayId = null
+                                                        selectedPipId = null
+                                                    },
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        localNormX = (localNormX + dragAmount.x / bw).coerceIn(0.02f, 0.98f)
+                                                        localNormY = (localNormY + dragAmount.y / bh).coerceIn(0.02f, 0.98f)
+                                                    },
+                                                    onDragEnd = {
+                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                    },
+                                                    onDragCancel = {
+                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                    }
+                                                )
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = if (blur.blurType == com.clipcut.core.model.BlurType.MOSAIC) "MOSAIC" else "BLUR",
+                                            color = Color.White,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier
+                                                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+
+                                    // Top-Right: Delete button
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .size(36.dp)
+                                            .background(Color(0xFFE53935), CircleShape)
+                                            .border(2.dp, Color.White, CircleShape)
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                val toDel = blur.id
+                                                selectedBlurId = null
+                                                viewModel.removeBlurTrack(toDel)
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Close,
+                                            contentDescription = "Delete Blur",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    // Bottom-Right: Freeform Resize handle
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .size(36.dp)
+                                            .background(Color(0xFF00E5FF), CircleShape)
+                                            .border(2.dp, Color.White, CircleShape)
+                                            .pointerInput(blur.id) {
+                                                detectDragGestures(
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        val deltaW = (dragAmount.x * 2f) / bw
+                                                        val deltaH = (dragAmount.y * 2f) / bh
+                                                        localWidth = (localWidth + deltaW).coerceIn(0.04f, 1.0f)
+                                                        localHeight = (localHeight + deltaH).coerceIn(0.04f, 1.0f)
+                                                    },
+                                                    onDragEnd = {
+                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                    },
+                                                    onDragCancel = {
+                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                    }
+                                                )
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.OpenInFull,
+                                            contentDescription = "Resize Blur",
+                                            tint = Color.Black,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    // Bottom-Left: Rotate handle
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomStart)
+                                            .size(36.dp)
+                                            .background(Surface3, CircleShape)
+                                            .border(2.dp, Color.White, CircleShape)
+                                            .onGloballyPositioned { blurRotateHandleCoords = it }
+                                            .pointerInput(blur.id, bw, bh) {
+                                                detectDragGestures(
+                                                    onDragStart = { offset ->
+                                                        selectedBlurId = blur.id
+                                                        blurRotateStartRotation = localRotation
+                                                        val touchPos = try {
+                                                            if (previewCoords?.isAttached == true && blurRotateHandleCoords?.isAttached == true) {
+                                                                previewCoords?.localPositionOf(blurRotateHandleCoords!!, offset)
+                                                            } else null
+                                                        } catch (_: Throwable) { null }
+                                                        if (touchPos != null) {
+                                                            val dx = touchPos.x - (localNormX * bw)
+                                                            val dy = touchPos.y - (localNormY * bh)
+                                                            blurRotateStartAngleDeg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                                                        }
+                                                    },
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        val touchPos = try {
+                                                            if (previewCoords?.isAttached == true && blurRotateHandleCoords?.isAttached == true) {
+                                                                previewCoords?.localPositionOf(blurRotateHandleCoords!!, change.position)
+                                                            } else null
+                                                        } catch (_: Throwable) { null }
+                                                        if (touchPos != null) {
+                                                            val dx = touchPos.x - (localNormX * bw)
+                                                            val dy = touchPos.y - (localNormY * bh)
+                                                            val currentAngleDeg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                                                            var deltaDeg = currentAngleDeg - blurRotateStartAngleDeg
+                                                            while (deltaDeg > 180f) deltaDeg -= 360f
+                                                            while (deltaDeg < -180f) deltaDeg += 360f
+                                                            localRotation = ((blurRotateStartRotation + deltaDeg) % 360f + 360f) % 360f
+                                                        } else {
+                                                            val rotDelta = dragAmount.x * 1.0f
+                                                            localRotation = ((localRotation + rotDelta) % 360f + 360f) % 360f
+                                                        }
+                                                    },
+                                                    onDragEnd = {
+                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                    },
+                                                    onDragCancel = {
+                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                    }
+                                                )
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.RotateRight,
+                                            contentDescription = "Rotate Blur",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    // Top-Left: Edit button
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .size(36.dp)
+                                            .background(Color(0xFF00E5FF), CircleShape)
+                                            .border(2.dp, Color.White, CircleShape)
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                selectedBlurId = blur.id
+                                                selectedTool = EditorTool.BLUR
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Edit,
+                                            contentDescription = "Edit Blur",
+                                            tint = Color.Black,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                // Tap target for unselected blur
+                                val unselectedPixelX = blur.normalizedX * bw
+                                val unselectedPixelY = blur.normalizedY * bh
+                                val targetW = (blur.width * bw).coerceIn(40f, bw)
+                                val targetH = (blur.height * bh).coerceIn(40f, bh)
+                                Box(
+                                    modifier = Modifier
+                                        .offset {
+                                            androidx.compose.ui.unit.IntOffset(
+                                                (unselectedPixelX - targetW / 2f).toInt(),
+                                                (unselectedPixelY - targetH / 2f).toInt()
+                                            )
+                                        }
+                                        .size(
+                                            with(androidx.compose.ui.platform.LocalDensity.current) { targetW.toDp() },
+                                            with(androidx.compose.ui.platform.LocalDensity.current) { targetH.toDp() }
+                                        )
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) {
+                                            selectedBlurId = blur.id
+                                            selectedOverlayId = null
+                                            selectedPipId = null
                                         }
                                 )
                             }
@@ -1014,10 +1294,99 @@ fun EditorScreen(
                             }
                         }
                     }
+
+                    // ── Floating Quick Controls Bar for Selected Blur ──
+                    val activeBlur = project?.blurTracks?.find { it.id == selectedBlurId }
+                    if (activeBlur != null) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 12.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            color = Color(0xDD1E1E2E),
+                            border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f)),
+                            shadowElevation = 8.dp
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = { selectedTool = EditorTool.BLUR },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Edit, "Edit Blur", tint = Color(0xFF00E5FF), modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        viewModel.startMotionTracking(activeBlur.id, com.clipcut.core.feature.TrackingMode.FACE)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.PlayArrow, "Auto Face Track", tint = Color.White, modifier = Modifier.size(18.dp))
+                                }
+
+                                Box(modifier = Modifier.width(1.dp).height(18.dp).background(Color.White.copy(alpha = 0.2f)))
+
+                                IconButton(
+                                    onClick = {
+                                        val toDel = activeBlur.id
+                                        selectedBlurId = null
+                                        viewModel.removeBlurTrack(toDel)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Delete, "Delete", tint = Color(0xFFFF5252), modifier = Modifier.size(18.dp))
+                                }
+
+                                IconButton(
+                                    onClick = { selectedBlurId = null },
+                                    modifier = Modifier
+                                        .size(30.dp)
+                                        .background(Color(0xFF00E5FF), CircleShape)
+                                ) {
+                                    Icon(Icons.Filled.Check, "Done", tint = Color.Black, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Active AI Tracking Floating Banner ──
+                    if (trackingStatus != null) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 16.dp),
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color(0xEE1E1E2E),
+                            border = BorderStroke(1.5.dp, Color(0xFF00E5FF)),
+                            shadowElevation = 8.dp
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    color = Color(0xFF00E5FF),
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Text(
+                                    text = trackingStatus ?: "",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
                 }
 
                 // Play/pause overlay
-                if (selectedOverlayId == null && selectedPipId == null) {
+                if (selectedOverlayId == null && selectedPipId == null && selectedBlurId == null) {
                     IconButton(
                         onClick = { viewModel.playerManager.togglePlayPause() },
                         modifier = Modifier.align(Alignment.Center)
@@ -1037,10 +1406,12 @@ fun EditorScreen(
                 audioTracks = project?.audioTracks ?: emptyList(),
                 overlays = project?.overlays ?: emptyList(),
                 pipTracks = project?.pipTracks ?: emptyList(),
+                blurTracks = project?.blurTracks ?: emptyList(),
                 beatMarkers = project?.beatMarkers ?: emptyList(),
                 selectedClipId = selectedClipId,
                 selectedOverlayId = selectedOverlayId,
                 selectedPipId = selectedPipId,
+                selectedBlurId = selectedBlurId,
                 currentPositionUs = positionUs,
                 totalDurationUs = project?.totalDurationUs ?: 0L,
                 isPlaying = isPlaying,
@@ -1060,13 +1431,21 @@ fun EditorScreen(
                 onSelectOverlay = { overlay ->
                     selectedOverlayId = if (selectedOverlayId == overlay.id) null else overlay.id
                     selectedPipId = null
+                    selectedBlurId = null
                 },
                 onTrimOverlay = { id, s, e -> viewModel.trimOverlay(id, s, e) },
                 onSelectPip = { pip ->
                     selectedPipId = if (selectedPipId == pip.id) null else pip.id
                     selectedOverlayId = null
+                    selectedBlurId = null
                 },
                 onTrimPip = { id, s, e -> viewModel.trimPipTrack(id, s, e) },
+                onSelectBlur = { blur ->
+                    selectedBlurId = if (selectedBlurId == blur.id) null else blur.id
+                    selectedOverlayId = null
+                    selectedPipId = null
+                },
+                onTrimBlur = { id, s, e -> viewModel.trimBlurTrack(id, s, e) },
                 modifier = Modifier.fillMaxWidth().wrapContentHeight()
             )
         }
@@ -1316,6 +1695,43 @@ fun EditorScreen(
                 onApply = { e, l -> viewModel.setAudioDucking(e, l) },
                 onDismiss = { selectedTool = null }
             )
+            EditorTool.BLUR -> {
+                val totalDur = project?.totalDurationUs ?: 5_000_000L
+                val currentBlur = project?.blurTracks?.firstOrNull { it.id == selectedBlurId }
+                    ?: project?.blurTracks?.firstOrNull { positionUs in it.timelineStartUs..it.timelineEndUs }
+                    ?: project?.blurTracks?.firstOrNull()
+
+                val itemToEdit = currentBlur ?: run {
+                    val newBlur = com.clipcut.core.model.BlurTrackItem(
+                        timelineStartUs = positionUs,
+                        timelineEndUs = minOf(totalDur.coerceAtLeast(positionUs + 3_000_000L), positionUs + 3_000_000L)
+                    )
+                    viewModel.addBlurTrack(newBlur)
+                    selectedBlurId = newBlur.id
+                    newBlur
+                }
+
+                BlurSheet(
+                    blurItem = itemToEdit,
+                    totalDurationUs = totalDur,
+                    trackingStatus = trackingStatus,
+                    onUpdate = { updated ->
+                        viewModel.updateBlurTrack(updated)
+                    },
+                    onStartTracking = { mode ->
+                        viewModel.startMotionTracking(itemToEdit.id, mode)
+                    },
+                    onClearTracking = {
+                        viewModel.clearBlurTracking(itemToEdit.id)
+                    },
+                    onDelete = {
+                        viewModel.removeBlurTrack(itemToEdit.id)
+                        selectedBlurId = null
+                        selectedTool = null
+                    },
+                    onDismiss = { selectedTool = null }
+                )
+            }
             else -> { /* default */ }
         }
     }

@@ -74,6 +74,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val _exportState = MutableStateFlow<ExportState>(ExportState.Idle)
     val exportState: StateFlow<ExportState> = _exportState.asStateFlow()
 
+    private val _trackingState = MutableStateFlow<String?>(null)
+    val trackingState: StateFlow<String?> = _trackingState.asStateFlow()
+
     private val undoStack = ArrayDeque<Project>()
     private val redoStack = ArrayDeque<Project>()
     private val _canUndo = MutableStateFlow(false)
@@ -307,6 +310,78 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setPipVolume(id: String, volume: Float) = mutate { p ->
         p.copy(pipTracks = p.pipTracks.map { if (it.id == id) it.copy(volume = volume.coerceIn(0f, 1f)) else it })
+    }
+
+    fun addBlurTrack(item: com.clipcut.core.model.BlurTrackItem) = mutate { it.copy(blurTracks = it.blurTracks + item) }
+    fun removeBlurTrack(id: String) = mutate { it.copy(blurTracks = it.blurTracks.filterNot { b -> b.id == id }) }
+    fun trimBlurTrack(id: String, startUs: Long, endUs: Long) = mutate { p ->
+        p.copy(blurTracks = p.blurTracks.map {
+            if (it.id == id) {
+                val s = startUs.coerceAtLeast(0L)
+                val e = endUs.coerceAtLeast(s + 200_000L)
+                it.copy(timelineStartUs = s, timelineEndUs = e)
+            } else it
+        })
+    }
+    fun updateBlurTrack(id: String, block: (com.clipcut.core.model.BlurTrackItem) -> com.clipcut.core.model.BlurTrackItem) = mutate { p ->
+        p.copy(blurTracks = p.blurTracks.map { if (it.id == id) block(it) else it })
+    }
+    fun updateBlurTrack(item: com.clipcut.core.model.BlurTrackItem) = updateBlurTrack(item.id) { item }
+    fun commitBlurTransform(id: String, normX: Float, normY: Float, width: Float, height: Float, rotation: Float = 0.0f) = mutate { p ->
+        p.copy(blurTracks = p.blurTracks.map {
+            if (it.id == id) it.copy(
+                normalizedX = normX.coerceIn(0.01f, 0.99f),
+                normalizedY = normY.coerceIn(0.01f, 0.99f),
+                width = width.coerceIn(0.03f, 1.2f),
+                height = height.coerceIn(0.03f, 1.2f),
+                rotation = (rotation % 360f + 360f) % 360f
+            ) else it
+        })
+    }
+    fun clearBlurTracking(id: String) = updateBlurTrack(id) { it.copy(keyframes = emptyList()) }
+
+    fun startMotionTracking(
+        blurId: String,
+        mode: com.clipcut.core.feature.TrackingMode,
+        onFinished: (Boolean) -> Unit = {}
+    ) {
+        val proj = _project.value ?: return
+        val blur = proj.blurTracks.find { it.id == blurId } ?: return
+        val mainClip = proj.videoClips.firstOrNull() ?: return
+        val tracker = com.clipcut.core.feature.MotionTracker(getApplication())
+
+        _trackingState.value = "Starting AI Motion Tracker..."
+        viewModelScope.launch {
+            try {
+                val kfs = tracker.track(
+                    videoUri = mainClip.uri,
+                    initialX = blur.normalizedX,
+                    initialY = blur.normalizedY,
+                    initialW = blur.width,
+                    initialH = blur.height,
+                    initialRotation = blur.rotation,
+                    startTimeUs = blur.timelineStartUs,
+                    endTimeUs = blur.timelineEndUs,
+                    mode = mode,
+                    onProgress = { prog ->
+                        val pct = (prog * 100).toInt()
+                        _trackingState.value = "Tracking motion ($pct%)..."
+                    }
+                )
+
+                if (kfs.isNotEmpty()) {
+                    updateBlurTrack(blurId) { it.copy(keyframes = kfs) }
+                    onFinished(true)
+                } else {
+                    onFinished(false)
+                }
+            } catch (t: Throwable) {
+                AppLog.e(TAG, "Motion tracking failed: ${t.message}", t)
+                onFinished(false)
+            } finally {
+                _trackingState.value = null
+            }
+        }
     }
 
     fun setVolumes(orig: Float, music: Float) = mutate {

@@ -630,3 +630,154 @@ class LutFilter(
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
 }
+
+/**
+ * RegionalBlurFilter — applies high-performance Gaussian Blur or Pixelate/Mosaic
+ * within a free-form geometric mask (Rectangle, Oval/Circle, or Rounded Box)
+ * with arbitrary center, width, height, rotation, and edge feathering.
+ */
+class RegionalBlurFilter : GlFilter(
+    fragmentShaderSource = """
+        precision mediump float;
+        varying vec2 vTexCoord;
+        uniform sampler2D sTexture;
+        uniform int uBlurType;      // 0: Gaussian, 1: Mosaic
+        uniform int uShape;         // 0: Oval, 1: Rectangle, 2: Rounded Box
+        uniform vec2 uCenter;       // 0..1
+        uniform vec2 uSize;         // 0..1 (width, height)
+        uniform float uRotation;    // radians
+        uniform float uFeather;     // 0..0.5
+        uniform float uIntensity;   // 0.1..1.0
+        uniform vec2 uResolution;   // frame width, height
+
+        vec2 rotateUv(vec2 p, vec2 c, float rad) {
+            float s = sin(rad);
+            float c_ = cos(rad);
+            vec2 d = p - c;
+            return vec2(d.x * c_ - d.y * s, d.x * s + d.y * c_) + c;
+        }
+
+        float computeMask(vec2 uv) {
+            vec2 p = rotateUv(uv, uCenter, uRotation);
+            vec2 d = abs(p - uCenter);
+            vec2 halfSize = max(vec2(0.005), uSize * 0.5);
+
+            if (uShape == 0) { // OVAL / CIRCLE
+                vec2 normD = d / halfSize;
+                float dist = length(normD);
+                float f = max(0.01, uFeather);
+                return 1.0 - smoothstep(1.0 - f, 1.0, dist);
+            } else if (uShape == 1) { // RECTANGLE / BAR
+                vec2 edge = d - halfSize;
+                float inside = max(edge.x, edge.y);
+                float f = max(0.002, uFeather * min(halfSize.x, halfSize.y));
+                return 1.0 - smoothstep(0.0, f, inside);
+            } else { // ROUNDED_BOX
+                vec2 rBox = max(d - halfSize + vec2(0.03), vec2(0.0));
+                float dist = length(rBox);
+                return 1.0 - smoothstep(0.03 - uFeather * 0.03, 0.03, dist);
+            }
+        }
+
+        void main() {
+            float mask = computeMask(vTexCoord);
+            if (mask <= 0.002) {
+                gl_FragColor = texture2D(sTexture, vTexCoord);
+                return;
+            }
+
+            vec4 blurred;
+            if (uBlurType == 1) {
+                // MOSAIC / PIXELATE
+                float pixelStep = max(4.0, uIntensity * 48.0);
+                vec2 uvBlock = (floor(vTexCoord * uResolution / pixelStep) * pixelStep + (pixelStep * 0.5)) / uResolution;
+                blurred = texture2D(sTexture, uvBlock);
+            } else {
+                // GAUSSIAN MULTI-TAP BLUR
+                float r = max(1.0, uIntensity * 14.0);
+                vec2 texel = vec2(r) / uResolution;
+                vec4 sum = texture2D(sTexture, vTexCoord) * 0.227027;
+                sum += texture2D(sTexture, vTexCoord + vec2(texel.x * 1.3846, 0.0)) * 0.158108;
+                sum += texture2D(sTexture, vTexCoord - vec2(texel.x * 1.3846, 0.0)) * 0.158108;
+                sum += texture2D(sTexture, vTexCoord + vec2(0.0, texel.y * 1.3846)) * 0.158108;
+                sum += texture2D(sTexture, vTexCoord - vec2(0.0, texel.y * 1.3846)) * 0.158108;
+                sum += texture2D(sTexture, vTexCoord + vec2(texel.x * 3.2307, texel.y * 3.2307)) * 0.070270;
+                sum += texture2D(sTexture, vTexCoord - vec2(texel.x * 3.2307, texel.y * 3.2307)) * 0.070270;
+                sum += texture2D(sTexture, vTexCoord + vec2(-texel.x * 3.2307, texel.y * 3.2307)) * 0.070270;
+                sum += texture2D(sTexture, vTexCoord + vec2(texel.x * 3.2307, -texel.y * 3.2307)) * 0.070270;
+                blurred = sum;
+            }
+
+            vec4 orig = texture2D(sTexture, vTexCoord);
+            gl_FragColor = mix(orig, blurred, mask);
+        }
+    """
+) {
+    var blurType: Int = 0       // 0: GAUSSIAN, 1: MOSAIC
+    var shape: Int = 0          // 0: OVAL, 1: RECTANGLE, 2: ROUNDED_RECT
+    var centerX: Float = 0.5f
+    var centerY: Float = 0.5f
+    var widthVal: Float = 0.25f
+    var heightVal: Float = 0.25f
+    var rotationDeg: Float = 0f
+    var feather: Float = 0.15f
+    var intensity: Float = 0.7f
+
+    private var uBlurTypeLoc = -1
+    private var uShapeLoc = -1
+    private var uCenterLoc = -1
+    private var uSizeLoc = -1
+    private var uRotationLoc = -1
+    private var uFeatherLoc = -1
+    private var uIntensityLoc = -1
+    private var uResolutionLoc = -1
+
+    fun updateConfig(
+        blurTypeEnum: com.clipcut.core.model.BlurType,
+        shapeEnum: com.clipcut.core.model.BlurShape,
+        cx: Float,
+        cy: Float,
+        w: Float,
+        h: Float,
+        rotationDegrees: Float,
+        featherVal: Float,
+        intensityVal: Float
+    ) {
+        blurType = if (blurTypeEnum == com.clipcut.core.model.BlurType.MOSAIC) 1 else 0
+        shape = when (shapeEnum) {
+            com.clipcut.core.model.BlurShape.OVAL -> 0
+            com.clipcut.core.model.BlurShape.RECTANGLE -> 1
+            com.clipcut.core.model.BlurShape.ROUNDED_RECT -> 2
+        }
+        centerX = cx.coerceIn(0f, 1f)
+        centerY = cy.coerceIn(0f, 1f)
+        widthVal = w.coerceIn(0.01f, 1.5f)
+        heightVal = h.coerceIn(0.01f, 1.5f)
+        rotationDeg = rotationDegrees
+        feather = featherVal.coerceIn(0f, 0.5f)
+        intensity = intensityVal.coerceIn(0.05f, 1f)
+    }
+
+    override fun onInitCustomUniforms() {
+        uBlurTypeLoc = GLES20.glGetUniformLocation(programHandle, "uBlurType")
+        uShapeLoc = GLES20.glGetUniformLocation(programHandle, "uShape")
+        uCenterLoc = GLES20.glGetUniformLocation(programHandle, "uCenter")
+        uSizeLoc = GLES20.glGetUniformLocation(programHandle, "uSize")
+        uRotationLoc = GLES20.glGetUniformLocation(programHandle, "uRotation")
+        uFeatherLoc = GLES20.glGetUniformLocation(programHandle, "uFeather")
+        uIntensityLoc = GLES20.glGetUniformLocation(programHandle, "uIntensity")
+        uResolutionLoc = GLES20.glGetUniformLocation(programHandle, "uResolution")
+    }
+
+    override fun onSetCustomUniforms(width: Int, height: Int) {
+        GLES20.glUniform1i(uBlurTypeLoc, blurType)
+        GLES20.glUniform1i(uShapeLoc, shape)
+        GLES20.glUniform2f(uCenterLoc, centerX, centerY)
+        GLES20.glUniform2f(uSizeLoc, widthVal, heightVal)
+        GLES20.glUniform1f(uRotationLoc, Math.toRadians(rotationDeg.toDouble()).toFloat())
+        GLES20.glUniform1f(uFeatherLoc, feather)
+        GLES20.glUniform1f(uIntensityLoc, intensity)
+        GLES20.glUniform2f(uResolutionLoc, width.toFloat(), height.toFloat())
+    }
+}
+

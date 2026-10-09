@@ -309,6 +309,83 @@ data class TimelineItem(
     }
 }
 
+enum class BlurType(val displayName: String) {
+    GAUSSIAN("Gaussian Blur"),
+    MOSAIC("Pixelate Mosaic")
+}
+
+enum class BlurShape(val displayName: String) {
+    OVAL("Oval / Circle"),
+    RECTANGLE("Rectangle / Bar"),
+    ROUNDED_RECT("Rounded Box")
+}
+
+data class BlurKeyframe(
+    val id: String = UUID.randomUUID().toString(),
+    val timeOffsetUs: Long = 0L,
+    val normalizedX: Float = 0.5f,
+    val normalizedY: Float = 0.5f,
+    val width: Float = 0.25f,
+    val height: Float = 0.25f,
+    val rotation: Float = 0f
+)
+
+data class BlurTransform(
+    val normalizedX: Float,
+    val normalizedY: Float,
+    val width: Float,
+    val height: Float,
+    val rotation: Float
+)
+
+data class BlurTrackItem(
+    val id: String = UUID.randomUUID().toString(),
+    val timelineStartUs: Long = 0L,
+    val timelineEndUs: Long = 5_000_000L,
+    val blurType: BlurType = BlurType.GAUSSIAN,
+    val shape: BlurShape = BlurShape.OVAL,
+    val normalizedX: Float = 0.5f,
+    val normalizedY: Float = 0.5f,
+    val width: Float = 0.25f,
+    val height: Float = 0.25f,
+    val rotation: Float = 0f,
+    val intensity: Float = 0.7f,
+    val feather: Float = 0.15f,
+    val keyframes: List<BlurKeyframe> = emptyList()
+) {
+    val durationUs: Long get() = (timelineEndUs - timelineStartUs).coerceAtLeast(0L)
+
+    fun getTransformAt(timelineUs: Long): BlurTransform {
+        if (keyframes.isEmpty()) {
+            return BlurTransform(normalizedX, normalizedY, width, height, rotation)
+        }
+        val offsetUs = timelineUs - timelineStartUs
+        if (offsetUs <= keyframes.first().timeOffsetUs) {
+            val k = keyframes.first()
+            return BlurTransform(k.normalizedX, k.normalizedY, k.width, k.height, k.rotation)
+        }
+        if (offsetUs >= keyframes.last().timeOffsetUs) {
+            val k = keyframes.last()
+            return BlurTransform(k.normalizedX, k.normalizedY, k.width, k.height, k.rotation)
+        }
+        for (i in 0 until keyframes.size - 1) {
+            val k1 = keyframes[i]
+            val k2 = keyframes[i + 1]
+            if (offsetUs in k1.timeOffsetUs..k2.timeOffsetUs) {
+                val span = (k2.timeOffsetUs - k1.timeOffsetUs).coerceAtLeast(1L)
+                val frac = (offsetUs - k1.timeOffsetUs).toFloat() / span.toFloat()
+                val x = k1.normalizedX + (k2.normalizedX - k1.normalizedX) * frac
+                val y = k1.normalizedY + (k2.normalizedY - k1.normalizedY) * frac
+                val w = k1.width + (k2.width - k1.width) * frac
+                val h = k1.height + (k2.height - k1.height) * frac
+                val rot = k1.rotation + (k2.rotation - k1.rotation) * frac
+                return BlurTransform(x, y, w, h, rot)
+            }
+        }
+        return BlurTransform(normalizedX, normalizedY, width, height, rotation)
+    }
+}
+
 data class Project(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "Untitled Video",
@@ -319,6 +396,7 @@ data class Project(
     val audioTracks: List<AudioTrackItem> = emptyList(),
     val overlays: List<OverlayItem> = emptyList(),
     val pipTracks: List<PiPTrackItem> = emptyList(),
+    val blurTracks: List<BlurTrackItem> = emptyList(),
     val beatMarkers: List<BeatMarker> = emptyList(),
     val originalVideoVolume: Float = 1.0f,
     val backgroundMusicVolume: Float = 1.0f,
@@ -332,6 +410,7 @@ data class Project(
             val audio = audioTracks.maxOfOrNull { it.timelineStartUs + it.effectiveDurationUs } ?: 0L
             val overlay = overlays.maxOfOrNull { it.timelineEndUs } ?: 0L
             val pip = pipTracks.maxOfOrNull { it.timelineEndUs } ?: 0L
-            return maxOf(video, audio, overlay, pip)
+            val blur = blurTracks.maxOfOrNull { it.timelineEndUs } ?: 0L
+            return maxOf(video, audio, overlay, pip, blur)
         }
 }

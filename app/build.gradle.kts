@@ -12,8 +12,8 @@ android {
         applicationId = "com.clipcut"
         minSdk = 26
         targetSdk = 35
-        versionCode = 55
-        versionName = "1.2.44"
+        versionCode = 56
+        versionName = "1.2.45"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
@@ -60,6 +60,7 @@ dependencies {
     implementation(libs.gson)
     implementation(libs.lottie.compose)
     implementation(libs.mlkit.`object`.detection)
+    implementation(libs.mlkit.face.detection)
     implementation(libs.mlkit.segmentation.selfie)
     implementation(libs.accompanist.permissions)
 

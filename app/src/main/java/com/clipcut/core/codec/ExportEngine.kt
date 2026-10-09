@@ -427,7 +427,9 @@ class ExportEngine(
                         rotationDegrees = clip.rotationDegrees,
                         clip = clip,
                         transitionProgress = transProgress,
-                        prevClipTexId = if (hasPrevClip) prevClipFbo?.textureId else null
+                        prevClipTexId = if (hasPrevClip) prevClipFbo?.textureId else null,
+                        activeBlurs = project.blurTracks,
+                        timelinePtsUs = timelinePtsUs
                     )
 
                     renderPiPAndOverlays(timelinePtsUs, passthrough, overlayRenderer, pipSessions, pipOesFilter)
@@ -493,7 +495,9 @@ class ExportEngine(
                     rotationDegrees = clip.rotationDegrees,
                     clip = clip,
                     transitionProgress = transProgress,
-                    prevClipTexId = if (hasPrevClip) prevClipFbo?.textureId else null
+                    prevClipTexId = if (hasPrevClip) prevClipFbo?.textureId else null,
+                    activeBlurs = project.blurTracks,
+                    timelinePtsUs = timelinePtsUs
                 )
 
                 renderPiPAndOverlays(timelinePtsUs, passthrough, overlayRenderer, pipSessions, pipOesFilter)
@@ -552,7 +556,9 @@ class ExportEngine(
                         rotationDegrees = clip.rotationDegrees,
                         clip = clip,
                         transitionProgress = transProgress,
-                        prevClipTexId = if (hasPrevClip) prevClipFbo?.textureId else null
+                        prevClipTexId = if (hasPrevClip) prevClipFbo?.textureId else null,
+                        activeBlurs = project.blurTracks,
+                        timelinePtsUs = timelinePtsUs
                     )
 
                     renderPiPAndOverlays(timelinePtsUs, passthrough, overlayRenderer, pipSessions, pipOesFilter)

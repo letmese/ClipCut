@@ -54,10 +54,12 @@ fun TimelineView(
     audioTracks: List<AudioTrackItem>,
     overlays: List<OverlayItem>,
     pipTracks: List<PiPTrackItem> = emptyList(),
+    blurTracks: List<com.clipcut.core.model.BlurTrackItem> = emptyList(),
     beatMarkers: List<BeatMarker> = emptyList(),
     selectedClipId: String?,
     selectedOverlayId: String? = null,
     selectedPipId: String? = null,
+    selectedBlurId: String? = null,
     currentPositionUs: Long,
     totalDurationUs: Long,
     isPlaying: Boolean = false,
@@ -73,6 +75,8 @@ fun TimelineView(
     onTrimOverlay: ((String, Long, Long) -> Unit)? = null,
     onSelectPip: ((PiPTrackItem) -> Unit)? = null,
     onTrimPip: ((String, Long, Long) -> Unit)? = null,
+    onSelectBlur: ((com.clipcut.core.model.BlurTrackItem) -> Unit)? = null,
+    onTrimBlur: ((String, Long, Long) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
@@ -82,9 +86,11 @@ fun TimelineView(
     var internalSelectedAudioTrackId by remember { mutableStateOf<String?>(null) }
     var internalSelectedOverlayId by remember { mutableStateOf<String?>(null) }
     var internalSelectedPipId by remember { mutableStateOf<String?>(null) }
+    var internalSelectedBlurId by remember { mutableStateOf<String?>(null) }
 
     val activeSelectedOverlayId = selectedOverlayId ?: internalSelectedOverlayId
     val activeSelectedPipId = selectedPipId ?: internalSelectedPipId
+    val activeSelectedBlurId = selectedBlurId ?: internalSelectedBlurId
 
     // Dynamic scale: 1dp = usPerDp (50,000 us at 1x zoom)
     val usPerDp = 50_000f / zoomLevel
@@ -188,6 +194,14 @@ fun TimelineView(
                 // PiP header
                 Box(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 4.dp), contentAlignment = Alignment.CenterStart) {
                     Text("PiP", color = AccentGold, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            if (blurTracks.isNotEmpty()) {
+                HorizontalDivider(color = HairlineBorder)
+                // Blur header
+                Box(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 4.dp), contentAlignment = Alignment.CenterStart) {
+                    Text("Blur", color = Color(0xFF00E5FF), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -433,6 +447,51 @@ fun TimelineView(
                             }
                         }
                     }
+                    // Blur Track (aligned to timelineStartUs)
+                    if (blurTracks.isNotEmpty()) {
+                        HorizontalDivider(color = HairlineBorder)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                        ) {
+                            blurTracks.forEach { b ->
+                                val startDp = (b.timelineStartUs / usPerDp).dp
+                                val durUs = (b.timelineEndUs - b.timelineStartUs).coerceAtLeast(200_000L)
+                                val widthDp = (durUs / usPerDp).coerceIn(44f, 5000f)
+                                val durSec = String.format("%.1f", durUs / 1_000_000f)
+                                val isSelected = b.id == activeSelectedBlurId
+                                Box(
+                                    modifier = Modifier
+                                        .offset { IntOffset(with(density) { startDp.roundToPx() }, with(density) { 2.dp.roundToPx() }) }
+                                ) {
+                                    ClipBlock(
+                                        label = if (b.keyframes.isNotEmpty()) "⚡ Blur (${b.shape.displayName})" else "Blur (${b.shape.displayName})",
+                                        durationText = "${durSec}s",
+                                        widthDp = widthDp,
+                                        selected = isSelected,
+                                        color = Color(0xFF00E5FF).copy(alpha = 0.40f),
+                                        onClick = {
+                                            internalSelectedBlurId = if (isSelected) null else b.id
+                                            onSelectBlur?.invoke(b)
+                                        },
+                                        onTrimStart = { dragAmount ->
+                                            val deltaUs = (dragAmount / density.density) * usPerDp
+                                            val newStart = (b.timelineStartUs + deltaUs.toLong()).coerceIn(0L, b.timelineEndUs - 200_000L)
+                                            onTrimBlur?.invoke(b.id, newStart, b.timelineEndUs)
+                                            onSeek(newStart)
+                                        },
+                                        onTrimEnd = { dragAmount ->
+                                            val deltaUs = (dragAmount / density.density) * usPerDp
+                                            val newEnd = (b.timelineEndUs + deltaUs.toLong()).coerceAtLeast(b.timelineStartUs + 200_000L)
+                                            onTrimBlur?.invoke(b.id, b.timelineStartUs, newEnd)
+                                            onSeek(newEnd)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Vertical Playhead across all tracks with precise height and top indicator pin
@@ -451,6 +510,10 @@ fun TimelineView(
                     if (pipTracks.isNotEmpty()) {
                         add(1.dp)
                         add(44.dp) // pip
+                    }
+                    if (blurTracks.isNotEmpty()) {
+                        add(1.dp)
+                        add(44.dp) // blur
                     }
                 }
                 val totalTrackHeight = trackHeights.fold(0.dp) { acc, h -> acc + h }

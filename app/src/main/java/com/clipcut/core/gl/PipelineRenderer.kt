@@ -9,6 +9,7 @@ import com.clipcut.core.model.FilterConfig
 import com.clipcut.core.model.LutConfig
 import com.clipcut.core.model.MaskConfig
 import com.clipcut.core.model.TimelineItem
+import com.clipcut.core.model.BlurTrackItem
 
 /**
  * PipelineRenderer — the orchestration glue that runs a clip through:
@@ -17,7 +18,8 @@ import com.clipcut.core.model.TimelineItem
  *   3. MaskFilter (optional)
  *   4. ChromaKeyFilter (optional)
  *   5. EffectFilter (optional, from EffectRegistry)
- *   6. BlendFilter against a base layer (for PiP compositing)
+ *   6. RegionalBlurFilter (optional, Gaussian / Mosaic)
+ *   7. BlendFilter against a base layer (for PiP compositing)
  */
 class PipelineRenderer(private val context: Context) {
     private var width: Int = -1
@@ -32,6 +34,7 @@ class PipelineRenderer(private val context: Context) {
     private var chroma: ChromaKeyFilter? = null
     private var blend: BlendFilter? = null
     private var transition: TransitionFilter? = null
+    private var regionalBlurFilter: RegionalBlurFilter? = null
     private var lut: LutFilter? = null
     private var currentLutUri: String? = null
     private var effectFilter: EffectFilter? = null
@@ -52,6 +55,7 @@ class PipelineRenderer(private val context: Context) {
         chroma = ChromaKeyFilter().also { it.init() }
         blend = BlendFilter().also { it.init() }
         transition = TransitionFilter().also { it.init() }
+        regionalBlurFilter = RegionalBlurFilter().also { it.init() }
         fbo = FramebufferTexture(width, height).also { it.init() }
         fbo2 = FramebufferTexture(width, height).also { it.init() }
         initialised = true
@@ -87,7 +91,9 @@ class PipelineRenderer(private val context: Context) {
         effectIntensity: Float = 0f,
         transitionProgress: Float = 0f,
         transitionType: com.clipcut.core.model.TransitionType = com.clipcut.core.model.TransitionType.NONE,
-        prevClipTexId: Int? = null
+        prevClipTexId: Int? = null,
+        activeBlurs: List<BlurTrackItem> = emptyList(),
+        timelinePtsUs: Long = 0L
     ) {
         if (!initialised) return
 
@@ -211,6 +217,35 @@ class PipelineRenderer(private val context: Context) {
             currentTex = target?.textureId ?: currentTex
         }
 
+        // Step 4d: Regional Blur / Mosaic Mask passes
+        if (activeBlurs.isNotEmpty()) {
+            val blurF = regionalBlurFilter
+            if (blurF != null) {
+                for (blurItem in activeBlurs) {
+                    if (timelinePtsUs in blurItem.timelineStartUs..blurItem.timelineEndUs) {
+                        val tf = blurItem.getTransformAt(timelinePtsUs)
+                        blurF.updateConfig(
+                            blurTypeEnum = blurItem.blurType,
+                            shapeEnum = blurItem.shape,
+                            cx = tf.normalizedX,
+                            cy = tf.normalizedY,
+                            w = tf.width,
+                            h = tf.height,
+                            rotationDegrees = tf.rotation,
+                            featherVal = blurItem.feather,
+                            intensityVal = blurItem.intensity
+                        )
+                        val target = nextTarget()
+                        target?.bind()
+                        GLES20.glViewport(0, 0, width, height)
+                        blurF.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
+                        target?.unbind()
+                        currentTex = target?.textureId ?: currentTex
+                    }
+                }
+            }
+        }
+
         lastDecoratedTexId = currentTex
 
         // Step 5: Blend with base layer (PiP compositing) or final blit
@@ -232,7 +267,9 @@ class PipelineRenderer(private val context: Context) {
         rotationDegrees: Int,
         clip: TimelineItem,
         transitionProgress: Float = 0f,
-        prevClipTexId: Int? = null
+        prevClipTexId: Int? = null,
+        activeBlurs: List<BlurTrackItem> = emptyList(),
+        timelinePtsUs: Long = 0L
     ) {
         renderFrame(
             sourceTexId, sourceTexMatrix, sourceIsOes, mvpMatrix, rotationDegrees,
@@ -240,7 +277,8 @@ class PipelineRenderer(private val context: Context) {
             clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySmoothness,
             clip.lutConfig, clip.maskConfig, clip.blendMode, null,
             clip.effectId, clip.effectIntensity,
-            transitionProgress, clip.transitionType, prevClipTexId
+            transitionProgress, clip.transitionType, prevClipTexId,
+            activeBlurs, timelinePtsUs
         )
     }
 
@@ -252,6 +290,8 @@ class PipelineRenderer(private val context: Context) {
         chroma?.release()
         blend?.release()
         transition?.release()
+        regionalBlurFilter?.release()
+        regionalBlurFilter = null
         lut?.release()
         lut = null
         currentLutUri = null
