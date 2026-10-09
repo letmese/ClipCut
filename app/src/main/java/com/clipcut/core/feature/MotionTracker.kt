@@ -263,6 +263,11 @@ class MotionTracker(private val context: Context) {
         val srcW = rawBmp.width
         val srcH = rawBmp.height
 
+        // On Android, MediaMetadataRetriever often pre-rotates portrait video frames.
+        // If the bitmap is already portrait (srcW < srcH) when rotation is 90 or 270, do NOT rotate again!
+        val alreadyRotated = (rotationDegrees == 90 || rotationDegrees == 270) && (srcW < srcH)
+        val deg = if (alreadyRotated) 0 else rotationDegrees
+
         val scale = if (maxOf(srcW, srcH) > maxDim) {
             maxDim.toFloat() / maxOf(srcW, srcH).toFloat()
         } else 1.0f
@@ -271,8 +276,8 @@ class MotionTracker(private val context: Context) {
         if (scale < 1.0f) {
             matrix.postScale(scale, scale)
         }
-        if (rotationDegrees != 0) {
-            matrix.postRotate(rotationDegrees.toFloat())
+        if (deg != 0) {
+            matrix.postRotate(deg.toFloat())
         }
 
         return if (!matrix.isIdentity) {
@@ -370,9 +375,8 @@ class MotionTracker(private val context: Context) {
 
         val faceDetector = if (mode == TrackingMode.FACE) {
             val opts = FaceDetectorOptions.Builder()
-                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-                .setMinFaceSize(0.05f)
-                .enableTracking()
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+                .setMinFaceSize(0.04f)
                 .build()
             FaceDetection.getClient(opts)
         } else null
@@ -386,7 +390,8 @@ class MotionTracker(private val context: Context) {
         } else null
 
         // 1. ANCHOR LOCK: Sample the upright frame at anchorPtsUs to identify the locked target & visual template
-        var lockedTrackingId: Int? = null
+        var anchorFaceX = initialX
+        var anchorFaceY = initialY
         var anchorFaceW = 0f
         var anchorFaceH = 0f
         var userOffsetX = 0f
@@ -415,15 +420,14 @@ class MotionTracker(private val context: Context) {
                     }
 
                     if (bestAnchorFace != null) {
-                        lockedTrackingId = bestAnchorFace.trackingId
+                        anchorFaceX = bestAnchorFace.boundingBox.centerX() / abW
+                        anchorFaceY = bestAnchorFace.boundingBox.centerY() / abH
                         anchorFaceW = (bestAnchorFace.boundingBox.width() / abW).coerceAtLeast(0.02f)
                         anchorFaceH = (bestAnchorFace.boundingBox.height() / abH).coerceAtLeast(0.02f)
-                        val rawFaceX = bestAnchorFace.boundingBox.centerX() / abW
-                        val rawFaceY = bestAnchorFace.boundingBox.centerY() / abH
 
-                        userOffsetX = initialX - rawFaceX
-                        userOffsetY = initialY - rawFaceY
-                        AppLog.d(TAG, "Locked to face id=$lockedTrackingId at anchorUs=$safeAnchorUs, anchorFaceSize=(${anchorFaceW}x$anchorFaceH), offset=($userOffsetX, $userOffsetY)")
+                        userOffsetX = initialX - anchorFaceX
+                        userOffsetY = initialY - anchorFaceY
+                        AppLog.d(TAG, "Locked to face at anchorUs=$safeAnchorUs, facePos=($anchorFaceX, $anchorFaceY), offset=($userOffsetX, $userOffsetY)")
                     }
                 } catch (t: Throwable) {
                     AppLog.w(TAG, "Anchor frame face analysis failed: ${t.message}")
@@ -440,7 +444,6 @@ class MotionTracker(private val context: Context) {
                         dx * dx + dy * dy
                     }
                     if (bestObj != null) {
-                        lockedTrackingId = bestObj.trackingId
                         userOffsetX = initialX - (bestObj.boundingBox.centerX() / abW)
                         userOffsetY = initialY - (bestObj.boundingBox.centerY() / abH)
                     }
@@ -475,14 +478,16 @@ class MotionTracker(private val context: Context) {
             startX: Float,
             startY: Float,
             startW: Float,
-            startH: Float
+            startH: Float,
+            startFaceX: Float,
+            startFaceY: Float
         ) {
             var curX = startX
             var curY = startY
             var curW = startW
             var curH = startH
-            var velX = 0f
-            var velY = 0f
+            var curFaceX = startFaceX
+            var curFaceY = startFaceY
 
             for (pts in timestamps) {
                 processedSteps++
@@ -494,6 +499,8 @@ class MotionTracker(private val context: Context) {
                     curY = initialY
                     curW = initialW
                     curH = initialH
+                    curFaceX = anchorFaceX
+                    curFaceY = anchorFaceY
                     resultsMap[pts] = FrameTransform(initialX, initialY, initialW, initialH)
                     continue
                 }
@@ -507,67 +514,49 @@ class MotionTracker(private val context: Context) {
                         try {
                             val img = InputImage.fromBitmap(rawBmp, 0)
                             val faces: List<Face> = faceDetector.process(img).awaitResult()
-                            val matchedFace = if (lockedTrackingId != null) {
-                                faces.firstOrNull { it.trackingId == lockedTrackingId }
-                            } else null
 
-                            val targetFace = matchedFace ?: faces.filter { f ->
+                            // Find the face closest to the last confirmed face position
+                            val targetFace = faces.minByOrNull { f ->
                                 val fx = f.boundingBox.centerX() / bmpW
                                 val fy = f.boundingBox.centerY() / bmpH
-                                val dist = sqrt((fx - curX) * (fx - curX) + (fy - curY) * (fy - curY))
-                                dist < 0.38f
-                            }.minByOrNull { f ->
-                                val fx = f.boundingBox.centerX() / bmpW
-                                val fy = f.boundingBox.centerY() / bmpH
-                                val dx = fx - (curX + velX)
-                                val dy = fy - (curY + velY)
+                                val dx = fx - curFaceX
+                                val dy = fy - curFaceY
                                 dx * dx + dy * dy
                             }
 
                             if (targetFace != null) {
-                                if (lockedTrackingId == null && targetFace.trackingId != null) {
-                                    lockedTrackingId = targetFace.trackingId
-                                }
-                                val fcX = targetFace.boundingBox.centerX() / bmpW
-                                val fcY = targetFace.boundingBox.centerY() / bmpH
+                                val fx = targetFace.boundingBox.centerX() / bmpW
+                                val fy = targetFace.boundingBox.centerY() / bmpH
                                 val fcW = targetFace.boundingBox.width() / bmpW
+                                val dist = sqrt((fx - curFaceX) * (fx - curFaceX) + (fy - curFaceY) * (fy - curFaceY))
 
-                                val targetTargetX = (fcX + userOffsetX).coerceIn(0.02f, 0.98f)
-                                val targetTargetY = (fcY + userOffsetY).coerceIn(0.02f, 0.98f)
+                                if (dist < 0.22f) {
+                                    // Target face confirmed — track smoothly
+                                    curFaceX = fx
+                                    curFaceY = fy
 
-                                // Scale relative to anchor face: expand if target approaches camera,
-                                // but NEVER shrink below the user's initial coverage dimensions!
-                                val scaleFactor = if (anchorFaceW > 0.01f) {
-                                    (fcW / anchorFaceW).coerceIn(1.0f, 2.5f)
-                                } else 1.0f
+                                    val targetBoxX = (curFaceX + userOffsetX).coerceIn(0.02f, 0.98f)
+                                    val targetBoxY = (curFaceY + userOffsetY).coerceIn(0.02f, 0.98f)
 
-                                val targetTargetW = initialW * scaleFactor
-                                val targetTargetH = initialH * scaleFactor
+                                    val scaleFactor = if (anchorFaceW > 0.01f) {
+                                        (fcW / anchorFaceW).coerceIn(1.0f, 2.5f)
+                                    } else 1.0f
 
-                                velX = (targetTargetX - curX) * 0.45f
-                                velY = (targetTargetY - curY) * 0.45f
+                                    val targetBoxW = initialW * scaleFactor
+                                    val targetBoxH = initialH * scaleFactor
 
-                                // Snappy responsiveness filter
-                                curX = curX * 0.18f + targetTargetX * 0.82f
-                                curY = curY * 0.18f + targetTargetY * 0.82f
-                                // STRICT GUARANTEE: Never shrink below initial dimensions
-                                curW = maxOf(curW * 0.22f + targetTargetW * 0.78f, initialW)
-                                curH = maxOf(curH * 0.22f + targetTargetH * 0.78f, initialH)
-                            } else {
-                                // Face not detected (profile, turned away, occluded):
-                                // Fallback to visual template matching to avoid losing target
-                                val match = templateTracker.findMatch(rawBmp, curX + velX, curY + velY, curW, curH)
-                                if (match != null && match.confidence >= 0.25f) {
-                                    velX = (match.normX - curX) * 0.45f
-                                    velY = (match.normY - curY) * 0.45f
-                                    curX = curX * 0.20f + match.normX * 0.80f
-                                    curY = curY * 0.20f + match.normY * 0.80f
+                                    // Smoothly position over face
+                                    curX = curX * 0.25f + targetBoxX * 0.75f
+                                    curY = curY * 0.25f + targetBoxY * 0.75f
+                                    curW = maxOf(curW * 0.25f + targetBoxW * 0.75f, initialW)
+                                    curH = maxOf(curH * 0.25f + targetBoxH * 0.75f, initialH)
                                 } else {
-                                    curX = (curX + velX).coerceIn(0.02f, 0.98f)
-                                    curY = (curY + velY).coerceIn(0.02f, 0.98f)
-                                    velX *= 0.75f
-                                    velY *= 0.75f
+                                    // Closest face is too far — hold position firmly over head!
+                                    curW = maxOf(curW, initialW)
+                                    curH = maxOf(curH, initialH)
                                 }
+                            } else {
+                                // Face not found in this frame — hold position firmly over head! Never fly away!
                                 curW = maxOf(curW, initialW)
                                 curH = maxOf(curH, initialH)
                             }
@@ -577,21 +566,15 @@ class MotionTracker(private val context: Context) {
                             curH = maxOf(curH, initialH)
                         }
                     } else {
-                        // OBJECT TRACKING: High-accuracy visual template matching
-                        // Tracks any arbitrary object (logos, license plates, private items, body parts)
-                        val match = templateTracker.findMatch(rawBmp, curX + velX, curY + velY, curW, curH)
-                        if (match != null && match.confidence >= 0.20f) {
-                            velX = (match.normX - curX) * 0.50f
-                            velY = (match.normY - curY) * 0.50f
-                            curX = curX * 0.20f + match.normX * 0.80f
-                            curY = curY * 0.20f + match.normY * 0.80f
-                        } else {
-                            curX = (curX + velX).coerceIn(0.02f, 0.98f)
-                            curY = (curY + velY).coerceIn(0.02f, 0.98f)
-                            velX *= 0.75f
-                            velY *= 0.75f
+                        // OBJECT TRACKING: Template matching with strict local window
+                        val match = templateTracker.findMatch(rawBmp, curX, curY, curW, curH)
+                        if (match != null && match.confidence >= 0.30f) {
+                            val dist = sqrt((match.normX - curX) * (match.normX - curX) + (match.normY - curY) * (match.normY - curY))
+                            if (dist < 0.15f) {
+                                curX = curX * 0.25f + match.normX * 0.75f
+                                curY = curY * 0.25f + match.normY * 0.75f
+                            }
                         }
-                        // For generic objects, strictly lock to user's sized box so it NEVER shrinks or distorts
                         curW = initialW
                         curH = initialH
                     }
@@ -605,12 +588,12 @@ class MotionTracker(private val context: Context) {
         try {
             // Forward pass from anchor to end
             if (forwardTimestamps.isNotEmpty()) {
-                trackSequence(forwardTimestamps, initialX, initialY, initialW, initialH)
+                trackSequence(forwardTimestamps, initialX, initialY, initialW, initialH, anchorFaceX, anchorFaceY)
             }
 
             // Backward pass from anchor down to start
             if (backwardTimestamps.isNotEmpty()) {
-                trackSequence(backwardTimestamps, initialX, initialY, initialW, initialH)
+                trackSequence(backwardTimestamps, initialX, initialY, initialW, initialH, anchorFaceX, anchorFaceY)
             }
         } finally {
             try { retriever.release() } catch (_: Throwable) {}
