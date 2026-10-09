@@ -1234,7 +1234,7 @@ fun EditorScreen(
                 onDismiss = { selectedTool = null }
             )
             EditorTool.KEYFRAMES -> KeyframeSheet(
-                overlay = project?.overlays?.firstOrNull(),
+                overlay = project?.overlays?.firstOrNull { it.id == selectedOverlayId } ?: project?.overlays?.firstOrNull(),
                 playheadUs = positionUs,
                 onAddKeyframe = { ovId, kf -> viewModel.addKeyframe(ovId, kf) },
                 onRemoveKeyframe = { ovId, kfId -> viewModel.removeKeyframe(ovId, kfId) },

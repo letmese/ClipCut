@@ -108,6 +108,7 @@ class ColorAdjustFilter : GlFilter(
         uniform float uSaturation;
         uniform float uTemperature;
         uniform float uVignette;
+        uniform float uTint;
         uniform float uEffectMode; // 0 none, 1 grayscale, 2 sepia
         uniform vec2 uCropOrigin;  // (left, top) in UV
         uniform vec2 uCropSize;    // (width, height)
@@ -124,6 +125,7 @@ class ColorAdjustFilter : GlFilter(
             c.rgb = mix(vec3(gray), c.rgb, uSaturation);
             c.r += uTemperature;
             c.b -= uTemperature;
+            c.g += uTint;
             if (uEffectMode > 0.5 && uEffectMode < 1.5) {
                 c.rgb = vec3(gray);
             } else if (uEffectMode > 1.5) {
@@ -141,6 +143,7 @@ class ColorAdjustFilter : GlFilter(
     var saturation: Float = 1.0f
     var temperature: Float = 0.0f
     var vignette: Float = 0.0f
+    var tint: Float = 0.0f
     var filterType: FilterType = FilterType.NONE
     var cropLeft: Float = 0f; var cropTop: Float = 0f
     var cropRight: Float = 1f; var cropBottom: Float = 1f
@@ -152,6 +155,7 @@ class ColorAdjustFilter : GlFilter(
     private var uSaturation = -1
     private var uTemperature = -1
     private var uVignette = -1
+    private var uTint = -1
     private var uEffectMode = -1
     private var uCropOrigin = -1
     private var uCropSize = -1
@@ -163,6 +167,8 @@ class ColorAdjustFilter : GlFilter(
         contrast = c.contrast
         saturation = c.saturation
         temperature = c.temperature
+        vignette = if (c.vignette > 0f) c.vignette else (if (c.filterType == FilterType.VIGNETTE) 0.7f else 0.0f)
+        tint = c.tint
         filterType = c.filterType
         when (c.filterType) {
             FilterType.GRAYSCALE -> { filterType = FilterType.GRAYSCALE }
@@ -184,6 +190,7 @@ class ColorAdjustFilter : GlFilter(
         uSaturation = GLES20.glGetUniformLocation(programHandle, "uSaturation")
         uTemperature = GLES20.glGetUniformLocation(programHandle, "uTemperature")
         uVignette = GLES20.glGetUniformLocation(programHandle, "uVignette")
+        uTint = GLES20.glGetUniformLocation(programHandle, "uTint")
         uEffectMode = GLES20.glGetUniformLocation(programHandle, "uEffectMode")
         uCropOrigin = GLES20.glGetUniformLocation(programHandle, "uCropOrigin")
         uCropSize = GLES20.glGetUniformLocation(programHandle, "uCropSize")
@@ -197,6 +204,7 @@ class ColorAdjustFilter : GlFilter(
         GLES20.glUniform1f(uSaturation, saturation)
         GLES20.glUniform1f(uTemperature, temperature)
         GLES20.glUniform1f(uVignette, vignette)
+        GLES20.glUniform1f(uTint, tint)
         val mode = when (filterType) {
             FilterType.GRAYSCALE -> 1f
             FilterType.SEPIA -> 2f

@@ -711,12 +711,33 @@ fun FilterSheet(
         }
 
         Spacer(Modifier.height(16.dp))
+        Text("3D LUT Cinematic Presets", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val presets = listOf(
+                "Cinematic" to FilterConfig(brightness = 0f, contrast = 1.25f, saturation = 1.2f, temperature = -0.15f, vignette = 0.35f, tint = 0.05f),
+                "Vintage Film" to FilterConfig(brightness = 0.05f, contrast = 0.95f, saturation = 0.85f, temperature = 0.25f, vignette = 0.45f, tint = 0.1f),
+                "Teal & Orange" to FilterConfig(brightness = 0f, contrast = 1.35f, saturation = 1.3f, temperature = -0.2f, vignette = 0.25f, tint = 0.08f),
+                "Warm Sunset" to FilterConfig(brightness = 0.05f, contrast = 1.1f, saturation = 1.25f, temperature = 0.4f, vignette = 0.2f, tint = -0.05f),
+                "Noir Drama" to FilterConfig(filterType = FilterType.GRAYSCALE, brightness = 0f, contrast = 1.45f, saturation = 0f, temperature = 0f, vignette = 0.55f),
+                "Clean Pop" to FilterConfig(brightness = 0.08f, contrast = 1.15f, saturation = 1.2f, temperature = 0f, vignette = 0f, tint = 0f)
+            )
+            items(presets) { (pName, pCfg) ->
+                EditorFilterChip(pName, cfg.contrast == pCfg.contrast && cfg.vignette == pCfg.vignette && cfg.temperature == pCfg.temperature) {
+                    cfg = pCfg
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
         Text("Fine Adjustments", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))
         SheetSlider("Brightness", cfg.brightness, -0.5f..0.5f) { cfg = cfg.copy(brightness = it) }
         SheetSlider("Contrast", cfg.contrast, 0.5f..2f) { cfg = cfg.copy(contrast = it) }
         SheetSlider("Saturation", cfg.saturation, 0f..2f) { cfg = cfg.copy(saturation = it) }
         SheetSlider("Temperature", cfg.temperature, -0.5f..0.5f) { cfg = cfg.copy(temperature = it) }
+        SheetSlider("Vignette", cfg.vignette, 0f..1f) { cfg = cfg.copy(vignette = it) }
+        SheetSlider("Tint", cfg.tint, -0.5f..0.5f) { cfg = cfg.copy(tint = it) }
         Spacer(Modifier.height(12.dp))
         PrimaryButton("Apply", onClick = { onApplyFilter(cfg) }, modifier = Modifier.fillMaxWidth())
     }
@@ -904,6 +925,9 @@ fun ExportDialog(
     var resolution by remember { mutableStateOf(ExportResolution.RES_1080P) }
     var codec by remember { mutableStateOf(ExportCodec.H264) }
     var fps by remember { mutableStateOf(30) }
+    var currentAspect by remember { mutableStateOf(projectAspectRatio) }
+    var bitrateMbps by remember { mutableStateOf(12) }
+    var activeSocialPreset by remember { mutableStateOf<String?>("TikTok") }
 
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -921,24 +945,64 @@ fun ExportDialog(
             ) {
                 SheetHeader("Export Video", onDismiss)
                 Spacer(Modifier.height(14.dp))
+
+                Text("One-Tap Social Presets", color = TextSecondary, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val presets = listOf(
+                        Triple("TikTok", "📱 TikTok / Reels / Shorts (9:16)", Pair(AspectRatio.R_9_16, 60)),
+                        Triple("YouTube", "📺 YouTube (16:9 60fps)", Pair(AspectRatio.R_16_9, 60)),
+                        Triple("IG Square", "📸 Instagram Post (1:1)", Pair(AspectRatio.R_1_1, 30)),
+                        Triple("IG Story", "🖼️ Instagram Portrait (4:5)", Pair(AspectRatio.R_4_5, 30))
+                    )
+                    items(presets) { (pKey, pLabel, pConfig) ->
+                        EditorFilterChip(pLabel, activeSocialPreset == pKey) {
+                            activeSocialPreset = pKey
+                            currentAspect = pConfig.first
+                            fps = pConfig.second
+                            resolution = ExportResolution.RES_1080P
+                            bitrateMbps = 15
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
                 Text("Resolution", color = TextSecondary, fontSize = 12.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
                     ExportResolution.values().forEach { r ->
-                        EditorFilterChip(r.label, resolution == r) { resolution = r }
+                        EditorFilterChip(r.label, resolution == r) {
+                            resolution = r
+                            activeSocialPreset = null
+                        }
                     }
                 }
-                Text("Codec", color = TextSecondary, fontSize = 12.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
-                    ExportCodec.values().forEach { c ->
-                        EditorFilterChip(c.label, codec == c) { codec = c }
+
+                Text("Bitrate Quality", color = TextSecondary, fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                    listOf(
+                        6 to "Low (6M)",
+                        12 to "Standard (12M)",
+                        25 to "High (25M)",
+                        50 to "Ultra (50M)"
+                    ).forEach { (mbps, label) ->
+                        EditorFilterChip(label, bitrateMbps == mbps) { bitrateMbps = mbps }
                     }
                 }
+
                 Text("Frame Rate", color = TextSecondary, fontSize = 12.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
                     listOf(24, 30, 60).forEach { f ->
                         EditorFilterChip("${f}fps", fps == f) { fps = f }
                     }
                 }
+
+                Text("Codec", color = TextSecondary, fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                    ExportCodec.values().forEach { c ->
+                        EditorFilterChip(c.label, codec == c) { codec = c }
+                    }
+                }
+
                 Spacer(Modifier.height(14.dp))
                 when (exportState) {
                     is com.clipcut.ui.viewmodel.ExportState.Progress -> {
@@ -959,15 +1023,33 @@ fun ExportDialog(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             SecondaryButton("View Logs", onClick = onViewLogsClick, modifier = Modifier.weight(1f))
                             PrimaryButton("Retry", onClick = {
-                                val (w, h) = projectAspectRatio.calculateExportDimensions(resolution)
-                                onStartExport(ExportConfig(resolution = resolution, customWidth = w, customHeight = h, codec = codec, frameRate = fps))
+                                val (w, h) = currentAspect.calculateExportDimensions(resolution)
+                                onStartExport(
+                                    ExportConfig(
+                                        resolution = resolution,
+                                        customWidth = w,
+                                        customHeight = h,
+                                        codec = codec,
+                                        frameRate = fps,
+                                        bitRate = bitrateMbps * 1_000_000
+                                    )
+                                )
                             }, modifier = Modifier.weight(1f))
                         }
                     }
                     com.clipcut.ui.viewmodel.ExportState.Idle -> {
-                        PrimaryButton("Export", onClick = {
-                            val (w, h) = projectAspectRatio.calculateExportDimensions(resolution)
-                            onStartExport(ExportConfig(resolution = resolution, customWidth = w, customHeight = h, codec = codec, frameRate = fps))
+                        PrimaryButton("Export Video", onClick = {
+                            val (w, h) = currentAspect.calculateExportDimensions(resolution)
+                            onStartExport(
+                                ExportConfig(
+                                    resolution = resolution,
+                                    customWidth = w,
+                                    customHeight = h,
+                                    codec = codec,
+                                    frameRate = fps,
+                                    bitRate = bitrateMbps * 1_000_000
+                                )
+                            )
                         }, modifier = Modifier.fillMaxWidth())
                     }
                 }
@@ -1236,6 +1318,12 @@ fun TextSheet(
     var selectedColor by remember { mutableStateOf(0xFFFFFFFFL) }
     var selectedBgColor by remember { mutableStateOf(0x00000000L) }
 
+    var italic by remember { mutableStateOf(false) }
+    var selectedFont by remember { mutableStateOf(FontFamilyOption.DEFAULT) }
+    var selectedAnimation by remember { mutableStateOf(TextAnimation.NONE) }
+    var hasShadow by remember { mutableStateOf(true) }
+    var hasStroke by remember { mutableStateOf(false) }
+
     val textColors = listOf(
         0xFFFFFFFFL to Color.White,
         0xFFFF2A6DL to Color(0xFFFF2A6D),
@@ -1267,6 +1355,24 @@ fun TextSheet(
                 cursorColor = AccentPrimary
             )
         )
+
+        Spacer(Modifier.height(12.dp))
+        Text("Font Family", color = TextSecondary, fontSize = 12.sp)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            FontFamilyOption.values().forEach { font ->
+                EditorFilterChip(font.label, selectedFont == font) { selectedFont = font }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text("Entrance Animation", color = TextSecondary, fontSize = 12.sp)
+        Spacer(Modifier.height(8.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(TextAnimation.values().toList()) { anim ->
+                EditorFilterChip(anim.displayName, selectedAnimation == anim) { selectedAnimation = anim }
+            }
+        }
 
         Spacer(Modifier.height(12.dp))
         Text("Text Style Presets", color = TextSecondary, fontSize = 12.sp)
@@ -1307,9 +1413,23 @@ fun TextSheet(
         Spacer(Modifier.height(12.dp))
         SheetSlider("Font Size: ${size.toInt()}sp", size, 14f..80f) { size = it }
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = bold, onCheckedChange = { bold = it }, colors = CheckboxDefaults.colors(checkedColor = AccentPrimary))
-            Text("Bold Font", color = Color.White, fontSize = 12.sp)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = bold, onCheckedChange = { bold = it }, colors = CheckboxDefaults.colors(checkedColor = AccentPrimary))
+                Text("Bold", color = Color.White, fontSize = 12.sp)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = italic, onCheckedChange = { italic = it }, colors = CheckboxDefaults.colors(checkedColor = AccentPrimary))
+                Text("Italic", color = Color.White, fontSize = 12.sp)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = hasShadow, onCheckedChange = { hasShadow = it }, colors = CheckboxDefaults.colors(checkedColor = AccentPrimary))
+                Text("Shadow", color = Color.White, fontSize = 12.sp)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = hasStroke, onCheckedChange = { hasStroke = it }, colors = CheckboxDefaults.colors(checkedColor = AccentPrimary))
+                Text("Outline", color = Color.White, fontSize = 12.sp)
+            }
         }
 
         Spacer(Modifier.height(12.dp))
@@ -1322,8 +1442,14 @@ fun TextSheet(
                         text = text,
                         textSizeSp = size,
                         textBold = bold,
+                        textItalic = italic,
+                        fontFamily = selectedFont,
                         textColor = selectedColor,
                         backgroundColor = selectedBgColor,
+                        strokeColor = if (hasStroke) 0xFF000000L else 0L,
+                        strokeWidthPx = if (hasStroke) 4f else 0f,
+                        dropShadow = hasShadow,
+                        animation = selectedAnimation,
                         timelineStartUs = startUs,
                         timelineEndUs = endUs
                     )

@@ -15,7 +15,9 @@ data class FilterConfig(
     val brightness: Float = 0.0f,
     val contrast: Float = 1.0f,
     val saturation: Float = 1.0f,
-    val temperature: Float = 0.0f
+    val temperature: Float = 0.0f,
+    val vignette: Float = 0.0f,
+    val tint: Float = 0.0f
 )
 
 enum class TransitionType(val displayName: String) {
@@ -158,6 +160,9 @@ data class OverlayItem(
     val fontFamily: FontFamilyOption = FontFamilyOption.DEFAULT,
     val backgroundColor: Long = 0x00000000L,
     val backgroundPaddingPx: Int = 16,
+    val strokeColor: Long = 0x00000000L,
+    val strokeWidthPx: Float = 0f,
+    val dropShadow: Boolean = false,
     val imageUri: String? = null,
     val normalizedX: Float = 0.5f,
     val normalizedY: Float = 0.5f,

@@ -77,10 +77,39 @@ class OverlayRenderer(private val context: Context) {
             val cx = (x * width).toInt()
             val cy = (y * height).toInt()
 
+            var animAlpha = 1f
+            var animOffsetX = 0f
+            var animOffsetY = 0f
+            var animScaleMul = 1f
+            if (o.animation != TextAnimation.NONE && o.animation != TextAnimation.TYPEWRITER) {
+                val animProgress = ((currentPtsUs - o.timelineStartUs).toFloat() / (o.animationDurationMs * 1000f).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                when (o.animation) {
+                    TextAnimation.FADE_IN -> animAlpha = animProgress
+                    TextAnimation.SLIDE_LEFT -> {
+                        animOffsetX = (1f - animProgress) * 250f * (width / 1080f)
+                        animAlpha = animProgress
+                    }
+                    TextAnimation.SLIDE_UP -> {
+                        animOffsetY = (1f - animProgress) * 150f * (height / 1920f)
+                        animAlpha = animProgress
+                    }
+                    TextAnimation.SCALE_IN -> {
+                        animScaleMul = 0.2f + 0.8f * animProgress
+                        animAlpha = animProgress
+                    }
+                    TextAnimation.BOUNCE -> {
+                        val b = if (animProgress < 0.6f) animProgress * 1.8f else (1.0f + 0.15f * kotlin.math.sin(animProgress * 3.14159f))
+                        animScaleMul = b.coerceIn(0.1f, 1.25f)
+                    }
+                    else -> {}
+                }
+            }
+
             textPaint.reset()
             textPaint.isAntiAlias = true
             textPaint.color = o.textColor.toInt()
-            textPaint.textSize = o.textSizeSp * scale * (width / 1080f)
+            textPaint.alpha = (255 * animAlpha.coerceIn(0f, 1f)).toInt()
+            textPaint.textSize = o.textSizeSp * scale * animScaleMul * (width / 1080f)
             textPaint.isFakeBoldText = o.textBold
             textPaint.textSkewX = if (o.textItalic) -0.25f else 0f
             textPaint.typeface = when (o.fontFamily) {
@@ -89,22 +118,43 @@ class OverlayRenderer(private val context: Context) {
                 FontFamilyOption.SANS_SERIF_CONDENSED -> Typeface.create("sans-serif-condensed", Typeface.NORMAL)
                 else -> Typeface.DEFAULT
             }
+            if (o.dropShadow) {
+                textPaint.setShadowLayer(8f * (width / 1080f), 3f * (width / 1080f), 3f * (width / 1080f), 0xCC000000.toInt())
+            }
+
             val text = applyAnimation(o, currentPtsUs)
             if (text.isNotEmpty()) {
                 val fm = textPaint.fontMetrics
                 val textWidth = textPaint.measureText(text)
                 val textHeight = fm.descent - fm.ascent
+                val drawX = (cx + animOffsetX) - textWidth / 2
+                val drawY = (cy + animOffsetY) - textHeight / 2 - fm.ascent
+
                 if (o.backgroundColor != 0L) {
                     bgPaint.color = o.backgroundColor.toInt()
+                    bgPaint.alpha = (Color.alpha(o.backgroundColor.toInt()) * animAlpha).toInt()
                     val pad = o.backgroundPaddingPx.toFloat()
                     canvas.drawRect(
-                        cx - textWidth / 2 - pad, cy - textHeight / 2 - pad,
-                        cx + textWidth / 2 + pad, cy + textHeight / 2 + pad, bgPaint
+                        (cx + animOffsetX) - textWidth / 2 - pad, (cy + animOffsetY) - textHeight / 2 - pad,
+                        (cx + animOffsetX) + textWidth / 2 + pad, (cy + animOffsetY) + textHeight / 2 + pad, bgPaint
                     )
                 }
                 canvas.save()
-                canvas.rotate(rot, cx.toFloat(), cy.toFloat())
-                canvas.drawText(text, cx - textWidth / 2, cy - textHeight / 2 - fm.ascent, textPaint)
+                canvas.rotate(rot, (cx + animOffsetX), (cy + animOffsetY))
+
+                // Draw stroke outline if specified
+                if (o.strokeWidthPx > 0f && o.strokeColor != 0L) {
+                    val strokePaint = Paint(textPaint).apply {
+                        style = Paint.Style.STROKE
+                        strokeWidth = o.strokeWidthPx * (width / 1080f)
+                        color = o.strokeColor.toInt()
+                        alpha = (255 * animAlpha.coerceIn(0f, 1f)).toInt()
+                        clearShadowLayer()
+                    }
+                    canvas.drawText(text, drawX, drawY, strokePaint)
+                }
+
+                canvas.drawText(text, drawX, drawY, textPaint)
                 canvas.restore()
             }
         }
