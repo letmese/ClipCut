@@ -927,7 +927,7 @@ fun BlurSheet(
     trackingStatus: String?,
     onUpdate: (BlurTrackItem) -> Unit,
     onStartTracking: (com.clipcut.core.feature.TrackingMode) -> Unit,
-    onAutoBlurAllFaces: (() -> Unit)? = null,
+    onAutoBlurAllFaces: ((BlurType, BlurShape, Float, Float, String?) -> Unit)? = null,
     onPickCustomImage: (() -> Unit)? = null,
     onClearTracking: () -> Unit,
     onDelete: () -> Unit,
@@ -1165,10 +1165,30 @@ fun BlurSheet(
 
         if (onAutoBlurAllFaces != null) {
             PrimaryButton(
-                "⚡ Auto-Detect & Blur All Faces in Video",
-                onClick = onAutoBlurAllFaces,
+                "⚡ Auto-Blackout All Faces (Solid Censor)",
+                onClick = {
+                    onAutoBlurAllFaces(BlurType.BLACKOUT, blurItem.shape, 1.0f, 0.15f, null)
+                },
                 modifier = Modifier.fillMaxWidth()
             )
+            Spacer(Modifier.height(6.dp))
+            SecondaryButton(
+                "🌫️ Auto-Blur All Faces (Full Solid Frosted)",
+                onClick = {
+                    onAutoBlurAllFaces(BlurType.GAUSSIAN, blurItem.shape, 1.0f, 0.20f, null)
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (blurItem.blurType == BlurType.MOSAIC || blurItem.blurType == BlurType.IMAGE) {
+                Spacer(Modifier.height(6.dp))
+                SecondaryButton(
+                    "✨ Auto-Apply ${blurItem.blurType.displayName} to All Faces",
+                    onClick = {
+                        onAutoBlurAllFaces(blurItem.blurType, blurItem.shape, blurItem.intensity, blurItem.feather, blurItem.customImageUri)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             Spacer(Modifier.height(8.dp))
         }
 

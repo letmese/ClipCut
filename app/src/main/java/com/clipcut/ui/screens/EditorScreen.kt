@@ -1384,7 +1384,15 @@ fun EditorScreen(
 
                                 IconButton(
                                     onClick = {
-                                        viewModel.autoBlurAllFaces(positionUs)
+                                        val bType = activeBlur.blurType
+                                        viewModel.autoBlurAllFaces(
+                                            currentPlayheadUs = positionUs,
+                                            blurType = bType,
+                                            shape = activeBlur.shape,
+                                            intensity = if (bType == com.clipcut.core.model.BlurType.GAUSSIAN) 1.0f else activeBlur.intensity,
+                                            feather = activeBlur.feather,
+                                            customImageUri = activeBlur.customImageUri
+                                        )
                                     },
                                     modifier = Modifier.size(32.dp)
                                 ) {
@@ -1784,8 +1792,15 @@ fun EditorScreen(
                     onStartTracking = { mode ->
                         viewModel.startMotionTracking(itemToEdit.id, mode, positionUs)
                     },
-                    onAutoBlurAllFaces = {
-                        viewModel.autoBlurAllFaces(positionUs)
+                    onAutoBlurAllFaces = { bType, bShape, bInt, bFeat, bUri ->
+                        viewModel.autoBlurAllFaces(
+                            currentPlayheadUs = positionUs,
+                            blurType = bType,
+                            shape = bShape,
+                            intensity = bInt,
+                            feather = bFeat,
+                            customImageUri = bUri
+                        )
                         selectedTool = null
                     },
                     onPickCustomImage = {

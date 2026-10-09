@@ -427,12 +427,26 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun autoBlurAllFaces(currentPlayheadUs: Long) {
+    fun autoBlurAllFaces(
+        currentPlayheadUs: Long,
+        blurType: com.clipcut.core.model.BlurType = com.clipcut.core.model.BlurType.BLACKOUT,
+        shape: com.clipcut.core.model.BlurShape = com.clipcut.core.model.BlurShape.OVAL,
+        intensity: Float = 1.0f,
+        feather: Float = 0.15f,
+        customImageUri: String? = null
+    ) {
         val proj = _project.value ?: return
         val mainClip = proj.videoClips.firstOrNull() ?: return
         val tracker = com.clipcut.core.feature.MotionTracker(getApplication())
 
-        _trackingState.value = "Scanning frame for all faces..."
+        val styleDesc = when (blurType) {
+            com.clipcut.core.model.BlurType.BLACKOUT -> "Solid Blackout"
+            com.clipcut.core.model.BlurType.GAUSSIAN -> "Full Solid Blur"
+            com.clipcut.core.model.BlurType.MOSAIC -> "Chunky Mosaic"
+            com.clipcut.core.model.BlurType.IMAGE -> "Stickers"
+        }
+
+        _trackingState.value = "Scanning frame for all faces ($styleDesc)..."
         viewModelScope.launch {
             try {
                 val faces = tracker.detectAllFacesAt(mainClip.uri, currentPlayheadUs)
@@ -444,7 +458,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
 
-                _trackingState.value = "Found ${faces.size} faces! Tracking all across video..."
+                _trackingState.value = "Found ${faces.size} faces! Tracking with $styleDesc..."
                 val totalDur = proj.totalDurationUs.coerceAtLeast(3_000_000L)
                 val newBlurTracks = mutableListOf<com.clipcut.core.model.BlurTrackItem>()
 
@@ -473,10 +487,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         normalizedY = face.normCenterY,
                         width = face.normWidth,
                         height = face.normHeight,
-                        shape = com.clipcut.core.model.BlurShape.OVAL,
-                        blurType = com.clipcut.core.model.BlurType.GAUSSIAN,
-                        intensity = 0.65f,
-                        feather = 0.20f,
+                        shape = shape,
+                        blurType = blurType,
+                        intensity = intensity,
+                        feather = feather,
+                        customImageUri = customImageUri,
                         keyframes = kfs
                     )
                     newBlurTracks.add(blurTrack)
@@ -484,7 +499,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
                 mutate { p -> p.copy(blurTracks = p.blurTracks + newBlurTracks) }
                 withContext(Dispatchers.Main) {
-                    android.widget.Toast.makeText(getApplication(), "Auto-blurred and tracked ${faces.size} faces!", android.widget.Toast.LENGTH_LONG).show()
+                    android.widget.Toast.makeText(getApplication(), "Auto-blurred and tracked ${faces.size} faces with $styleDesc!", android.widget.Toast.LENGTH_LONG).show()
                 }
             } catch (t: Throwable) {
                 AppLog.e(TAG, "Bulk face tracking failed: ${t.message}", t)
