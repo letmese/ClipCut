@@ -41,7 +41,8 @@ import com.clipcut.ui.theme.*
  */
 @Composable
 fun SettingsScreen(
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onOpenLogs: () -> Unit = {}
 ) {
     val vm: com.clipcut.ui.viewmodel.SettingsViewModel = viewModel()
     val theme by vm.theme.collectAsState()
@@ -59,11 +60,18 @@ fun SettingsScreen(
         containerColor = DarkBackground,
         topBar = {
             Surface(color = Surface1, tonalElevation = 0.dp) {
-                Row(modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .height(56.dp)
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                     }
-                    Text("Settings", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                    Text("Settings & Preferences", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                 }
             }
         }
@@ -74,7 +82,7 @@ fun SettingsScreen(
                 Spacer(Modifier.height(12.dp))
                 Text("Accent color", color = TextSecondary, fontSize = 12.sp)
                 Row(modifier = Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("#E94560", "#06D6A0", "#4EA8DE", "#FFC857", "#9B5DE5", "#FF7043", "#22D3EE", "#F472B6").forEach { c ->
+                    listOf("#00E5FF", "#FFB703", "#E94560", "#06D6A0", "#4EA8DE", "#9B5DE5", "#FF7043", "#F472B6").forEach { c ->
                         val selected = accent.equals(c, ignoreCase = true)
                         val parsedColor = runCatching { Color(android.graphics.Color.parseColor(c)) }.getOrDefault(AccentPrimary)
                         Box(modifier = Modifier
@@ -100,24 +108,31 @@ fun SettingsScreen(
                 Text("Frame Rate", color = TextSecondary, fontSize = 12.sp)
                 SegmentedRow(listOf("24", "30", "60"), fps.toString()) { vm.setExportFps(it.toInt()) }
             }
-            SettingsSection("Editor") {
+            SettingsSection("Editor & Processing") {
                 Text("Auto-save interval: ${autoSave}s", color = Color.White, fontSize = 12.sp)
                 Slider(value = autoSave.toFloat(), onValueChange = { vm.setAutoSave(it.toInt()) }, valueRange = 5f..120f, colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary))
-                Toggle("Hardware acceleration", hwAccel) { vm.setHwAccel(it) }
+                Toggle("GPU Hardware acceleration", hwAccel) { vm.setHwAccel(it) }
                 Toggle("Gesture controls", gestures) { vm.setGestures(it) }
                 Text("Haptic feedback level: $haptic", color = Color.White, fontSize = 12.sp)
                 Slider(value = haptic.toFloat(), onValueChange = { vm.setHaptic(it.toInt()) }, valueRange = 0f..3f, colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary))
             }
-            SettingsSection("Storage") {
+            SettingsSection("Storage & Cache") {
                 Text("Cache limit: $cacheMb MB", color = Color.White, fontSize = 12.sp)
                 Slider(value = cacheMb.toFloat(), onValueChange = { vm.setCacheLimit(it.toInt()) }, valueRange = 256f..8192f, colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary))
                 Spacer(Modifier.height(8.dp))
-                SecondaryButton("Clear Cache", onClick = { vm.clearCache() }, modifier = Modifier.fillMaxWidth())
+                SecondaryButton("Clear Cache & Temp Frames", onClick = { vm.clearCache() }, modifier = Modifier.fillMaxWidth())
             }
-            SettingsSection("About") {
-                Text("ClipCut v1.2.41 (Build 52)", color = Color.White, fontSize = 12.sp)
+            SettingsSection("About & Diagnostics") {
+                Text("ClipCut PRO v1.2.53 (Build 64)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Spacer(Modifier.height(4.dp))
-                Text("Kotlin 2.1.20 • Compose BOM 2024.12.01 • Media3 1.5.0", color = TextSecondary, fontSize = 11.sp)
+                Text("Kotlin 2.1.20 • Compose BOM 2024.12.01 • Media3 1.5.0 • OpenCV & MediaPipe", color = TextSecondary, fontSize = 11.sp)
+                Spacer(Modifier.height(12.dp))
+                SecondaryButton(
+                    text = "View Diagnostics & App Logs",
+                    onClick = onOpenLogs,
+                    icon = Icons.Filled.BugReport,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Spacer(Modifier.height(8.dp))
                 Text("Open source licenses", color = AccentPrimary, fontSize = 12.sp, modifier = Modifier.clickable(
                     interactionSource = remember { MutableInteractionSource() },

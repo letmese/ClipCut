@@ -1918,9 +1918,9 @@ private fun EditorTopBar(
             }
             Button(
                 onClick = onExport,
-                colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary, contentColor = Color.White),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary, contentColor = DarkBackground),
                 shape = RoundedCornerShape(8.dp)
-            ) { Text("Export", fontSize = 12.sp) }
+            ) { Text("Export", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
         }
     }
 }

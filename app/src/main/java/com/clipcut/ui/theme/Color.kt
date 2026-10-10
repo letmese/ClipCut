@@ -2,31 +2,47 @@ package com.clipcut.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
+// ── Obsidian Precision Motion Design Tokens (Stitch UI) ──
+val ObsidianBackground = Color(0xFF101319)
+val ObsidianSurfaceDim = Color(0xFF101319)
+val ObsidianSurfaceLowest = Color(0xFF0B0E14)
+val ObsidianSurfaceLow = Color(0xFF191C22)
+val ObsidianSurface = Color(0xFF1D2026)
+val ObsidianSurfaceHigh = Color(0xFF272A31)
+val ObsidianSurfaceHighest = Color(0xFF32353C)
+val ObsidianBorder = Color(0xFF30363D)
+val ObsidianBorderVariant = Color(0xFF3B494C)
+
+val ElectricCyan = Color(0xFF00E5FF)
+val ElectricCyanDim = Color(0xFF00DAF3)
+val ProGold = Color(0xFFFFB703)
+val ProGoldDim = Color(0xFFFFBA27)
+
 // ── md_theme_dark_* — required by API reference ──
-val md_theme_dark_primary = Color(0xFFE94560)
-val md_theme_dark_onPrimary = Color(0xFFFFFFFF)
-val md_theme_dark_primaryContainer = Color(0xFF5C1A28)
-val md_theme_dark_onPrimaryContainer = Color(0xFFFFD9DD)
-val md_theme_dark_secondary = Color(0xFF06D6A0)
-val md_theme_dark_tertiary = Color(0xFF4EA8DE)
-val md_theme_dark_background = Color(0xFF0A0A0F)
-val md_theme_dark_onBackground = Color(0xFFFFFFFF)
-val md_theme_dark_surface = Color(0xFF12121A)
-val md_theme_dark_onSurface = Color(0xFFFFFFFF)
-val md_theme_dark_surfaceVariant = Color(0xFF23232F)
-val md_theme_dark_onSurfaceVariant = Color(0xB3FFFFFF)
-val md_theme_dark_outline = Color(0x33FFFFFF)
+val md_theme_dark_primary = ElectricCyan
+val md_theme_dark_onPrimary = Color(0xFF00363D)
+val md_theme_dark_primaryContainer = Color(0xFF00626E)
+val md_theme_dark_onPrimaryContainer = Color(0xFFC3F5FF)
+val md_theme_dark_secondary = ProGold
+val md_theme_dark_tertiary = Color(0xFF9CF0FF)
+val md_theme_dark_background = ObsidianBackground
+val md_theme_dark_onBackground = Color(0xFFE1E2EB)
+val md_theme_dark_surface = ObsidianSurface
+val md_theme_dark_onSurface = Color(0xFFE1E2EB)
+val md_theme_dark_surfaceVariant = ObsidianSurfaceHigh
+val md_theme_dark_onSurfaceVariant = Color(0xFFBAC9CC)
+val md_theme_dark_outline = ObsidianBorder
 
 // ── Accent palette ──
-val AccentGold = Color(0xFFFFC857)
+val AccentGold = ProGold
 val AccentViolet = Color(0xFF9B5DE5)
-val AccentBlue = md_theme_dark_tertiary
+val AccentBlue = Color(0xFF00DAF3)
 
 // ── Surface tokens (design-system) ──
-val Surface1 = Color(0xFF12121A)
-val Surface2 = Color(0xFF1A1A24)
-val Surface3 = Color(0xFF23232F)
-val HairlineBorder = Color(0x33FFFFFF)
+val Surface1 = ObsidianSurfaceLow
+val Surface2 = ObsidianSurface
+val Surface3 = ObsidianSurfaceHigh
+val HairlineBorder = ObsidianBorder
 
 // ── Aliases required by existing screens (API reference) ──
 val DarkBackground: Color = md_theme_dark_background
@@ -37,13 +53,13 @@ val AccentPrimary: Color = md_theme_dark_primary
 val AccentPrimaryVariant: Color = md_theme_dark_primaryContainer
 val AccentSecondary: Color = md_theme_dark_secondary
 
-val TextPrimary: Color = Color(0xFFFFFFFF)
-val TextSecondary: Color = Color(0xCCFFFFFF)
-val TextTertiary: Color = Color(0x99FFFFFF)
-val TextMuted: Color = Color(0x4DFFFFFF)
+val TextPrimary: Color = Color(0xFFE1E2EB)
+val TextSecondary: Color = Color(0xFFBAC9CC)
+val TextTertiary: Color = Color(0xFF849396)
+val TextMuted: Color = Color(0xFF5A6668)
 
-val TimelineClipBg: Color = Color(0xFF2A2A3A)
-val TimelineClipBorder: Color = Color(0x33FFFFFF)
-val TimelinePlayhead: Color = md_theme_dark_primary
-val AudioTrackColor: Color = md_theme_dark_secondary
-val OverlayTrackColor: Color = AccentViolet
+val TimelineClipBg: Color = ObsidianSurfaceHigh
+val TimelineClipBorder: Color = ObsidianBorder
+val TimelinePlayhead: Color = ElectricCyan
+val AudioTrackColor: Color = ElectricCyanDim
+val OverlayTrackColor: Color = Color(0xFFB388FF)

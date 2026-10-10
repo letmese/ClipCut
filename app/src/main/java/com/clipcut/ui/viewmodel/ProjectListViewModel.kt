@@ -28,11 +28,18 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    fun createProject(name: String, onCreated: (String) -> Unit) {
+    fun createProject(
+        name: String,
+        aspectRatio: com.clipcut.core.model.AspectRatio = com.clipcut.core.model.AspectRatio.R_9_16,
+        onCreated: (String) -> Unit
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
-            val p = Project(name = name.ifBlank { "Untitled Video" })
+            val p = Project(
+                name = name.ifBlank { "Untitled Video" },
+                aspectRatio = aspectRatio
+            )
             dao.insertProject(ProjectEntity.fromDomain(p))
-            AppLog.i(TAG, "createProject ${p.id} name=${p.name}")
+            AppLog.i(TAG, "createProject ${p.id} name=${p.name} ratio=${p.aspectRatio.label}")
             refresh()
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 onCreated(p.id)

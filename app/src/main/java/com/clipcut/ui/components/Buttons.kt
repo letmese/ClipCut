@@ -43,9 +43,9 @@ fun PrimaryButton(
         modifier = modifier.height(52.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = AccentPrimary,
-            contentColor = Color.White,
+            contentColor = Color(0xFF0E1117),
             disabledContainerColor = AccentPrimary.copy(alpha = 0.4f),
-            disabledContentColor = Color.White.copy(alpha = 0.6f)
+            disabledContentColor = Color(0xFF0E1117).copy(alpha = 0.6f)
         ),
         shape = RoundedCornerShape(12.dp),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 0.dp)

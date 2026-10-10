@@ -10,6 +10,7 @@ package com.clipcut.ui.nav
 sealed class Screen(val route: String) {
     object Onboarding : Screen("onboarding")
     object ProjectList : Screen("projects")
+    object Settings : Screen("settings")
     object Editor : Screen("editor/{projectId}") {
         fun createRoute(projectId: String): String = "editor/$projectId"
     }

@@ -18,6 +18,7 @@ import com.clipcut.ui.screens.EditorScreen
 import com.clipcut.ui.screens.LogViewerScreen
 import com.clipcut.ui.screens.OnboardingScreen
 import com.clipcut.ui.screens.ProjectListScreen
+import com.clipcut.ui.screens.SettingsScreen
 import com.clipcut.ui.theme.ClipCutTheme
 import com.clipcut.ui.viewmodel.EditorViewModel
 import com.clipcut.ui.viewmodel.ProjectListViewModel
@@ -48,6 +49,12 @@ class MainActivity : ComponentActivity() {
                             onOpenProject = { id ->
                                 navController.navigate(Screen.Editor.createRoute(id))
                             },
+                            onOpenSettings = { navController.navigate(Screen.Settings.route) }
+                        )
+                    }
+                    composable(Screen.Settings.route) {
+                        SettingsScreen(
+                            onNavigateBack = { navController.popBackStack() },
                             onOpenLogs = { navController.navigate(Screen.LogViewer.route) }
                         )
                     }
