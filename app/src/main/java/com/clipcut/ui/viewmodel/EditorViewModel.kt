@@ -509,6 +509,93 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun autoBlackoutAllPeople(
+        currentPlayheadUs: Long,
+        blurType: com.clipcut.core.model.BlurType = com.clipcut.core.model.BlurType.BLACKOUT,
+        shape: com.clipcut.core.model.BlurShape = com.clipcut.core.model.BlurShape.RECTANGLE,
+        intensity: Float = 1.0f,
+        feather: Float = 0.15f,
+        customImageUri: String? = null
+    ) {
+        val proj = _project.value ?: return
+        val mainClip = proj.videoClips.firstOrNull() ?: return
+        val tracker = com.clipcut.core.feature.MotionTracker(getApplication())
+
+        val styleDesc = when (blurType) {
+            com.clipcut.core.model.BlurType.BLACKOUT -> "Solid Blackout"
+            com.clipcut.core.model.BlurType.GAUSSIAN -> "Full Solid Blur"
+            com.clipcut.core.model.BlurType.MOSAIC -> "Chunky Mosaic"
+            com.clipcut.core.model.BlurType.IMAGE -> "Stickers"
+        }
+
+        _trackingState.value = "Scanning frame for all people ($styleDesc)..."
+        viewModelScope.launch {
+            try {
+                val faces = tracker.detectAllFacesAt(mainClip.uri, currentPlayheadUs)
+                if (faces.isEmpty()) {
+                    _trackingState.value = null
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(getApplication(), "No people detected at current playhead", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+
+                _trackingState.value = "Found ${faces.size} people! Tracking full bodies with $styleDesc..."
+                val totalDur = proj.totalDurationUs.coerceAtLeast(3_000_000L)
+                val newBlurTracks = mutableListOf<com.clipcut.core.model.BlurTrackItem>()
+
+                for ((idx, face) in faces.withIndex()) {
+                    val bodyW = (face.normWidth * 1.8f).coerceIn(0.24f, 0.45f)
+                    val bodyH = (face.normHeight * 5.0f).coerceIn(0.60f, 0.90f)
+                    val bodyX = face.normCenterX
+                    val bodyY = (face.normCenterY + bodyH * 0.35f).coerceIn(0.25f, 0.92f)
+
+                    val kfs = tracker.track(
+                        videoUri = mainClip.uri,
+                        initialX = bodyX,
+                        initialY = bodyY,
+                        initialW = bodyW,
+                        initialH = bodyH,
+                        initialRotation = 0f,
+                        startTimeUs = 0L,
+                        endTimeUs = totalDur,
+                        anchorPtsUs = currentPlayheadUs,
+                        mode = com.clipcut.core.feature.TrackingMode.BODY,
+                        onProgress = { p ->
+                            val pct = (p * 100).toInt()
+                            _trackingState.value = "Tracking Person ${idx + 1}/${faces.size} ($pct%)..."
+                        }
+                    )
+
+                    val blurTrack = com.clipcut.core.model.BlurTrackItem(
+                        timelineStartUs = 0L,
+                        timelineEndUs = totalDur,
+                        normalizedX = bodyX,
+                        normalizedY = bodyY,
+                        width = bodyW,
+                        height = bodyH,
+                        shape = shape,
+                        blurType = blurType,
+                        intensity = intensity,
+                        feather = feather,
+                        customImageUri = customImageUri,
+                        keyframes = kfs
+                    )
+                    newBlurTracks.add(blurTrack)
+                }
+
+                mutate { p -> p.copy(blurTracks = p.blurTracks + newBlurTracks) }
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(getApplication(), "Auto-blacked out and tracked ${faces.size} full people with $styleDesc!", android.widget.Toast.LENGTH_LONG).show()
+                }
+            } catch (t: Throwable) {
+                AppLog.e(TAG, "Bulk full body tracking failed: ${t.message}", t)
+            } finally {
+                _trackingState.value = null
+            }
+        }
+    }
+
     fun setVolumes(orig: Float, music: Float) = mutate {
         it.copy(originalVideoVolume = orig.coerceIn(0f, 2f), backgroundMusicVolume = music.coerceIn(0f, 2f))
     }

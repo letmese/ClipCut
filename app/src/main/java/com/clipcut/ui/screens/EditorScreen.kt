@@ -1851,6 +1851,17 @@ fun EditorScreen(
                         )
                         selectedTool = null
                     },
+                    onAutoBlackoutAllPeople = { bType, bShape, bInt, bFeat, bUri ->
+                        viewModel.autoBlackoutAllPeople(
+                            currentPlayheadUs = positionUs,
+                            blurType = bType,
+                            shape = bShape,
+                            intensity = bInt,
+                            feather = bFeat,
+                            customImageUri = bUri
+                        )
+                        selectedTool = null
+                    },
                     onPickCustomImage = {
                         pickBlurImage.launch("image/*")
                     },

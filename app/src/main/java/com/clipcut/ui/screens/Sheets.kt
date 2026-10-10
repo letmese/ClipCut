@@ -932,6 +932,7 @@ fun BlurSheet(
     onUpdate: (BlurTrackItem) -> Unit,
     onStartTracking: (com.clipcut.core.feature.TrackingMode) -> Unit,
     onAutoBlurAllFaces: ((BlurType, BlurShape, Float, Float, String?) -> Unit)? = null,
+    onAutoBlackoutAllPeople: ((BlurType, BlurShape, Float, Float, String?) -> Unit)? = null,
     onPickCustomImage: (() -> Unit)? = null,
     onClearTracking: () -> Unit,
     onDelete: () -> Unit,
@@ -1171,13 +1172,16 @@ fun BlurSheet(
 
         // Quick shape aspect ratio buttons
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            EditorFilterChip("🧍 Full Person", blurItem.height >= 0.70f) {
+                onUpdate(blurItem.copy(shape = BlurShape.RECTANGLE, width = 0.35f, height = 0.82f))
+            }
+            EditorFilterChip("Face Oval", blurItem.shape == BlurShape.OVAL && blurItem.height < 0.50f) {
+                onUpdate(blurItem.copy(shape = BlurShape.OVAL, width = 0.28f, height = 0.35f))
+            }
             EditorFilterChip("License Plate", blurItem.width > blurItem.height * 1.5f) {
                 onUpdate(blurItem.copy(shape = BlurShape.RECTANGLE, width = 0.45f, height = 0.16f))
             }
-            EditorFilterChip("Face Oval", blurItem.shape == BlurShape.OVAL && blurItem.height >= blurItem.width) {
-                onUpdate(blurItem.copy(shape = BlurShape.OVAL, width = 0.28f, height = 0.35f))
-            }
-            EditorFilterChip("Square 1:1", blurItem.width == blurItem.height) {
+            EditorFilterChip("Square 1:1", blurItem.width == blurItem.height && blurItem.height < 0.50f) {
                 onUpdate(blurItem.copy(width = 0.25f, height = 0.25f))
             }
         }
@@ -1216,6 +1220,17 @@ fun BlurSheet(
             Spacer(Modifier.height(8.dp))
         }
 
+        if (onAutoBlackoutAllPeople != null) {
+            PrimaryButton(
+                "🧍 Auto-Blackout All People (Full Body Head-to-Toe)",
+                onClick = {
+                    onAutoBlackoutAllPeople(BlurType.BLACKOUT, BlurShape.RECTANGLE, 1.0f, 0.15f, null)
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+
         if (onAutoBlurAllFaces != null) {
             PrimaryButton(
                 "⚡ Auto-Blackout All Faces (Solid Censor)",
@@ -1245,14 +1260,20 @@ fun BlurSheet(
             Spacer(Modifier.height(8.dp))
         }
 
+        PrimaryButton(
+            "🧍 Track Full Body (Follow Whole Person)",
+            onClick = { onStartTracking(com.clipcut.core.feature.TrackingMode.BODY) },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SecondaryButton(
-                "⚡ Track Selected Face",
+                "⚡ Track Face (AI)",
                 onClick = { onStartTracking(com.clipcut.core.feature.TrackingMode.FACE) },
                 modifier = Modifier.weight(1f)
             )
             SecondaryButton(
-                "Track Object",
+                "Track Moving Object",
                 onClick = { onStartTracking(com.clipcut.core.feature.TrackingMode.OBJECT) },
                 modifier = Modifier.weight(1f)
             )
