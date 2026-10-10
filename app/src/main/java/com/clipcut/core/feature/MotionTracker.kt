@@ -163,9 +163,16 @@ private class VisualTemplateTracker {
         val framePixels = IntArray(bmpW * bmpH)
         frameBmp.getPixels(framePixels, 0, bmpW, 0, 0, bmpW, bmpH)
 
-        // Broad search radius covers fast walking, running, and rapid pans
-        val searchRadiusX = (bmpW * 0.38f).toInt().coerceIn(60, 260)
-        val searchRadiusY = (bmpH * 0.38f).toInt().coerceIn(60, 260)
+        // Realistic search radius covers fast walking and running without scanning irrelevant skies/roofs
+        val searchRadiusX = (bmpW * 0.28f).toInt().coerceIn(40, 160)
+        val searchRadiusY = (bmpH * 0.20f).toInt().coerceIn(30, 120)
+        val maxRadiusSq = (searchRadiusX.toFloat() * searchRadiusX + searchRadiusY.toFloat() * searchRadiusY).coerceAtLeast(1f)
+
+        // Keep candidate center on screen
+        val minCandX = (pxW * 0.20f).toInt().coerceIn(1, bmpW - 1)
+        val maxCandX = (bmpW - pxW * 0.20f).toInt().coerceIn(1, bmpW - 1)
+        val minCandY = (pxH * 0.20f).toInt().coerceIn(1, bmpH - 1)
+        val maxCandY = (bmpH - pxH * 0.20f).toInt().coerceIn(1, bmpH - 1)
 
         // ── Phase 1: Hierarchical Coarse Search (step = 8, subsample template by 4) ──
         var bestCoarseDx = 0
@@ -180,8 +187,7 @@ private class VisualTemplateTracker {
                 val candCenterX = expPxX + dx
                 val candCenterY = expPxY + dy
 
-                // Valid candidate center in frame — safe edge clamping inside pixel loop avoids dropping full bodies
-                if (candCenterX in 0 until bmpW && candCenterY in 0 until bmpH) {
+                if (candCenterX in minCandX..maxCandX && candCenterY in minCandY..maxCandY) {
                     var sad = 0L
                     val startX = candCenterX - pxW / 2f
                     val startY = candCenterY - pxH / 2f
@@ -207,13 +213,19 @@ private class VisualTemplateTracker {
                             val aDiffLum = kotlin.math.abs(cl - aLum[tIdx])
                             val aDiffCol = (kotlin.math.abs(cr - aR[tIdx]) + kotlin.math.abs(cg - aG[tIdx]) + kotlin.math.abs(cb - aB[tIdx])) / 3
 
-                            val combined = ((diffLum + diffCol) * 2 + (aDiffLum + aDiffCol)) / 3
+                            // 70% Anchor ground truth (preserves clothing identity) + 30% adaptive
+                            val combined = ((diffLum + diffCol) * 3 + (aDiffLum + aDiffCol) * 7) / 10
                             sad += combined
                         }
                     }
 
-                    if (sad < minCoarseSad) {
-                        minCoarseSad = sad
+                    // Parabolic spatial distance penalty: strongly favors smooth motion, prevents jumping far away
+                    val distSq = dx.toFloat() * dx + dy.toFloat() * dy
+                    val spatialWeight = 1.0f + 1.25f * (distSq / maxRadiusSq)
+                    val penalizedSad = (sad.toFloat() * spatialWeight).toLong()
+
+                    if (penalizedSad < minCoarseSad) {
+                        minCoarseSad = penalizedSad
                         bestCoarseDx = dx
                         bestCoarseDy = dy
                     }
@@ -236,7 +248,7 @@ private class VisualTemplateTracker {
                 val candCenterX = expPxX + mdx
                 val candCenterY = expPxY + mdy
 
-                if (candCenterX in 0 until bmpW && candCenterY in 0 until bmpH) {
+                if (candCenterX in minCandX..maxCandX && candCenterY in minCandY..maxCandY) {
                     var sad = 0L
                     val startX = candCenterX - pxW / 2f
                     val startY = candCenterY - pxH / 2f
@@ -262,13 +274,17 @@ private class VisualTemplateTracker {
                             val aDiffLum = kotlin.math.abs(cl - aLum[tIdx])
                             val aDiffCol = (kotlin.math.abs(cr - aR[tIdx]) + kotlin.math.abs(cg - aG[tIdx]) + kotlin.math.abs(cb - aB[tIdx])) / 3
 
-                            val combined = ((diffLum + diffCol) * 2 + (aDiffLum + aDiffCol)) / 3
+                            val combined = ((diffLum + diffCol) * 3 + (aDiffLum + aDiffCol) * 7) / 10
                             sad += combined
                         }
                     }
 
-                    if (sad < minMedSad) {
-                        minMedSad = sad
+                    val distSq = mdx.toFloat() * mdx + mdy.toFloat() * mdy
+                    val spatialWeight = 1.0f + 1.25f * (distSq / maxRadiusSq)
+                    val penalizedSad = (sad.toFloat() * spatialWeight).toLong()
+
+                    if (penalizedSad < minMedSad) {
+                        minMedSad = penalizedSad
                         bestMedDx = mdx
                         bestMedDy = mdy
                     }
@@ -289,7 +305,7 @@ private class VisualTemplateTracker {
                 val candCenterX = expPxX + fdx
                 val candCenterY = expPxY + fdy
 
-                if (candCenterX in 0 until bmpW && candCenterY in 0 until bmpH) {
+                if (candCenterX in minCandX..maxCandX && candCenterY in minCandY..maxCandY) {
                     var sad = 0L
                     val startX = candCenterX - pxW / 2f
                     val startY = candCenterY - pxH / 2f
@@ -315,13 +331,17 @@ private class VisualTemplateTracker {
                             val aDiffLum = kotlin.math.abs(cl - aLum[tIdx])
                             val aDiffCol = (kotlin.math.abs(cr - aR[tIdx]) + kotlin.math.abs(cg - aG[tIdx]) + kotlin.math.abs(cb - aB[tIdx])) / 3
 
-                            val combined = ((diffLum + diffCol) * 2 + (aDiffLum + aDiffCol)) / 3
+                            val combined = ((diffLum + diffCol) * 3 + (aDiffLum + aDiffCol) * 7) / 10
                             sad += combined
                         }
                     }
 
-                    if (sad < minSad) {
-                        minSad = sad
+                    val distSq = fdx.toFloat() * fdx + fdy.toFloat() * fdy
+                    val spatialWeight = 1.0f + 1.25f * (distSq / maxRadiusSq)
+                    val penalizedSad = (sad.toFloat() * spatialWeight).toLong()
+
+                    if (penalizedSad < minSad) {
+                        minSad = penalizedSad
                         bestDx = fdx
                         bestDy = fdy
                     }
@@ -338,8 +358,8 @@ private class VisualTemplateTracker {
         val avgError = minSad.toFloat() / (tSize * tSize)
         val confidence = (1.0f - (avgError / 120f)).coerceIn(0f, 1f)
 
-        // Adaptive template update on high confidence (blend gently 8% to follow rotations without drift)
-        if (confidence >= 0.52f) {
+        // Ultra-gentle adaptive update (blend 2% only on high confidence) to prevent template poisoning
+        if (confidence >= 0.65f) {
             adaptTemplate(framePixels, bmpW, bmpH, finalPxX, finalPxY, pxW, pxH)
         }
 
@@ -378,10 +398,10 @@ private class VisualTemplateTracker {
                 val cl = ((cr * 77) + (cg * 150) + (cb * 29)) shr 8
 
                 val tIdx = tRowOffset + c
-                tR[tIdx] = (tR[tIdx] * 92 + cr * 8) / 100
-                tG[tIdx] = (tG[tIdx] * 92 + cg * 8) / 100
-                tB[tIdx] = (tB[tIdx] * 92 + cb * 8) / 100
-                tLum[tIdx] = (tLum[tIdx] * 92 + cl * 8) / 100
+                tR[tIdx] = (tR[tIdx] * 98 + cr * 2) / 100
+                tG[tIdx] = (tG[tIdx] * 98 + cg * 2) / 100
+                tB[tIdx] = (tB[tIdx] * 98 + cb * 2) / 100
+                tLum[tIdx] = (tLum[tIdx] * 98 + cl * 2) / 100
             }
         }
     }
@@ -579,37 +599,39 @@ class MotionTracker(private val context: Context) {
                     val img = InputImage.fromBitmap(anchorBmp, 0)
                     val faces: List<Face> = faceDetector.process(img).awaitResult()
 
-                    val expectedFaceY = if (mode == TrackingMode.BODY) {
-                        (initialY - initialH * 0.32f).coerceIn(0.02f, 0.98f)
-                    } else {
-                        initialY
+                    val boxLeft = initialX - initialW / 2f
+                    val boxRight = initialX + initialW / 2f
+                    val boxTop = initialY - initialH / 2f
+                    val headLimitY = if (mode == TrackingMode.BODY) initialY - initialH * 0.05f else (initialY + initialH / 2f)
+
+                    // Strict: Face must be located strictly INSIDE the user's bounding box at the anchor frame
+                    val insideFaces = faces.filter { f ->
+                        val fx = f.boundingBox.centerX() / abW
+                        val fy = f.boundingBox.centerY() / abH
+                        fx in (boxLeft - 0.03f)..(boxRight + 0.03f) && fy in (boxTop - 0.03f)..(headLimitY + 0.03f)
                     }
 
-                    val bestAnchorFace = faces.minByOrNull { f ->
+                    val bestAnchorFace = insideFaces.minByOrNull { f ->
                         val fx = f.boundingBox.centerX() / abW
                         val fy = f.boundingBox.centerY() / abH
                         val dx = fx - initialX
-                        val dy = fy - expectedFaceY
+                        val dy = fy - (initialY - initialH * 0.30f)
                         dx * dx + dy * dy
                     }
 
                     if (bestAnchorFace != null) {
-                        val fx = bestAnchorFace.boundingBox.centerX() / abW
-                        val fy = bestAnchorFace.boundingBox.centerY() / abH
-                        val dist = sqrt((fx - initialX) * (fx - initialX) + (fy - expectedFaceY) * (fy - expectedFaceY))
-                        val maxDist = if (mode == TrackingMode.BODY) 0.35f else 0.20f
+                        hasHeadAnchor = true
+                        anchorFaceX = bestAnchorFace.boundingBox.centerX() / abW
+                        anchorFaceY = bestAnchorFace.boundingBox.centerY() / abH
+                        anchorFaceW = (bestAnchorFace.boundingBox.width() / abW).coerceAtLeast(0.02f)
+                        anchorFaceH = (bestAnchorFace.boundingBox.height() / abH).coerceAtLeast(0.02f)
 
-                        if (dist < maxDist) {
-                            hasHeadAnchor = true
-                            anchorFaceX = fx
-                            anchorFaceY = fy
-                            anchorFaceW = (bestAnchorFace.boundingBox.width() / abW).coerceAtLeast(0.02f)
-                            anchorFaceH = (bestAnchorFace.boundingBox.height() / abH).coerceAtLeast(0.02f)
-
-                            userOffsetX = initialX - anchorFaceX
-                            userOffsetY = initialY - anchorFaceY
-                            AppLog.d(TAG, "Locked to face/head at anchorUs=$safeAnchorUs, facePos=($anchorFaceX, $anchorFaceY), offset=($userOffsetX, $userOffsetY), mode=$mode")
-                        }
+                        userOffsetX = initialX - anchorFaceX
+                        userOffsetY = initialY - anchorFaceY
+                        AppLog.d(TAG, "Locked to face/head strictly INSIDE user box at anchorUs=$safeAnchorUs: pos=($anchorFaceX, $anchorFaceY)")
+                    } else {
+                        hasHeadAnchor = false
+                        AppLog.d(TAG, "No face inside user box at anchorUs=$safeAnchorUs. Tracking full visual template exclusively.")
                     }
                 } catch (t: Throwable) {
                     AppLog.w(TAG, "Anchor frame face analysis failed: ${t.message}")
@@ -673,8 +695,6 @@ class MotionTracker(private val context: Context) {
 
             var velX = 0f
             var velY = 0f
-            var velFaceX = 0f
-            var velFaceY = 0f
 
             for (pts in timestamps) {
                 processedSteps++
@@ -690,203 +710,135 @@ class MotionTracker(private val context: Context) {
                     curFaceY = anchorFaceY
                     velX = 0f
                     velY = 0f
-                    velFaceX = 0f
-                    velFaceY = 0f
                     resultsMap[pts] = FrameTransform(initialX, initialY, initialW, initialH)
                     continue
                 }
 
-                // Momentum prediction leads fast-moving targets
-                val predX = (curX + velX).coerceIn(0.02f, 0.98f)
-                val predY = (curY + velY).coerceIn(0.02f, 0.98f)
-                val predFaceX = (curFaceX + velFaceX).coerceIn(0.02f, 0.98f)
-                val predFaceY = (curFaceY + velFaceY).coerceIn(0.02f, 0.98f)
+                // Centered search window with gentle drag lead (max 2% lead, no runaway accumulation)
+                val searchCenterX = (curX + velX * 0.35f).coerceIn(0.04f, 0.96f)
+                val searchCenterY = (curY + velY * 0.35f).coerceIn(0.04f, 0.96f)
 
                 val rawBmp = extractUprightFrame(retriever, pts, rotationDegrees, maxDim = 720)
                 if (rawBmp != null) {
                     val bmpW = rawBmp.width.toFloat()
                     val bmpH = rawBmp.height.toFloat()
 
+                    val match = templateTracker.findMatch(rawBmp, searchCenterX, searchCenterY, curW, curH)
+
+                    var headFound = false
+                    var headImpliedX = curX
+                    var headImpliedY = curY
+
+                    if (mode == TrackingMode.BODY && faceDetector != null && hasHeadAnchor) {
+                        try {
+                            val img = InputImage.fromBitmap(rawBmp, 0)
+                            val faces: List<Face> = faceDetector.process(img).awaitResult()
+                            // Only match face strictly within current predicted box
+                            val targetFace = faces.minByOrNull { f ->
+                                val fx = f.boundingBox.centerX() / bmpW
+                                val fy = f.boundingBox.centerY() / bmpH
+                                val dx = fx - (curX - userOffsetX)
+                                val dy = fy - (curY - userOffsetY)
+                                dx * dx + dy * dy
+                            }
+                            if (targetFace != null) {
+                                val fx = targetFace.boundingBox.centerX() / bmpW
+                                val fy = targetFace.boundingBox.centerY() / bmpH
+                                val dist = sqrt((fx - (curX - userOffsetX)) * (fx - (curX - userOffsetX)) + (fy - (curY - userOffsetY)) * (fy - (curY - userOffsetY)))
+                                if (dist < 0.12f) {
+                                    headFound = true
+                                    headImpliedX = (fx + userOffsetX).coerceIn(0.02f, 0.98f)
+                                    headImpliedY = (fy + userOffsetY).coerceIn(0.02f, 0.98f)
+                                }
+                            }
+                        } catch (_: Throwable) {}
+                    }
+
+                    // Target estimation based on mode
+                    val rawTargetX: Float
+                    val rawTargetY: Float
+
                     if (mode == TrackingMode.BODY) {
-                        // ── FULL BODY / PERSON TRACKING ──
-                        val match = templateTracker.findMatch(rawBmp, predX, predY, curW, curH)
-
-                        var headFound = false
-                        var headImpliedX = predX
-                        var headImpliedY = predY
-                        var scaleFactor = 1.0f
-
-                        if (faceDetector != null && hasHeadAnchor) {
-                            try {
-                                val img = InputImage.fromBitmap(rawBmp, 0)
-                                val faces: List<Face> = faceDetector.process(img).awaitResult()
-                                val targetFace = faces.minByOrNull { f ->
-                                    val fx = f.boundingBox.centerX() / bmpW
-                                    val fy = f.boundingBox.centerY() / bmpH
-                                    val dx = fx - predFaceX
-                                    val dy = fy - predFaceY
-                                    dx * dx + dy * dy
-                                }
-                                if (targetFace != null) {
-                                    val fx = targetFace.boundingBox.centerX() / bmpW
-                                    val fy = targetFace.boundingBox.centerY() / bmpH
-                                    val fcW = targetFace.boundingBox.width() / bmpW
-                                    val dist = sqrt((fx - predFaceX) * (fx - predFaceX) + (fy - predFaceY) * (fy - predFaceY))
-                                    if (dist < 0.22f) {
-                                        headFound = true
-                                        curFaceX = fx
-                                        curFaceY = fy
-                                        headImpliedX = (fx + userOffsetX).coerceIn(0.02f, 0.98f)
-                                        headImpliedY = (fy + userOffsetY).coerceIn(0.02f, 0.98f)
-                                        if (anchorFaceW > 0.01f) {
-                                            scaleFactor = (fcW / anchorFaceW).coerceIn(0.85f, 2.0f)
-                                        }
-                                    }
-                                }
-                            } catch (_: Throwable) {}
-                        }
-
-                        val targetX: Float
-                        val targetY: Float
                         if (headFound && match != null && match.confidence >= 0.30f) {
-                            // Fuse head anchor and body template match
-                            targetX = headImpliedX * 0.40f + match.normX * 0.60f
-                            targetY = headImpliedY * 0.40f + match.normY * 0.60f
-                        } else if (match != null && match.confidence >= 0.22f) {
-                            // Head turned or occluded: template tracks clothing/body seamlessly
-                            targetX = match.normX
-                            targetY = match.normY
+                            rawTargetX = headImpliedX * 0.30f + match.normX * 0.70f
+                            rawTargetY = headImpliedY * 0.30f + match.normY * 0.70f
+                        } else if (match != null && match.confidence >= 0.15f) {
+                            rawTargetX = match.normX
+                            rawTargetY = match.normY
                         } else if (headFound) {
-                            targetX = headImpliedX
-                            targetY = headImpliedY
+                            rawTargetX = headImpliedX
+                            rawTargetY = headImpliedY
                         } else {
-                            targetX = predX
-                            targetY = predY
+                            rawTargetX = curX + velX * 0.5f
+                            rawTargetY = curY + velY * 0.5f
                         }
-
-                        val instVelX = targetX - curX
-                        val instVelY = targetY - curY
-                        velX = velX * 0.40f + instVelX * 0.60f
-                        velY = velY * 0.40f + instVelY * 0.60f
-
-                        curX = (curX * 0.25f + targetX * 0.75f).coerceIn(0.02f, 0.98f)
-                        curY = (curY * 0.25f + targetY * 0.75f).coerceIn(0.02f, 0.98f)
-
-                        curFaceX = curX - userOffsetX
-                        curFaceY = curY - userOffsetY
-                        velFaceX = velX
-                        velFaceY = velY
-
-                        curW = (initialW * scaleFactor).coerceIn(0.08f, 1.2f)
-                        curH = (initialH * scaleFactor).coerceIn(0.08f, 1.2f)
-
                     } else if (mode == TrackingMode.FACE && faceDetector != null) {
                         var faceFoundAndLocked = false
                         try {
                             val img = InputImage.fromBitmap(rawBmp, 0)
                             val faces: List<Face> = faceDetector.process(img).awaitResult()
-
-                            // Match candidate face closest to predicted face position
                             val targetFace = faces.minByOrNull { f ->
                                 val fx = f.boundingBox.centerX() / bmpW
                                 val fy = f.boundingBox.centerY() / bmpH
-                                val dx = fx - predFaceX
-                                val dy = fy - predFaceY
+                                val dx = fx - curFaceX
+                                val dy = fy - curFaceY
                                 dx * dx + dy * dy
                             }
-
                             if (targetFace != null) {
                                 val fx = targetFace.boundingBox.centerX() / bmpW
                                 val fy = targetFace.boundingBox.centerY() / bmpH
-                                val fcW = targetFace.boundingBox.width() / bmpW
-                                val dist = sqrt((fx - predFaceX) * (fx - predFaceX) + (fy - predFaceY) * (fy - predFaceY))
-
-                                // Tight proximity check: prevents jumping to strangers across crowded streets
-                                if (dist < 0.16f) {
+                                val dist = sqrt((fx - curFaceX) * (fx - curFaceX) + (fy - curFaceY) * (fy - curFaceY))
+                                if (dist < 0.12f) {
                                     faceFoundAndLocked = true
-                                    val instVelFaceX = fx - curFaceX
-                                    val instVelFaceY = fy - curFaceY
-                                    velFaceX = velFaceX * 0.4f + instVelFaceX * 0.6f
-                                    velFaceY = velFaceY * 0.4f + instVelFaceY * 0.6f
-
                                     curFaceX = fx
                                     curFaceY = fy
-
-                                    val targetBoxX = (curFaceX + userOffsetX).coerceIn(0.02f, 0.98f)
-                                    val targetBoxY = (curFaceY + userOffsetY).coerceIn(0.02f, 0.98f)
-
-                                    val instVelX = targetBoxX - curX
-                                    val instVelY = targetBoxY - curY
-                                    velX = velX * 0.4f + instVelX * 0.6f
-                                    velY = velY * 0.4f + instVelY * 0.6f
-
-                                    val scaleFactor = if (anchorFaceW > 0.01f) {
-                                        (fcW / anchorFaceW).coerceIn(1.0f, 2.5f)
-                                    } else 1.0f
-
-                                    val targetBoxW = initialW * scaleFactor
-                                    val targetBoxH = initialH * scaleFactor
-
-                                    curX = curX * 0.25f + targetBoxX * 0.75f
-                                    curY = curY * 0.25f + targetBoxY * 0.75f
-                                    curW = maxOf(curW * 0.25f + targetBoxW * 0.75f, initialW)
-                                    curH = maxOf(curH * 0.25f + targetBoxH * 0.75f, initialH)
+                                    headImpliedX = (fx + userOffsetX).coerceIn(0.02f, 0.98f)
+                                    headImpliedY = (fy + userOffsetY).coerceIn(0.02f, 0.98f)
                                 }
                             }
-                        } catch (t: Throwable) {
-                            AppLog.w(TAG, "Face detection error on frame: ${t.message}")
-                        }
+                        } catch (_: Throwable) {}
 
-                        if (!faceFoundAndLocked) {
-                            // Head turned sideways, looked down, or profile face:
-                            // Fall back to Visual Template Tracker on the subject's head!
-                            val match = templateTracker.findMatch(rawBmp, predX, predY, curW, curH)
-                            if (match != null && match.confidence >= 0.28f) {
-                                val instVelX = match.normX - curX
-                                val instVelY = match.normY - curY
-                                velX = velX * 0.4f + instVelX * 0.6f
-                                velY = velY * 0.4f + instVelY * 0.6f
-
-                                curX = curX * 0.25f + match.normX * 0.75f
-                                curY = curY * 0.25f + match.normY * 0.75f
-                                curFaceX = curX - userOffsetX
-                                curFaceY = curY - userOffsetY
-                                velFaceX = velX
-                                velFaceY = velY
-                            } else {
-                                // Apply momentum dampening
-                                curX = (curX + velX).coerceIn(0.02f, 0.98f)
-                                curY = (curY + velY).coerceIn(0.02f, 0.98f)
-                                curFaceX = curX - userOffsetX
-                                curFaceY = curY - userOffsetY
-                                velX *= 0.85f
-                                velY *= 0.85f
-                                velFaceX *= 0.85f
-                                velFaceY *= 0.85f
-                            }
-                            curW = maxOf(curW, initialW)
-                            curH = maxOf(curH, initialH)
+                        if (faceFoundAndLocked) {
+                            rawTargetX = headImpliedX
+                            rawTargetY = headImpliedY
+                        } else if (match != null && match.confidence >= 0.20f) {
+                            rawTargetX = match.normX
+                            rawTargetY = match.normY
+                        } else {
+                            rawTargetX = curX + velX * 0.5f
+                            rawTargetY = curY + velY * 0.5f
                         }
                     } else {
-                        // OBJECT TRACKING: Hierarchical template tracker with velocity lead
-                        val match = templateTracker.findMatch(rawBmp, predX, predY, curW, curH)
-                        if (match != null && match.confidence >= 0.22f) {
-                            val instVelX = match.normX - curX
-                            val instVelY = match.normY - curY
-                            velX = velX * 0.4f + instVelX * 0.6f
-                            velY = velY * 0.4f + instVelY * 0.6f
-
-                            curX = curX * 0.20f + match.normX * 0.80f
-                            curY = curY * 0.20f + match.normY * 0.80f
+                        // OBJECT MODE
+                        if (match != null && match.confidence >= 0.15f) {
+                            rawTargetX = match.normX
+                            rawTargetY = match.normY
                         } else {
-                            curX = (curX + velX).coerceIn(0.02f, 0.98f)
-                            curY = (curY + velY).coerceIn(0.02f, 0.98f)
-                            velX *= 0.85f
-                            velY *= 0.85f
+                            rawTargetX = curX + velX * 0.5f
+                            rawTargetY = curY + velY * 0.5f
                         }
-                        curW = initialW
-                        curH = initialH
                     }
+
+                    // Strict physical speed limit: cannot teleport between frames!
+                    val maxStepX = 0.055f // Max 5.5% horizontal shift in 125ms
+                    val maxStepY = 0.035f // Max 3.5% vertical shift in 125ms
+                    val targetX = rawTargetX.coerceIn(curX - maxStepX, curX + maxStepX).coerceIn(0.03f, 0.97f)
+                    val targetY = rawTargetY.coerceIn(curY - maxStepY, curY + maxStepY).coerceIn(0.03f, 0.97f)
+
+                    // Update velocity with strong drag damping (stops inertia runaway)
+                    val instVelX = (targetX - curX).coerceIn(-0.03f, 0.03f)
+                    val instVelY = (targetY - curY).coerceIn(-0.025f, 0.025f)
+                    velX = (velX * 0.20f + instVelX * 0.80f).coerceIn(-0.03f, 0.03f)
+                    velY = (velY * 0.20f + instVelY * 0.80f).coerceIn(-0.025f, 0.025f)
+
+                    // Smooth trajectory update
+                    curX = (curX * 0.30f + targetX * 0.70f).coerceIn(0.03f, 0.97f)
+                    curY = (curY * 0.30f + targetY * 0.70f).coerceIn(0.03f, 0.97f)
+
+                    // Keep dimensions rock-solid to user's selected box
+                    curW = initialW
+                    curH = initialH
+
                     rawBmp.recycle()
                 }
 
