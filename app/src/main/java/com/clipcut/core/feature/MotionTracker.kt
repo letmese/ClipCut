@@ -165,7 +165,7 @@ private class VisualTemplateTracker {
 
         // Realistic search radius covers fast walking and running without scanning irrelevant skies/roofs
         val searchRadiusX = (bmpW * 0.28f).toInt().coerceIn(40, 160)
-        val searchRadiusY = (bmpH * 0.20f).toInt().coerceIn(30, 120)
+        val searchRadiusY = (bmpH * 0.08f).toInt().coerceIn(20, 60)
         val maxRadiusSq = (searchRadiusX.toFloat() * searchRadiusX + searchRadiusY.toFloat() * searchRadiusY).coerceAtLeast(1f)
 
         // Keep candidate center on screen
@@ -213,8 +213,8 @@ private class VisualTemplateTracker {
                             val aDiffLum = kotlin.math.abs(cl - aLum[tIdx])
                             val aDiffCol = (kotlin.math.abs(cr - aR[tIdx]) + kotlin.math.abs(cg - aG[tIdx]) + kotlin.math.abs(cb - aB[tIdx])) / 3
 
-                            // 50% Anchor ground truth (preserves clothing identity) + 50% adaptive
-                            val combined = ((diffLum + diffCol) * 5 + (aDiffLum + aDiffCol) * 5) / 10
+                            // 85% Anchor ground truth (preserves clothing identity & prevents ground drift) + 15% adaptive
+                            val combined = ((diffLum + diffCol) * 15 + (aDiffLum + aDiffCol) * 85) / 100
                             sad += combined
                         }
                     }
@@ -274,7 +274,7 @@ private class VisualTemplateTracker {
                             val aDiffLum = kotlin.math.abs(cl - aLum[tIdx])
                             val aDiffCol = (kotlin.math.abs(cr - aR[tIdx]) + kotlin.math.abs(cg - aG[tIdx]) + kotlin.math.abs(cb - aB[tIdx])) / 3
 
-                            val combined = ((diffLum + diffCol) * 5 + (aDiffLum + aDiffCol) * 5) / 10
+                            val combined = ((diffLum + diffCol) * 15 + (aDiffLum + aDiffCol) * 85) / 100
                             sad += combined
                         }
                     }
@@ -331,7 +331,7 @@ private class VisualTemplateTracker {
                             val aDiffLum = kotlin.math.abs(cl - aLum[tIdx])
                             val aDiffCol = (kotlin.math.abs(cr - aR[tIdx]) + kotlin.math.abs(cg - aG[tIdx]) + kotlin.math.abs(cb - aB[tIdx])) / 3
 
-                            val combined = ((diffLum + diffCol) * 5 + (aDiffLum + aDiffCol) * 5) / 10
+                            val combined = ((diffLum + diffCol) * 15 + (aDiffLum + aDiffCol) * 85) / 100
                             sad += combined
                         }
                     }
@@ -358,8 +358,8 @@ private class VisualTemplateTracker {
         val avgError = minSad.toFloat() / (tSize * tSize)
         val confidence = (1.0f - (avgError / 220f)).coerceIn(0f, 1f)
 
-        // Adaptive update (blend 4% when confidence is solid) to follow rotating/walking silhouette
-        if (confidence >= 0.45f) {
+        // Adaptive update (blend 1% only when confidence is rock-solid >= 0.70)
+        if (confidence >= 0.70f) {
             adaptTemplate(framePixels, bmpW, bmpH, finalPxX, finalPxY, pxW, pxH)
         }
 
@@ -398,10 +398,10 @@ private class VisualTemplateTracker {
                 val cl = ((cr * 77) + (cg * 150) + (cb * 29)) shr 8
 
                 val tIdx = tRowOffset + c
-                tR[tIdx] = (tR[tIdx] * 96 + cr * 4) / 100
-                tG[tIdx] = (tG[tIdx] * 96 + cg * 4) / 100
-                tB[tIdx] = (tB[tIdx] * 96 + cb * 4) / 100
-                tLum[tIdx] = (tLum[tIdx] * 96 + cl * 4) / 100
+                tR[tIdx] = (tR[tIdx] * 99 + cr * 1) / 100
+                tG[tIdx] = (tG[tIdx] * 99 + cg * 1) / 100
+                tB[tIdx] = (tB[tIdx] * 99 + cb * 1) / 100
+                tLum[tIdx] = (tLum[tIdx] * 99 + cl * 1) / 100
             }
         }
     }
@@ -430,10 +430,21 @@ class MotionTracker(private val context: Context) {
         rotationDegrees: Int,
         maxDim: Int = 640
     ): Bitmap? {
+        val metaW = try {
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+        } catch (_: Throwable) { 0 }
+        val metaH = try {
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+        } catch (_: Throwable) { 0 }
+
         val rawBmp = try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                retriever.getScaledFrameAtTime(ptsUs, MediaMetadataRetriever.OPTION_CLOSEST, maxDim, maxDim)
-                    ?: retriever.getScaledFrameAtTime(ptsUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, maxDim, maxDim)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1 && metaW > 0 && metaH > 0) {
+                val maxSide = maxOf(metaW, metaH)
+                val scale = if (maxSide > maxDim) maxDim.toFloat() / maxSide else 1.0f
+                val targetW = ((metaW * scale).toInt() / 2) * 2
+                val targetH = ((metaH * scale).toInt() / 2) * 2
+                retriever.getScaledFrameAtTime(ptsUs, MediaMetadataRetriever.OPTION_CLOSEST, targetW, targetH)
+                    ?: retriever.getScaledFrameAtTime(ptsUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, targetW, targetH)
                     ?: retriever.getFrameAtTime(ptsUs, MediaMetadataRetriever.OPTION_CLOSEST)
                     ?: retriever.getFrameAtTime(ptsUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
             } else {
@@ -450,20 +461,26 @@ class MotionTracker(private val context: Context) {
         val srcH = rawBmp.height
 
         // On Android, MediaMetadataRetriever often pre-rotates portrait video frames.
-        // If the bitmap is already portrait (srcW < srcH) when rotation is 90 or 270, do NOT rotate again!
-        val alreadyRotated = (rotationDegrees == 90 || rotationDegrees == 270) && (srcW < srcH)
-        val deg = if (alreadyRotated) 0 else rotationDegrees
+        // For videos with 90° or 270° rotation:
+        // - If the raw bitmap is already portrait (srcW < srcH), the Android framework has ALREADY applied rotation.
+        // - If srcW >= srcH, the raw bitmap is still in storage orientation (landscape), so rotate it upright.
+        val deg = when (rotationDegrees) {
+            90, 270 -> if (srcW >= srcH) rotationDegrees else 0
+            180 -> 180
+            else -> 0
+        }
 
-        val scale = if (maxOf(srcW, srcH) > maxDim) {
-            maxDim.toFloat() / maxOf(srcW, srcH).toFloat()
-        } else 1.0f
+        val finalW = if (deg == 90 || deg == 270) srcH else srcW
+        val finalH = if (deg == 90 || deg == 270) srcW else srcH
+        val currentMax = maxOf(finalW, finalH)
+        val finalScale = if (currentMax > maxDim) maxDim.toFloat() / currentMax else 1.0f
 
         val matrix = Matrix()
-        if (scale < 1.0f) {
-            matrix.postScale(scale, scale)
-        }
         if (deg != 0) {
             matrix.postRotate(deg.toFloat())
+        }
+        if (finalScale < 1.0f) {
+            matrix.postScale(finalScale, finalScale)
         }
 
         return if (!matrix.isIdentity) {
@@ -780,15 +797,15 @@ class MotionTracker(private val context: Context) {
 
                     // Physical speed limit: comfortably accommodates fast walking, running, and crossing the street
                     val maxStepX = 0.12f // Max 12% horizontal shift in 125ms (covers fast walking & running)
-                    val maxStepY = 0.08f // Max 8% vertical shift in 125ms
+                    val maxStepY = 0.035f // Max 3.5% vertical shift in 125ms (prevents sliding down into ground/dirt)
                     val targetX = rawTargetX.coerceIn(curX - maxStepX, curX + maxStepX).coerceIn(0.03f, 0.97f)
                     val targetY = rawTargetY.coerceIn(curY - maxStepY, curY + maxStepY).coerceIn(0.03f, 0.97f)
 
                     // Update velocity with momentum
                     val instVelX = (targetX - curX).coerceIn(-0.08f, 0.08f)
-                    val instVelY = (targetY - curY).coerceIn(-0.05f, 0.05f)
+                    val instVelY = (targetY - curY).coerceIn(-0.025f, 0.025f)
                     velX = (velX * 0.30f + instVelX * 0.70f).coerceIn(-0.08f, 0.08f)
-                    velY = (velY * 0.30f + instVelY * 0.70f).coerceIn(-0.05f, 0.05f)
+                    velY = (velY * 0.30f + instVelY * 0.70f).coerceIn(-0.025f, 0.025f)
 
                     // Responsive trajectory update (85% responsive to new target, 15% previous)
                     curX = (curX * 0.15f + targetX * 0.85f).coerceIn(0.03f, 0.97f)
