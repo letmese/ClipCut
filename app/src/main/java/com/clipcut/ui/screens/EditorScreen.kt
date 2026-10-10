@@ -1375,7 +1375,7 @@ fun EditorScreen(
 
                                 IconButton(
                                     onClick = {
-                                        viewModel.startMotionTracking(activeBlur.id, com.clipcut.core.feature.TrackingMode.FACE, positionUs)
+                                        viewModel.startMotionTracking(activeBlur.id, com.clipcut.core.feature.TrackingMode.BODY, positionUs)
                                     },
                                     modifier = Modifier.size(32.dp)
                                 ) {

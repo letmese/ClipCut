@@ -213,15 +213,15 @@ private class VisualTemplateTracker {
                             val aDiffLum = kotlin.math.abs(cl - aLum[tIdx])
                             val aDiffCol = (kotlin.math.abs(cr - aR[tIdx]) + kotlin.math.abs(cg - aG[tIdx]) + kotlin.math.abs(cb - aB[tIdx])) / 3
 
-                            // 70% Anchor ground truth (preserves clothing identity) + 30% adaptive
-                            val combined = ((diffLum + diffCol) * 3 + (aDiffLum + aDiffCol) * 7) / 10
+                            // 50% Anchor ground truth (preserves clothing identity) + 50% adaptive
+                            val combined = ((diffLum + diffCol) * 5 + (aDiffLum + aDiffCol) * 5) / 10
                             sad += combined
                         }
                     }
 
-                    // Parabolic spatial distance penalty: strongly favors smooth motion, prevents jumping far away
+                    // Gentle spatial distance penalty: favors smooth motion without preventing rapid walking
                     val distSq = dx.toFloat() * dx + dy.toFloat() * dy
-                    val spatialWeight = 1.0f + 1.25f * (distSq / maxRadiusSq)
+                    val spatialWeight = 1.0f + 0.20f * (distSq / maxRadiusSq)
                     val penalizedSad = (sad.toFloat() * spatialWeight).toLong()
 
                     if (penalizedSad < minCoarseSad) {
@@ -274,13 +274,13 @@ private class VisualTemplateTracker {
                             val aDiffLum = kotlin.math.abs(cl - aLum[tIdx])
                             val aDiffCol = (kotlin.math.abs(cr - aR[tIdx]) + kotlin.math.abs(cg - aG[tIdx]) + kotlin.math.abs(cb - aB[tIdx])) / 3
 
-                            val combined = ((diffLum + diffCol) * 3 + (aDiffLum + aDiffCol) * 7) / 10
+                            val combined = ((diffLum + diffCol) * 5 + (aDiffLum + aDiffCol) * 5) / 10
                             sad += combined
                         }
                     }
 
                     val distSq = mdx.toFloat() * mdx + mdy.toFloat() * mdy
-                    val spatialWeight = 1.0f + 1.25f * (distSq / maxRadiusSq)
+                    val spatialWeight = 1.0f + 0.20f * (distSq / maxRadiusSq)
                     val penalizedSad = (sad.toFloat() * spatialWeight).toLong()
 
                     if (penalizedSad < minMedSad) {
@@ -331,13 +331,13 @@ private class VisualTemplateTracker {
                             val aDiffLum = kotlin.math.abs(cl - aLum[tIdx])
                             val aDiffCol = (kotlin.math.abs(cr - aR[tIdx]) + kotlin.math.abs(cg - aG[tIdx]) + kotlin.math.abs(cb - aB[tIdx])) / 3
 
-                            val combined = ((diffLum + diffCol) * 3 + (aDiffLum + aDiffCol) * 7) / 10
+                            val combined = ((diffLum + diffCol) * 5 + (aDiffLum + aDiffCol) * 5) / 10
                             sad += combined
                         }
                     }
 
                     val distSq = fdx.toFloat() * fdx + fdy.toFloat() * fdy
-                    val spatialWeight = 1.0f + 1.25f * (distSq / maxRadiusSq)
+                    val spatialWeight = 1.0f + 0.20f * (distSq / maxRadiusSq)
                     val penalizedSad = (sad.toFloat() * spatialWeight).toLong()
 
                     if (penalizedSad < minSad) {
@@ -714,9 +714,9 @@ class MotionTracker(private val context: Context) {
                     continue
                 }
 
-                // Centered search window with gentle drag lead (max 2% lead, no runaway accumulation)
-                val searchCenterX = (curX + velX * 0.35f).coerceIn(0.04f, 0.96f)
-                val searchCenterY = (curY + velY * 0.35f).coerceIn(0.04f, 0.96f)
+                // Centered search window with motion lead
+                val searchCenterX = (curX + velX * 0.50f).coerceIn(0.04f, 0.96f)
+                val searchCenterY = (curY + velY * 0.50f).coerceIn(0.04f, 0.96f)
 
                 val rawBmp = extractUprightFrame(retriever, pts, rotationDegrees, maxDim = 720)
                 if (rawBmp != null) {
@@ -819,21 +819,21 @@ class MotionTracker(private val context: Context) {
                         }
                     }
 
-                    // Strict physical speed limit: cannot teleport between frames!
-                    val maxStepX = 0.055f // Max 5.5% horizontal shift in 125ms
-                    val maxStepY = 0.035f // Max 3.5% vertical shift in 125ms
+                    // Physical speed limit: comfortably accommodates fast walking, running, and crossing the street
+                    val maxStepX = 0.12f // Max 12% horizontal shift in 125ms (covers fast walking & running)
+                    val maxStepY = 0.08f // Max 8% vertical shift in 125ms
                     val targetX = rawTargetX.coerceIn(curX - maxStepX, curX + maxStepX).coerceIn(0.03f, 0.97f)
                     val targetY = rawTargetY.coerceIn(curY - maxStepY, curY + maxStepY).coerceIn(0.03f, 0.97f)
 
-                    // Update velocity with strong drag damping (stops inertia runaway)
-                    val instVelX = (targetX - curX).coerceIn(-0.03f, 0.03f)
-                    val instVelY = (targetY - curY).coerceIn(-0.025f, 0.025f)
-                    velX = (velX * 0.20f + instVelX * 0.80f).coerceIn(-0.03f, 0.03f)
-                    velY = (velY * 0.20f + instVelY * 0.80f).coerceIn(-0.025f, 0.025f)
+                    // Update velocity with momentum
+                    val instVelX = (targetX - curX).coerceIn(-0.08f, 0.08f)
+                    val instVelY = (targetY - curY).coerceIn(-0.05f, 0.05f)
+                    velX = (velX * 0.30f + instVelX * 0.70f).coerceIn(-0.08f, 0.08f)
+                    velY = (velY * 0.30f + instVelY * 0.70f).coerceIn(-0.05f, 0.05f)
 
-                    // Smooth trajectory update
-                    curX = (curX * 0.30f + targetX * 0.70f).coerceIn(0.03f, 0.97f)
-                    curY = (curY * 0.30f + targetY * 0.70f).coerceIn(0.03f, 0.97f)
+                    // Responsive trajectory update (85% responsive to new target, 15% previous)
+                    curX = (curX * 0.15f + targetX * 0.85f).coerceIn(0.03f, 0.97f)
+                    curY = (curY * 0.15f + targetY * 0.85f).coerceIn(0.03f, 0.97f)
 
                     // Keep dimensions rock-solid to user's selected box
                     curW = initialW
