@@ -12,6 +12,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -115,7 +116,7 @@ fun TimelineView(
         // Track headers column (pinned on left)
         Column(
             modifier = Modifier
-                .width(68.dp)
+                .width(82.dp)
                 .background(Surface1)
         ) {
             if (beatMarkers.isNotEmpty()) {
@@ -125,13 +126,14 @@ fun TimelineView(
                 HorizontalDivider(color = HairlineBorder)
             }
 
-            // Timebar header with zoom controls & pause/stop buttons
-            Column(
+            // Timebar header with current timecode & play/stop buttons
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(34.dp)
-                    .padding(horizontal = 2.dp),
-                verticalArrangement = Arrangement.Center
+                    .height(36.dp)
+                    .background(Surface1)
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.Center
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -141,30 +143,45 @@ fun TimelineView(
                     val sec = (currentPositionUs / 1_000_000L).coerceAtLeast(0L)
                     val m = sec / 60
                     val s = sec % 60
-                    Text("%02d:%02d".format(m, s), color = Color.White.copy(alpha = 0.9f), fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "%02d:%02d".format(m, s),
+                        color = AccentPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         // Play/Pause button
-                        IconButton(
-                            onClick = onTogglePlayPause,
-                            modifier = Modifier.size(16.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(if (isPlaying) AccentPrimary else Surface3)
+                                .clickable { onTogglePlayPause() },
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                                 contentDescription = if (isPlaying) "Pause" else "Play",
-                                tint = AccentPrimary,
-                                modifier = Modifier.size(13.dp)
+                                tint = if (isPlaying) DarkBackground else Color.White,
+                                modifier = Modifier.size(14.dp)
                             )
                         }
-                        Spacer(Modifier.width(2.dp))
                         // Stop button
-                        IconButton(
-                            onClick = onStop,
-                            modifier = Modifier.size(16.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(Surface3)
+                                .clickable { onStop() },
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 Icons.Filled.Stop,
                                 contentDescription = "Stop",
-                                tint = Color.White,
+                                tint = Color.White.copy(alpha = 0.85f),
                                 modifier = Modifier.size(13.dp)
                             )
                         }
@@ -241,7 +258,7 @@ fun TimelineView(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(34.dp)
+                            .height(36.dp)
                             .background(Surface2)
                             .pointerInput(totalDurationUs, usPerDp) {
                                 detectTapGestures { offset ->
@@ -250,40 +267,63 @@ fun TimelineView(
                                 }
                             }
                     ) {
-                        val tickStepUs = if (zoomLevel > 1.8f) 500_000L else if (zoomLevel < 0.8f) 2_000_000L else 1_000_000L
-                        val numTicks = (totalUs / tickStepUs).toInt().coerceAtMost(400)
-                        for (i in 0..numTicks) {
-                            val tickUs = i * tickStepUs
+                        // Dynamic label step calculation ensuring at least 65dp between timestamp labels
+                        val dpPerSec = 1_000_000f / usPerDp
+                        val minSec = (65f / dpPerSec).toDouble()
+                        val labelStepSec = when {
+                            minSec <= 1.0 -> 1L
+                            minSec <= 2.0 -> 2L
+                            minSec <= 5.0 -> 5L
+                            minSec <= 10.0 -> 10L
+                            minSec <= 15.0 -> 15L
+                            minSec <= 30.0 -> 30L
+                            minSec <= 60.0 -> 60L
+                            minSec <= 120.0 -> 120L
+                            minSec <= 300.0 -> 300L
+                            else -> 600L
+                        }
+                        val minorTickStepSec = when {
+                            labelStepSec <= 2L -> 1L
+                            labelStepSec == 5L -> 1L
+                            labelStepSec <= 15L -> 2L
+                            labelStepSec <= 60L -> 5L
+                            else -> 30L
+                        }
+
+                        val totalSec = (totalUs / 1_000_000L).coerceAtLeast(1L)
+                        var s = 0L
+                        while (s <= totalSec) {
+                            val tickUs = s * 1_000_000L
                             val tickDp = (tickUs / usPerDp).dp
-                            val isMajor = (tickUs % 1_000_000L) == 0L
+                            val isLabel = (s % labelStepSec) == 0L
                             val tickPx = with(density) { tickDp.roundToPx() }
 
-                            // Vertical notch tick line
+                            // Vertical notch tick line at bottom of timebar
                             Box(
                                 modifier = Modifier
-                                    .offset { IntOffset(tickPx, with(density) { (if (isMajor) 18.dp else 24.dp).roundToPx() }) }
+                                    .offset { IntOffset(tickPx, with(density) { (if (isLabel) 20.dp else 26.dp).roundToPx() }) }
                                     .width(1.dp)
-                                    .height(if (isMajor) 16.dp else 10.dp)
-                                    .background(if (isMajor) Color.White.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.25f))
+                                    .height(if (isLabel) 16.dp else 10.dp)
+                                    .background(if (isLabel) Color.White.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.20f))
                             )
 
-                            // Timestamp label on major second ticks
-                            if (isMajor) {
+                            // Timestamp label with generous breathing room
+                            if (isLabel) {
                                 Box(
                                     modifier = Modifier
-                                        .offset { IntOffset(tickPx + with(density) { 3.dp.roundToPx() }, with(density) { 4.dp.roundToPx() }) }
+                                        .offset { IntOffset(tickPx + with(density) { 4.dp.roundToPx() }, with(density) { 4.dp.roundToPx() }) }
                                 ) {
-                                    val s = (tickUs / 1_000_000L)
-                                    val m = s / 60
+                                    val min = s / 60
                                     val secRem = s % 60
                                     Text(
-                                        "%02d:%02d".format(m, secRem),
-                                        color = Color.White.copy(alpha = 0.70f),
-                                        fontSize = 9.sp,
+                                        "%02d:%02d".format(min, secRem),
+                                        color = Color.White.copy(alpha = 0.85f),
+                                        fontSize = 10.sp,
                                         fontWeight = FontWeight.Medium
                                     )
                                 }
                             }
+                            s += minorTickStepSec
                         }
                     }
                     HorizontalDivider(color = HairlineBorder)
@@ -510,7 +550,7 @@ fun TimelineView(
                         add(18.dp)
                         add(1.dp)
                     }
-                    add(34.dp) // timebar
+                    add(36.dp) // timebar
                     add(1.dp)
                     add(48.dp) // video
                     add(1.dp)

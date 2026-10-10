@@ -99,7 +99,7 @@ fun ProjectListScreen(
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                "v1.2.53",
+                                "v1.2.54",
                                 color = TextSecondary,
                                 fontWeight = FontWeight.Medium,
                                 fontSize = 10.sp

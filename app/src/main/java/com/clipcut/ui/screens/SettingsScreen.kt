@@ -123,7 +123,7 @@ fun SettingsScreen(
                 SecondaryButton("Clear Cache & Temp Frames", onClick = { vm.clearCache() }, modifier = Modifier.fillMaxWidth())
             }
             SettingsSection("About & Diagnostics") {
-                Text("ClipCut PRO v1.2.53 (Build 64)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("ClipCut PRO v1.2.54 (Build 65)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Spacer(Modifier.height(4.dp))
                 Text("Kotlin 2.1.20 • Compose BOM 2024.12.01 • Media3 1.5.0 • OpenCV & MediaPipe", color = TextSecondary, fontSize = 11.sp)
                 Spacer(Modifier.height(12.dp))
