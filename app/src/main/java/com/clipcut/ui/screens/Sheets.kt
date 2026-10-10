@@ -925,6 +925,10 @@ fun BlurSheet(
     blurItem: BlurTrackItem,
     totalDurationUs: Long,
     trackingStatus: String?,
+    allBlurItems: List<BlurTrackItem> = emptyList(),
+    selectedBlurId: String? = null,
+    onSelectBlur: ((String) -> Unit)? = null,
+    onAddNewBlurTrack: (() -> Unit)? = null,
     onUpdate: (BlurTrackItem) -> Unit,
     onStartTracking: (com.clipcut.core.feature.TrackingMode) -> Unit,
     onAutoBlurAllFaces: ((BlurType, BlurShape, Float, Float, String?) -> Unit)? = null,
@@ -935,7 +939,56 @@ fun BlurSheet(
 ) {
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         SheetHeader("Censor, Blur & Stickers", onDismiss)
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
+
+        // Multi-Box Selector & Creator Row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Active Blur / Blackout Boxes (${allBlurItems.size.coerceAtLeast(1)})",
+                color = TextSecondary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            TextButton(
+                onClick = { onAddNewBlurTrack?.invoke() },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("+ Add Box", color = AccentPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+
+        if (allBlurItems.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                allBlurItems.forEachIndexed { index, item ->
+                    val isSelected = item.id == blurItem.id
+                    EditorFilterChip(
+                        text = "Box ${index + 1} (${item.blurType.displayName})",
+                        selected = isSelected
+                    ) {
+                        onSelectBlur?.invoke(item.id)
+                    }
+                }
+                EditorFilterChip(
+                    text = "➕ Add Box",
+                    selected = false
+                ) {
+                    onAddNewBlurTrack?.invoke()
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
 
         // Tracking status notification banner if active
         if (trackingStatus != null) {
@@ -1237,7 +1290,17 @@ fun BlurSheet(
             )
         }
 
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(14.dp))
+
+        // Add Another Blur Box CTA
+        PrimaryButton(
+            "➕ Add Another Blur / Blackout Box",
+            onClick = { onAddNewBlurTrack?.invoke() },
+            modifier = Modifier.fillMaxWidth(),
+            icon = Icons.Filled.Add
+        )
+
+        Spacer(Modifier.height(12.dp))
 
         // Delete button
         OutlinedButton(
@@ -1248,7 +1311,7 @@ fun BlurSheet(
         ) {
             Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Delete Blur Mask", fontSize = 13.sp)
+            Text("Delete Current Blur Box", fontSize = 13.sp)
         }
     }
 }

@@ -1399,6 +1399,30 @@ fun EditorScreen(
                                     Icon(Icons.Filled.Layers, "Blur All Faces", tint = Color(0xFF00E5FF), modifier = Modifier.size(18.dp))
                                 }
 
+                                IconButton(
+                                    onClick = {
+                                        val totalDur = project?.totalDurationUs ?: 5_000_000L
+                                        val newBox = com.clipcut.core.model.BlurTrackItem(
+                                            timelineStartUs = positionUs,
+                                            timelineEndUs = minOf(totalDur.coerceAtLeast(positionUs + 4_000_000L), positionUs + 4_000_000L),
+                                            blurType = activeBlur.blurType,
+                                            shape = activeBlur.shape,
+                                            normalizedX = (activeBlur.normalizedX + 0.12f).let { if (it > 0.85f) 0.35f else it },
+                                            normalizedY = (activeBlur.normalizedY + 0.12f).let { if (it > 0.85f) 0.35f else it },
+                                            width = activeBlur.width,
+                                            height = activeBlur.height,
+                                            intensity = activeBlur.intensity,
+                                            feather = activeBlur.feather,
+                                            customImageUri = activeBlur.customImageUri
+                                        )
+                                        viewModel.addBlurTrack(newBox)
+                                        selectedBlurId = newBox.id
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Add, "Add Another Box", tint = Color(0xFF00E5FF), modifier = Modifier.size(18.dp))
+                                }
+
                                 Box(modifier = Modifier.width(1.dp).height(18.dp).background(Color.White.copy(alpha = 0.2f)))
 
                                 IconButton(
@@ -1768,9 +1792,10 @@ fun EditorScreen(
             )
             EditorTool.BLUR -> {
                 val totalDur = project?.totalDurationUs ?: 5_000_000L
-                val currentBlur = project?.blurTracks?.firstOrNull { it.id == selectedBlurId }
-                    ?: project?.blurTracks?.firstOrNull { positionUs in it.timelineStartUs..it.timelineEndUs }
-                    ?: project?.blurTracks?.firstOrNull()
+                val blurTracks = project?.blurTracks ?: emptyList()
+                val currentBlur = blurTracks.firstOrNull { it.id == selectedBlurId }
+                    ?: blurTracks.firstOrNull { positionUs in it.timelineStartUs..it.timelineEndUs }
+                    ?: blurTracks.firstOrNull()
 
                 val itemToEdit = currentBlur ?: run {
                     val newBlur = com.clipcut.core.model.BlurTrackItem(
@@ -1784,8 +1809,31 @@ fun EditorScreen(
 
                 BlurSheet(
                     blurItem = itemToEdit,
+                    allBlurItems = blurTracks,
+                    selectedBlurId = itemToEdit.id,
                     totalDurationUs = totalDur,
                     trackingStatus = trackingStatus,
+                    onSelectBlur = { newId ->
+                        selectedBlurId = newId
+                    },
+                    onAddNewBlurTrack = {
+                        val base = itemToEdit
+                        val newBox = com.clipcut.core.model.BlurTrackItem(
+                            timelineStartUs = positionUs,
+                            timelineEndUs = minOf(totalDur.coerceAtLeast(positionUs + 4_000_000L), positionUs + 4_000_000L),
+                            blurType = base.blurType,
+                            shape = base.shape,
+                            normalizedX = (base.normalizedX + 0.12f).let { if (it > 0.85f) 0.35f else it },
+                            normalizedY = (base.normalizedY + 0.12f).let { if (it > 0.85f) 0.35f else it },
+                            width = base.width,
+                            height = base.height,
+                            intensity = base.intensity,
+                            feather = base.feather,
+                            customImageUri = base.customImageUri
+                        )
+                        viewModel.addBlurTrack(newBox)
+                        selectedBlurId = newBox.id
+                    },
                     onUpdate = { updated ->
                         viewModel.updateBlurTrack(updated)
                     },
