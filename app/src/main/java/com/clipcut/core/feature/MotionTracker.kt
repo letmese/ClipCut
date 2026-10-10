@@ -354,12 +354,12 @@ private class VisualTemplateTracker {
         val resultNormX = (finalPxX.toFloat() / bmpW).coerceIn(0.02f, 0.98f)
         val resultNormY = (finalPxY.toFloat() / bmpH).coerceIn(0.02f, 0.98f)
 
-        // Confidence: average error per pixel across all color channels
+        // Confidence: average error per pixel across all color channels (scaled against max error 255)
         val avgError = minSad.toFloat() / (tSize * tSize)
-        val confidence = (1.0f - (avgError / 120f)).coerceIn(0f, 1f)
+        val confidence = (1.0f - (avgError / 220f)).coerceIn(0f, 1f)
 
-        // Ultra-gentle adaptive update (blend 2% only on high confidence) to prevent template poisoning
-        if (confidence >= 0.65f) {
+        // Adaptive update (blend 4% when confidence is solid) to follow rotating/walking silhouette
+        if (confidence >= 0.45f) {
             adaptTemplate(framePixels, bmpW, bmpH, finalPxX, finalPxY, pxW, pxH)
         }
 
@@ -398,10 +398,10 @@ private class VisualTemplateTracker {
                 val cl = ((cr * 77) + (cg * 150) + (cb * 29)) shr 8
 
                 val tIdx = tRowOffset + c
-                tR[tIdx] = (tR[tIdx] * 98 + cr * 2) / 100
-                tG[tIdx] = (tG[tIdx] * 98 + cg * 2) / 100
-                tB[tIdx] = (tB[tIdx] * 98 + cb * 2) / 100
-                tLum[tIdx] = (tLum[tIdx] * 98 + cl * 2) / 100
+                tR[tIdx] = (tR[tIdx] * 96 + cr * 4) / 100
+                tG[tIdx] = (tG[tIdx] * 96 + cg * 4) / 100
+                tB[tIdx] = (tB[tIdx] * 96 + cb * 4) / 100
+                tLum[tIdx] = (tLum[tIdx] * 96 + cl * 4) / 100
             }
         }
     }
@@ -559,7 +559,7 @@ class MotionTracker(private val context: Context) {
 
         val rotationDegrees = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
 
-        val faceDetector = if (mode == TrackingMode.FACE || mode == TrackingMode.BODY) {
+        val faceDetector = if (mode == TrackingMode.FACE) {
             val opts = FaceDetectorOptions.Builder()
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
                 .setMinFaceSize(0.04f)
@@ -594,7 +594,7 @@ class MotionTracker(private val context: Context) {
             // Initialize visual template tracker with the user's exact box region
             templateTracker.initTemplate(anchorBmp, initialX, initialY, initialW, initialH)
 
-            if ((mode == TrackingMode.FACE || mode == TrackingMode.BODY) && faceDetector != null) {
+            if (mode == TrackingMode.FACE && faceDetector != null) {
                 try {
                     val img = InputImage.fromBitmap(anchorBmp, 0)
                     val faces: List<Face> = faceDetector.process(img).awaitResult()
@@ -602,20 +602,20 @@ class MotionTracker(private val context: Context) {
                     val boxLeft = initialX - initialW / 2f
                     val boxRight = initialX + initialW / 2f
                     val boxTop = initialY - initialH / 2f
-                    val headLimitY = if (mode == TrackingMode.BODY) initialY - initialH * 0.05f else (initialY + initialH / 2f)
+                    val boxBottom = initialY + initialH / 2f
 
-                    // Strict: Face must be located strictly INSIDE the user's bounding box at the anchor frame
+                    // Strict: Face must be located strictly inside the user's bounding box at the anchor frame
                     val insideFaces = faces.filter { f ->
                         val fx = f.boundingBox.centerX() / abW
                         val fy = f.boundingBox.centerY() / abH
-                        fx in (boxLeft - 0.03f)..(boxRight + 0.03f) && fy in (boxTop - 0.03f)..(headLimitY + 0.03f)
+                        fx in boxLeft..boxRight && fy in boxTop..boxBottom
                     }
 
                     val bestAnchorFace = insideFaces.minByOrNull { f ->
                         val fx = f.boundingBox.centerX() / abW
                         val fy = f.boundingBox.centerY() / abH
                         val dx = fx - initialX
-                        val dy = fy - (initialY - initialH * 0.30f)
+                        val dy = fy - initialY
                         dx * dx + dy * dy
                     }
 
@@ -628,7 +628,7 @@ class MotionTracker(private val context: Context) {
 
                         userOffsetX = initialX - anchorFaceX
                         userOffsetY = initialY - anchorFaceY
-                        AppLog.d(TAG, "Locked to face/head strictly INSIDE user box at anchorUs=$safeAnchorUs: pos=($anchorFaceX, $anchorFaceY)")
+                        AppLog.d(TAG, "Locked to face strictly INSIDE user box at anchorUs=$safeAnchorUs: pos=($anchorFaceX, $anchorFaceY)")
                     } else {
                         hasHeadAnchor = false
                         AppLog.d(TAG, "No face inside user box at anchorUs=$safeAnchorUs. Tracking full visual template exclusively.")
@@ -725,55 +725,14 @@ class MotionTracker(private val context: Context) {
 
                     val match = templateTracker.findMatch(rawBmp, searchCenterX, searchCenterY, curW, curH)
 
-                    var headFound = false
-                    var headImpliedX = curX
-                    var headImpliedY = curY
-
-                    if (mode == TrackingMode.BODY && faceDetector != null && hasHeadAnchor) {
-                        try {
-                            val img = InputImage.fromBitmap(rawBmp, 0)
-                            val faces: List<Face> = faceDetector.process(img).awaitResult()
-                            // Only match face strictly within current predicted box
-                            val targetFace = faces.minByOrNull { f ->
-                                val fx = f.boundingBox.centerX() / bmpW
-                                val fy = f.boundingBox.centerY() / bmpH
-                                val dx = fx - (curX - userOffsetX)
-                                val dy = fy - (curY - userOffsetY)
-                                dx * dx + dy * dy
-                            }
-                            if (targetFace != null) {
-                                val fx = targetFace.boundingBox.centerX() / bmpW
-                                val fy = targetFace.boundingBox.centerY() / bmpH
-                                val dist = sqrt((fx - (curX - userOffsetX)) * (fx - (curX - userOffsetX)) + (fy - (curY - userOffsetY)) * (fy - (curY - userOffsetY)))
-                                if (dist < 0.12f) {
-                                    headFound = true
-                                    headImpliedX = (fx + userOffsetX).coerceIn(0.02f, 0.98f)
-                                    headImpliedY = (fy + userOffsetY).coerceIn(0.02f, 0.98f)
-                                }
-                            }
-                        } catch (_: Throwable) {}
-                    }
-
                     // Target estimation based on mode
                     val rawTargetX: Float
                     val rawTargetY: Float
 
-                    if (mode == TrackingMode.BODY) {
-                        if (headFound && match != null && match.confidence >= 0.30f) {
-                            rawTargetX = headImpliedX * 0.30f + match.normX * 0.70f
-                            rawTargetY = headImpliedY * 0.30f + match.normY * 0.70f
-                        } else if (match != null && match.confidence >= 0.15f) {
-                            rawTargetX = match.normX
-                            rawTargetY = match.normY
-                        } else if (headFound) {
-                            rawTargetX = headImpliedX
-                            rawTargetY = headImpliedY
-                        } else {
-                            rawTargetX = curX + velX * 0.5f
-                            rawTargetY = curY + velY * 0.5f
-                        }
-                    } else if (mode == TrackingMode.FACE && faceDetector != null) {
+                    if (mode == TrackingMode.FACE && faceDetector != null && hasHeadAnchor) {
                         var faceFoundAndLocked = false
+                        var headImpliedX = curX
+                        var headImpliedY = curY
                         try {
                             val img = InputImage.fromBitmap(rawBmp, 0)
                             val faces: List<Face> = faceDetector.process(img).awaitResult()
@@ -801,21 +760,21 @@ class MotionTracker(private val context: Context) {
                         if (faceFoundAndLocked) {
                             rawTargetX = headImpliedX
                             rawTargetY = headImpliedY
-                        } else if (match != null && match.confidence >= 0.20f) {
+                        } else if (match != null && match.confidence >= 0.15f) {
                             rawTargetX = match.normX
                             rawTargetY = match.normY
                         } else {
-                            rawTargetX = curX + velX * 0.5f
-                            rawTargetY = curY + velY * 0.5f
+                            rawTargetX = curX + velX * 0.70f
+                            rawTargetY = curY + velY * 0.70f
                         }
                     } else {
-                        // OBJECT MODE
+                        // BODY or OBJECT mode: Pure robust visual template tracking of the subject
                         if (match != null && match.confidence >= 0.15f) {
                             rawTargetX = match.normX
                             rawTargetY = match.normY
                         } else {
-                            rawTargetX = curX + velX * 0.5f
-                            rawTargetY = curY + velY * 0.5f
+                            rawTargetX = curX + velX * 0.70f
+                            rawTargetY = curY + velY * 0.70f
                         }
                     }
 
