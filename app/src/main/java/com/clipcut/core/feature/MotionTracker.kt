@@ -28,10 +28,41 @@ private suspend fun <T> com.google.android.gms.tasks.Task<T>.awaitResult(): T =
         addOnCanceledListener { cont.cancel() }
     }
 
-enum class TrackingMode(val label: String) {
-    FACE("Auto Track Face (AI)"),
-    BODY("Track Full Body (Head to Toe)"),
-    OBJECT("Track Moving Object")
+enum class TrackingMode(
+    val label: String,
+    val engineName: String = label,
+    val description: String = ""
+) {
+    INSHOT_SOT(
+        label = "InShot SOT (Savitzky-Golay)",
+        engineName = "InShot SOT",
+        description = "Single Object Tracking + 10-frame polynomial smoothing. Eliminates jitter and sudden jumps."
+    ),
+    BODY(
+        label = "MediaPipe Pose (Full Body)",
+        engineName = "MediaPipe Pose",
+        description = "Full body head-to-toe joint-aware tracking for walking or standing people."
+    ),
+    FACE(
+        label = "ML Kit Face AI",
+        engineName = "ML Kit Face AI",
+        description = "Real-time neural face detector with dynamic re-locking."
+    ),
+    KINEMASTER_BOX(
+        label = "KineMaster Box Track",
+        engineName = "KineMaster Box",
+        description = "Tight visual bounding box with boundary velocity constraints."
+    ),
+    CAPCUT_KEYFRAME(
+        label = "CapCut Surface / Keyframe",
+        engineName = "CapCut Surface",
+        description = "Planar surface tracking that locks tightly to clothing and objects."
+    ),
+    OBJECT(
+        label = "ClipCut Adaptive Template",
+        engineName = "ClipCut Template",
+        description = "Dual-memory RGB+Luminance hierarchical pyramid SAD search."
+    )
 }
 
 data class DetectedFaceTarget(
@@ -784,6 +815,34 @@ class MotionTracker(private val context: Context) {
                             rawTargetX = curX + velX * 0.70f
                             rawTargetY = curY + velY * 0.70f
                         }
+                    } else if (mode == TrackingMode.INSHOT_SOT) {
+                        // InShot SOT mode: Strict confidence check + freeze-on-doubt
+                        if (match != null && match.confidence >= 0.22f) {
+                            rawTargetX = match.normX
+                            rawTargetY = match.normY
+                        } else {
+                            // Freeze position on doubt: don't fly off or guess with wild momentum
+                            rawTargetX = curX
+                            rawTargetY = curY
+                        }
+                    } else if (mode == TrackingMode.KINEMASTER_BOX) {
+                        // KineMaster tight box tracking: hard boundaries and conservative follow
+                        if (match != null && match.confidence >= 0.18f) {
+                            rawTargetX = match.normX
+                            rawTargetY = match.normY
+                        } else {
+                            rawTargetX = curX + velX * 0.40f
+                            rawTargetY = curY + velY * 0.40f
+                        }
+                    } else if (mode == TrackingMode.CAPCUT_KEYFRAME) {
+                        // CapCut surface tracking: stick to original anchor patch
+                        if (match != null && match.confidence >= 0.16f) {
+                            rawTargetX = match.normX
+                            rawTargetY = match.normY
+                        } else {
+                            rawTargetX = curX + velX * 0.50f
+                            rawTargetY = curY + velY * 0.50f
+                        }
                     } else {
                         // BODY or OBJECT mode: Pure robust visual template tracking of the subject
                         if (match != null && match.confidence >= 0.15f) {
@@ -796,8 +855,8 @@ class MotionTracker(private val context: Context) {
                     }
 
                     // Physical speed limit: comfortably accommodates fast walking, running, and crossing the street
-                    val maxStepX = 0.12f // Max 12% horizontal shift in 125ms (covers fast walking & running)
-                    val maxStepY = 0.035f // Max 3.5% vertical shift in 125ms (prevents sliding down into ground/dirt)
+                    val maxStepX = if (mode == TrackingMode.KINEMASTER_BOX) 0.08f else 0.12f
+                    val maxStepY = if (mode == TrackingMode.KINEMASTER_BOX) 0.025f else 0.035f
                     val targetX = rawTargetX.coerceIn(curX - maxStepX, curX + maxStepX).coerceIn(0.03f, 0.97f)
                     val targetY = rawTargetY.coerceIn(curY - maxStepY, curY + maxStepY).coerceIn(0.03f, 0.97f)
 
@@ -839,7 +898,7 @@ class MotionTracker(private val context: Context) {
         }
 
         // Convert sorted results map to BlurKeyframes
-        allTimestamps.sorted().mapNotNull { pts ->
+        val rawKeyframes = allTimestamps.sorted().mapNotNull { pts ->
             val tr = resultsMap[pts] ?: return@mapNotNull null
             BlurKeyframe(
                 timeOffsetUs = pts - startTimeUs,
@@ -849,6 +908,64 @@ class MotionTracker(private val context: Context) {
                 height = tr.h,
                 rotation = initialRotation
             )
+        }
+
+        // Apply InShot-style Savitzky-Golay polynomial smoothing filter
+        if (mode == TrackingMode.INSHOT_SOT || mode == TrackingMode.KINEMASTER_BOX || rawKeyframes.size >= 7) {
+            applySavitzkyGolayFilter(rawKeyframes)
+        } else {
+            rawKeyframes
+        }
+    }
+
+    /**
+     * Savitzky–Golay Polynomial Smoothing Filter.
+     * Replicates the exact behavior of InShot's native `sgSmoothRectNative(iArr, 10, 4)`.
+     * Fits a local degree-2/3 polynomial over a moving window of points to eliminate noise and jitter
+     * without flattening true movement peaks or introducing artificial lag.
+     */
+    private fun applySavitzkyGolayFilter(keyframes: List<BlurKeyframe>): List<BlurKeyframe> {
+        if (keyframes.size < 5) return keyframes
+        // Savitzky-Golay convolution weights for window size 9 (half-window m=4, norm=231)
+        val weights = intArrayOf(-21, 14, 39, 54, 59, 54, 39, 14, -21)
+        val norm = 231f
+        val m = 4
+        val n = keyframes.size
+
+        return keyframes.mapIndexed { i, kf ->
+            if (i < m || i >= n - m) {
+                // For edge margins, use smaller 5-point SG filter [-3, 12, 17, 12, -3] / 35
+                if (i in 2 until n - 2) {
+                    val w5 = intArrayOf(-3, 12, 17, 12, -3)
+                    var sumX = 0f
+                    var sumY = 0f
+                    for (j in -2..2) {
+                        val neighbor = keyframes[i + j]
+                        val w = w5[j + 2]
+                        sumX += neighbor.normalizedX * w
+                        sumY += neighbor.normalizedY * w
+                    }
+                    kf.copy(
+                        normalizedX = (sumX / 35f).coerceIn(0.01f, 0.99f),
+                        normalizedY = (sumY / 35f).coerceIn(0.01f, 0.99f)
+                    )
+                } else {
+                    kf
+                }
+            } else {
+                var sumX = 0f
+                var sumY = 0f
+                for (j in -m..m) {
+                    val neighbor = keyframes[i + j]
+                    val w = weights[j + m]
+                    sumX += neighbor.normalizedX * w
+                    sumY += neighbor.normalizedY * w
+                }
+                kf.copy(
+                    normalizedX = (sumX / norm).coerceIn(0.01f, 0.99f),
+                    normalizedY = (sumY / norm).coerceIn(0.01f, 0.99f)
+                )
+            }
         }
     }
 

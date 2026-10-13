@@ -443,6 +443,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             com.clipcut.core.model.BlurType.BLACKOUT -> "Solid Blackout"
             com.clipcut.core.model.BlurType.GAUSSIAN -> "Full Solid Blur"
             com.clipcut.core.model.BlurType.MOSAIC -> "Chunky Mosaic"
+            com.clipcut.core.model.BlurType.STACK_BLUR -> "InShot StackBlur"
+            com.clipcut.core.model.BlurType.MOTION_TRAIL -> "PowerDirector Trail"
             com.clipcut.core.model.BlurType.IMAGE -> "Stickers"
         }
 
@@ -525,6 +527,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             com.clipcut.core.model.BlurType.BLACKOUT -> "Solid Blackout"
             com.clipcut.core.model.BlurType.GAUSSIAN -> "Full Solid Blur"
             com.clipcut.core.model.BlurType.MOSAIC -> "Chunky Mosaic"
+            com.clipcut.core.model.BlurType.STACK_BLUR -> "InShot StackBlur"
+            com.clipcut.core.model.BlurType.MOTION_TRAIL -> "PowerDirector Trail"
             com.clipcut.core.model.BlurType.IMAGE -> "Stickers"
         }
 

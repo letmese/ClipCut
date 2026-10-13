@@ -903,8 +903,8 @@ fun EditorScreen(
                                     Box(
                                         modifier = Modifier
                                             .fillMaxSize()
-                                            .border(2.dp, Color(0xFF00E5FF), borderShape)
-                                            .background(Color(0xFF00E5FF).copy(alpha = 0.12f), borderShape)
+                                            .border(2.dp, AccentPrimary, borderShape)
+                                            .background(AccentPrimary.copy(alpha = 0.12f), borderShape)
                                             .pointerInput(blur.id, bw, bh) {
                                                 detectDragGestures(
                                                     onDragStart = {
@@ -936,6 +936,8 @@ fun EditorScreen(
                                                 com.clipcut.core.model.BlurType.BLACKOUT -> "BLACKOUT"
                                                 com.clipcut.core.model.BlurType.MOSAIC -> "MOSAIC"
                                                 com.clipcut.core.model.BlurType.GAUSSIAN -> "BLUR"
+                                                com.clipcut.core.model.BlurType.STACK_BLUR -> "STACKBLUR"
+                                                com.clipcut.core.model.BlurType.MOTION_TRAIL -> "TRAIL"
                                             },
                                             color = Color.White,
                                             fontSize = 10.sp,
@@ -978,7 +980,7 @@ fun EditorScreen(
                                             .align(Alignment.BottomEnd)
                                             .offset(x = 8.dp, y = 8.dp)
                                             .size(44.dp)
-                                            .background(Color(0xFF00E5FF), CircleShape)
+                                            .background(AccentPrimary, CircleShape)
                                             .border(2.dp, Color.White, CircleShape)
                                             .pointerInput(blur.id, bw, bh) {
                                                 detectDragGestures(
@@ -1084,7 +1086,7 @@ fun EditorScreen(
                                                 .align(Alignment.TopStart)
                                                 .offset(x = (-6).dp, y = (-6).dp)
                                                 .size(34.dp)
-                                                .background(Color(0xFF00E5FF), CircleShape)
+                                                .background(AccentPrimary, CircleShape)
                                                 .border(2.dp, Color.White, CircleShape)
                                                 .clickable(
                                                     interactionSource = remember { MutableInteractionSource() },
@@ -1338,7 +1340,7 @@ fun EditorScreen(
                                 .padding(bottom = 12.dp),
                             shape = RoundedCornerShape(24.dp),
                             color = Color(0xDD1E1E2E),
-                            border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f)),
+                            border = BorderStroke(1.dp, AccentPrimary.copy(alpha = 0.5f)),
                             shadowElevation = 8.dp
                         ) {
                             Row(
@@ -1350,7 +1352,7 @@ fun EditorScreen(
                                     onClick = { selectedTool = EditorTool.BLUR },
                                     modifier = Modifier.size(32.dp)
                                 ) {
-                                    Icon(Icons.Filled.Edit, "Edit Blur", tint = Color(0xFF00E5FF), modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Filled.Edit, "Edit Blur", tint = AccentPrimary, modifier = Modifier.size(18.dp))
                                 }
 
                                 IconButton(
@@ -1396,7 +1398,7 @@ fun EditorScreen(
                                     },
                                     modifier = Modifier.size(32.dp)
                                 ) {
-                                    Icon(Icons.Filled.Layers, "Blur All Faces", tint = Color(0xFF00E5FF), modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Filled.Layers, "Blur All Faces", tint = AccentPrimary, modifier = Modifier.size(18.dp))
                                 }
 
                                 IconButton(
@@ -1420,7 +1422,7 @@ fun EditorScreen(
                                     },
                                     modifier = Modifier.size(32.dp)
                                 ) {
-                                    Icon(Icons.Filled.Add, "Add Another Box", tint = Color(0xFF00E5FF), modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Filled.Add, "Add Another Box", tint = AccentPrimary, modifier = Modifier.size(18.dp))
                                 }
 
                                 Box(modifier = Modifier.width(1.dp).height(18.dp).background(Color.White.copy(alpha = 0.2f)))
@@ -1440,7 +1442,7 @@ fun EditorScreen(
                                     onClick = { selectedBlurId = null },
                                     modifier = Modifier
                                         .size(30.dp)
-                                        .background(Color(0xFF00E5FF), CircleShape)
+                                        .background(AccentPrimary, CircleShape)
                                 ) {
                                     Icon(Icons.Filled.Check, "Done", tint = Color.Black, modifier = Modifier.size(18.dp))
                                 }
@@ -1456,7 +1458,7 @@ fun EditorScreen(
                                 .padding(top = 16.dp),
                             shape = RoundedCornerShape(20.dp),
                             color = Color(0xEE1E1E2E),
-                            border = BorderStroke(1.5.dp, Color(0xFF00E5FF)),
+                            border = BorderStroke(1.5.dp, AccentPrimary),
                             shadowElevation = 8.dp
                         ) {
                             Row(
@@ -1465,7 +1467,7 @@ fun EditorScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 CircularProgressIndicator(
-                                    color = Color(0xFF00E5FF),
+                                    color = AccentPrimary,
                                     modifier = Modifier.size(16.dp),
                                     strokeWidth = 2.dp
                                 )
@@ -1784,10 +1786,76 @@ fun EditorScreen(
                 onRemoveKeyframe = { ovId, kfId -> viewModel.removeKeyframe(ovId, kfId) },
                 onDismiss = { selectedTool = null }
             )
-            EditorTool.MORE -> AudioDuckingSheet(
-                enabled = project?.audioDuckingEnabled ?: false,
-                level = project?.audioDuckLevel ?: 0.3f,
-                onApply = { e, l -> viewModel.setAudioDucking(e, l) },
+            EditorTool.MORE -> MoreToolsSheet(
+                clipLabel = selectedClipId?.let { "Clip ${it.take(8)}" },
+                playheadText = String.format(java.util.Locale.US, "%.1fs", positionUs / 1_000_000f),
+                onAction = { action ->
+                    val sid = selectedClipId
+                    when (action) {
+                        MoreAction.REVERSE -> if (sid != null) {
+                            viewModel.setClipReversed(sid, !(clip?.isReversed ?: false))
+                            android.widget.Toast.makeText(ctx, "Clip reversed", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        MoreAction.FREEZE -> if (sid != null) {
+                            viewModel.setClipFreeze(sid, positionUs)
+                            android.widget.Toast.makeText(ctx, "Frozen at playhead", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        MoreAction.FADE -> if (sid != null) {
+                            viewModel.setClipFade(sid, 300, 300)
+                            android.widget.Toast.makeText(ctx, "Fade 300ms in/out", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        MoreAction.BEAT_MARK -> {
+                            viewModel.addBeatMarker(positionUs)
+                            android.widget.Toast.makeText(ctx, "Beat added at playhead", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        MoreAction.CLEAR_BEATS -> {
+                            viewModel.clearBeatMarkers()
+                            android.widget.Toast.makeText(ctx, "Beat markers cleared", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        MoreAction.AUDIO_DUCK -> {
+                            viewModel.setAudioDucking(!(project?.audioDuckingEnabled ?: false), 0.3f)
+                            android.widget.Toast.makeText(ctx, "Audio ducking toggled", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        MoreAction.TRANSITIONS_ALL -> {
+                            selectedTool = EditorTool.TRANSITIONS
+                        }
+                        MoreAction.DELETE_CLIP -> if (sid != null) {
+                            viewModel.deleteClip(sid)
+                            android.widget.Toast.makeText(ctx, "Clip deleted", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        MoreAction.UNDO -> {
+                            viewModel.undo()
+                            android.widget.Toast.makeText(ctx, "Undo", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        MoreAction.REDO -> {
+                            viewModel.redo()
+                            android.widget.Toast.makeText(ctx, "Redo", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        MoreAction.CAPTION, MoreAction.STICKER -> Unit
+                    }
+                },
+                onAddCaption = { text ->
+                    if (text.isNotBlank()) {
+                        viewModel.addOverlay(
+                            com.clipcut.core.model.OverlayItem(
+                                text = text, textBold = true,
+                                timelineStartUs = positionUs, timelineEndUs = positionUs + 3_000_000L
+                            )
+                        )
+                        android.widget.Toast.makeText(ctx, "Caption added", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onAddSticker = { text ->
+                    if (text.isNotBlank()) {
+                        viewModel.addOverlay(
+                            com.clipcut.core.model.OverlayItem(
+                                text = text, textSizeSp = 56f,
+                                timelineStartUs = positionUs, timelineEndUs = positionUs + 3_000_000L
+                            )
+                        )
+                        android.widget.Toast.makeText(ctx, "Sticker added", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                },
                 onDismiss = { selectedTool = null }
             )
             EditorTool.BLUR -> {

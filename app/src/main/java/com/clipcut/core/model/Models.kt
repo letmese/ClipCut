@@ -313,6 +313,8 @@ enum class BlurType(val displayName: String) {
     GAUSSIAN("Heavy Blur"),
     MOSAIC("Pixelate Mosaic"),
     BLACKOUT("Solid Blackout"),
+    STACK_BLUR("InShot StackBlur"),
+    MOTION_TRAIL("PowerDirector Trail"),
     IMAGE("Picture / Sticker")
 }
 

@@ -428,7 +428,7 @@ fun ChromaKeyDialog(
                 Triple("Green Screen", floatArrayOf(0f, 1f, 0f), Color(0xFF00E676)),
                 Triple("Blue Screen", floatArrayOf(0f, 0f, 1f), Color(0xFF2979FF)),
                 Triple("Red Backdrop", floatArrayOf(1f, 0f, 0f), Color(0xFFFF1744)),
-                Triple("Custom Key", floatArrayOf(0f, 0.8f, 0.8f), Color(0xFF00E5FF))
+                Triple("Custom Key", floatArrayOf(0f, 0.8f, 0.8f), AccentPrimary)
             ).forEach { (label, c, previewColor) ->
                 val isSelected = colorPick.contentEquals(c)
                 Column(
@@ -919,6 +919,15 @@ fun OverlaySheet(
     }
 }
 
+// ── BlurSubTab ────────────────────────────────────────────────────────
+enum class BlurSubTab(val title: String, val icon: String) {
+    TRACKING("Tracking Engines", "🎯"),
+    CENSOR("Censor Style", "🌫️"),
+    AUTO("Auto AI (Batch)", "⚡"),
+    SHAPE("Shape & Size", "📐"),
+    TIMELINE("Timeline & Boxes", "⏱️")
+}
+
 // ── BlurSheet ──────────────────────────────────────────────────────────
 @Composable
 fun BlurSheet(
@@ -938,58 +947,12 @@ fun BlurSheet(
     onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    var selectedSubTab by remember { mutableStateOf(BlurSubTab.TRACKING) }
+    var selectedTrackingMode by remember { mutableStateOf(com.clipcut.core.feature.TrackingMode.INSHOT_SOT) }
+
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-        SheetHeader("Censor, Blur & Stickers", onDismiss)
+        SheetHeader("Censor, Blur & Tracking Studio", onDismiss)
         Spacer(Modifier.height(8.dp))
-
-        // Multi-Box Selector & Creator Row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "Active Blur / Blackout Boxes (${allBlurItems.size.coerceAtLeast(1)})",
-                color = TextSecondary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-            TextButton(
-                onClick = { onAddNewBlurTrack?.invoke() },
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("+ Add Box", color = AccentPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-
-        if (allBlurItems.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                allBlurItems.forEachIndexed { index, item ->
-                    val isSelected = item.id == blurItem.id
-                    EditorFilterChip(
-                        text = "Box ${index + 1} (${item.blurType.displayName})",
-                        selected = isSelected
-                    ) {
-                        onSelectBlur?.invoke(item.id)
-                    }
-                }
-                EditorFilterChip(
-                    text = "➕ Add Box",
-                    selected = false
-                ) {
-                    onAddNewBlurTrack?.invoke()
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-        }
 
         // Tracking status notification banner if active
         if (trackingStatus != null) {
@@ -1014,325 +977,448 @@ fun BlurSheet(
                     fontWeight = FontWeight.SemiBold
                 )
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
         }
 
-        // Section 1: Censor Type (Heavy Blur vs Mosaic vs Solid Blackout vs Picture/Sticker)
-        Text("Censor Style", color = TextSecondary, fontSize = 12.sp)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-            BlurType.values().forEach { type ->
-                EditorFilterChip(
-                    text = type.displayName,
-                    selected = blurItem.blurType == type
+        // Sub-tabs row inside Blur tab
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            BlurSubTab.values().forEach { tab ->
+                val isSelected = selectedSubTab == tab
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(if (isSelected) AccentPrimary else Surface3)
+                        .border(1.dp, if (isSelected) AccentPrimary else HairlineBorder, RoundedCornerShape(20.dp))
+                        .clickable { selectedSubTab = tab }
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    onUpdate(blurItem.copy(blurType = type))
+                    Text(
+                        "${tab.icon} ${tab.title}",
+                        color = if (isSelected) Color.Black else Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                    )
                 }
             }
         }
 
         Spacer(Modifier.height(14.dp))
 
-        // Section 1b: Picture / Sticker Picker (when IMAGE mode selected)
-        if (blurItem.blurType == BlurType.IMAGE) {
-            Text("Choose Sticker, Emoji or Picture", color = TextSecondary, fontSize = 12.sp)
-            Spacer(Modifier.height(8.dp))
+        when (selectedSubTab) {
+            BlurSubTab.TRACKING -> {
+                // TAB 1: SMART MOTION TRACKING ENGINES
+                Text("Select On-Device Tracking Engine", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Choose an algorithm extracted from top benchmark editors. All run 100% locally on-device.",
+                    color = TextTertiary,
+                    fontSize = 11.sp
+                )
+                Spacer(Modifier.height(10.dp))
 
-            val emojis = listOf(
-                "sunglasses" to "😎",
-                "clown" to "🤡",
-                "mask" to "😷",
-                "cat" to "🐱",
-                "monkey" to "🙈",
-                "censor" to "🚫",
-                "star" to "⭐️",
-                "zipper" to "🤐",
-                "robot" to "🤖",
-                "dog" to "🐶",
-                "heart" to "❤️",
-                "fire" to "🔥"
-            )
+                if (blurItem.keyframes.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Surface3, RoundedCornerShape(8.dp))
+                            .border(1.dp, AccentPrimary.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "⚡ Active Tracking (${blurItem.keyframes.size} keyframes)",
+                            color = AccentPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onClearTracking) {
+                            Text("Clear Tracking", color = Color(0xFFE53935), fontSize = 12.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
 
-            val currentUri = blurItem.customImageUri ?: "emoji://sunglasses"
-
-            // Horizontal scrollable row of fun stickers/emojis
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                emojis.forEach { (key, emoji) ->
-                    val isSelected = currentUri == "emoji://$key"
+                // Tracking Engine Selector Cards
+                com.clipcut.core.feature.TrackingMode.values().forEach { mode ->
+                    val isCurrent = selectedTrackingMode == mode
                     Box(
                         modifier = Modifier
-                            .size(46.dp)
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(if (isSelected) AccentPrimary.copy(alpha = 0.25f) else Surface3)
-                            .border(1.5.dp, if (isSelected) AccentPrimary else HairlineBorder, RoundedCornerShape(10.dp))
-                            .clickable {
-                                onUpdate(blurItem.copy(customImageUri = "emoji://$key"))
-                            },
-                        contentAlignment = Alignment.Center
+                            .background(if (isCurrent) AccentPrimary.copy(alpha = 0.15f) else Surface2)
+                            .border(1.5.dp, if (isCurrent) AccentPrimary else HairlineBorder, RoundedCornerShape(10.dp))
+                            .clickable { selectedTrackingMode = mode }
+                            .padding(12.dp)
                     ) {
-                        Text(emoji, fontSize = 22.sp)
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    mode.label,
+                                    color = if (isCurrent) AccentPrimary else Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (isCurrent) {
+                                    Text("SELECTED ✓", color = AccentPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                mode.description,
+                                color = TextSecondary,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+
+                PrimaryButton(
+                    "🚀 Track Target with ${selectedTrackingMode.engineName}",
+                    onClick = { onStartTracking(selectedTrackingMode) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "💡 Tip: Adjust your box on the video preview at the current frame, pick an engine above, and tap Track.",
+                    color = TextTertiary,
+                    fontSize = 11.sp
+                )
+            }
+
+            BlurSubTab.CENSOR -> {
+                // TAB 2: CENSOR STYLE & INTENSITY
+                Text("Censor Visual Style", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    BlurType.values().forEach { type ->
+                        EditorFilterChip(
+                            text = type.displayName,
+                            selected = blurItem.blurType == type
+                        ) {
+                            onUpdate(blurItem.copy(blurType = type))
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+
+                // Picture / Sticker Picker (when IMAGE mode selected)
+                if (blurItem.blurType == BlurType.IMAGE) {
+                    Text("Choose Sticker, Emoji or Picture", color = TextSecondary, fontSize = 12.sp)
+                    Spacer(Modifier.height(8.dp))
+
+                    val emojis = listOf(
+                        "sunglasses" to "😎",
+                        "clown" to "🤡",
+                        "mask" to "😷",
+                        "cat" to "🐱",
+                        "monkey" to "🙈",
+                        "censor" to "🚫",
+                        "star" to "⭐️",
+                        "zipper" to "🤐",
+                        "robot" to "🤖",
+                        "dog" to "🐶",
+                        "heart" to "❤️",
+                        "fire" to "🔥"
+                    )
+
+                    val currentUri = blurItem.customImageUri ?: "emoji://sunglasses"
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        emojis.forEach { (key, emoji) ->
+                            val isSelected = currentUri == "emoji://$key"
+                            Box(
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isSelected) AccentPrimary.copy(alpha = 0.25f) else Surface3)
+                                    .border(1.5.dp, if (isSelected) AccentPrimary else HairlineBorder, RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        onUpdate(blurItem.copy(customImageUri = "emoji://$key"))
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(emoji, fontSize = 22.sp)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+
+                    OutlinedButton(
+                        onClick = { onPickCustomImage?.invoke() },
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(1.dp, if (currentUri.startsWith("content://") || currentUri.startsWith("file://")) AccentPrimary else HairlineBorder),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (currentUri.startsWith("content://") || currentUri.startsWith("file://")) AccentPrimary.copy(alpha = 0.15f) else Surface2,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Icon(Icons.Filled.Image, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (currentUri.startsWith("content://") || currentUri.startsWith("file://")) "Custom Picture Selected ✓ (Tap to Change)" else "➕ Pick Custom Picture / Photo from Gallery",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+                }
+
+                // Blur Intensity & Feather Sliders
+                if (blurItem.blurType != BlurType.IMAGE) {
+                    if (blurItem.blurType != BlurType.BLACKOUT) {
+                        SheetSlider(
+                            label = if (blurItem.blurType == BlurType.MOSAIC) "Mosaic Block Size (Chunky Retro)" else "Blur Intensity (Heavy Frosted)",
+                            value = blurItem.intensity,
+                            range = 0.1f..1.0f
+                        ) {
+                            onUpdate(blurItem.copy(intensity = it))
+                        }
+                    }
+
+                    SheetSlider(
+                        label = "Edge Softness / Feather",
+                        value = blurItem.feather,
+                        range = 0.0f..0.45f
+                    ) {
+                        onUpdate(blurItem.copy(feather = it))
                     }
                 }
             }
 
-            Spacer(Modifier.height(10.dp))
-
-            // Pick custom picture from gallery button
-            OutlinedButton(
-                onClick = { onPickCustomImage?.invoke() },
-                modifier = Modifier.fillMaxWidth(),
-                border = BorderStroke(1.dp, if (currentUri.startsWith("content://") || currentUri.startsWith("file://")) AccentPrimary else HairlineBorder),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = if (currentUri.startsWith("content://") || currentUri.startsWith("file://")) AccentPrimary.copy(alpha = 0.15f) else Surface2,
-                    contentColor = Color.White
-                )
-            ) {
-                Icon(Icons.Filled.Image, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
+            BlurSubTab.AUTO -> {
+                // TAB 3: AUTO AI BATCH DETECTION
+                Text("One-Tap Automatic AI Censor", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
                 Text(
-                    if (currentUri.startsWith("content://") || currentUri.startsWith("file://")) "Custom Picture Selected ✓ (Tap to Change)" else "➕ Pick Custom Picture / Photo from Gallery",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold
+                    "Automatically detects and applies privacy tracking to everyone in the frame.",
+                    color = TextTertiary,
+                    fontSize = 11.sp
                 )
-            }
+                Spacer(Modifier.height(12.dp))
 
-            Spacer(Modifier.height(14.dp))
-        }
+                if (onAutoBlackoutAllPeople != null) {
+                    PrimaryButton(
+                        "🧍 Auto-Blackout All People (Full Body Head-to-Toe)",
+                        onClick = {
+                            onAutoBlackoutAllPeople(BlurType.BLACKOUT, BlurShape.RECTANGLE, 1.0f, 0.15f, null)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
 
-        // Section 2: Free-form Shape
-        Text("Shape Mask", color = TextSecondary, fontSize = 12.sp)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            BlurShape.values().forEach { shape ->
-                EditorFilterChip(
-                    text = shape.displayName,
-                    selected = blurItem.shape == shape
-                ) {
-                    onUpdate(blurItem.copy(shape = shape))
+                if (onAutoBlurAllFaces != null) {
+                    PrimaryButton(
+                        "⚡ Auto-Blackout All Faces (Solid Censor)",
+                        onClick = {
+                            onAutoBlurAllFaces(BlurType.BLACKOUT, blurItem.shape, 1.0f, 0.15f, null)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+
+                    SecondaryButton(
+                        "🌫️ Auto-Blur All Faces (Full Solid Frosted)",
+                        onClick = {
+                            onAutoBlurAllFaces(BlurType.GAUSSIAN, blurItem.shape, 1.0f, 0.20f, null)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+
+                    SecondaryButton(
+                        "✨ Auto-Apply ${blurItem.blurType.displayName} to All Faces",
+                        onClick = {
+                            onAutoBlurAllFaces(blurItem.blurType, blurItem.shape, blurItem.intensity, blurItem.feather, blurItem.customImageUri)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
-        }
 
-        Spacer(Modifier.height(14.dp))
-
-        // Section 3: Blur Intensity & Feather Sliders (for Blur/Mosaic/Blackout)
-        if (blurItem.blurType != BlurType.IMAGE) {
-            if (blurItem.blurType != BlurType.BLACKOUT) {
-                SheetSlider(
-                    label = if (blurItem.blurType == BlurType.MOSAIC) "Mosaic Block Size (Chunky Retro)" else "Blur Intensity (Heavy Frosted)",
-                    value = blurItem.intensity,
-                    range = 0.1f..1.0f
-                ) {
-                    onUpdate(blurItem.copy(intensity = it))
+            BlurSubTab.SHAPE -> {
+                // TAB 4: SHAPE MASK & DIMENSIONS
+                Text("Shape Mask Geometry", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    BlurShape.values().forEach { shape ->
+                        EditorFilterChip(
+                            text = shape.displayName,
+                            selected = blurItem.shape == shape
+                        ) {
+                            onUpdate(blurItem.copy(shape = shape))
+                        }
+                    }
                 }
-            }
 
-            SheetSlider(
-                label = "Edge Softness / Feather",
-                value = blurItem.feather,
-                range = 0.0f..0.45f
-            ) {
-                onUpdate(blurItem.copy(feather = it))
-            }
+                Spacer(Modifier.height(14.dp))
 
-            Spacer(Modifier.height(10.dp))
-        }
-
-        // Section 4: Freeform Dimensions (Width & Height)
-        Text("Free-form Dimensions", color = TextSecondary, fontSize = 12.sp)
-        Spacer(Modifier.height(6.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Width: ${(blurItem.width * 100).toInt()}%", color = Color.White, fontSize = 11.sp)
-                Slider(
-                    value = blurItem.width,
-                    onValueChange = { onUpdate(blurItem.copy(width = it)) },
-                    valueRange = 0.05f..1.0f,
-                    colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary)
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Height: ${(blurItem.height * 100).toInt()}%", color = Color.White, fontSize = 11.sp)
-                Slider(
-                    value = blurItem.height,
-                    onValueChange = { onUpdate(blurItem.copy(height = it)) },
-                    valueRange = 0.05f..1.0f,
-                    colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary)
-                )
-            }
-        }
-
-        // Quick shape aspect ratio buttons
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-            EditorFilterChip("🧍 Full Person", blurItem.height >= 0.70f) {
-                onUpdate(blurItem.copy(shape = BlurShape.RECTANGLE, width = 0.35f, height = 0.82f))
-            }
-            EditorFilterChip("Face Oval", blurItem.shape == BlurShape.OVAL && blurItem.height < 0.50f) {
-                onUpdate(blurItem.copy(shape = BlurShape.OVAL, width = 0.28f, height = 0.35f))
-            }
-            EditorFilterChip("License Plate", blurItem.width > blurItem.height * 1.5f) {
-                onUpdate(blurItem.copy(shape = BlurShape.RECTANGLE, width = 0.45f, height = 0.16f))
-            }
-            EditorFilterChip("Square 1:1", blurItem.width == blurItem.height && blurItem.height < 0.50f) {
-                onUpdate(blurItem.copy(width = 0.25f, height = 0.25f))
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // Section 5: Smart Motion Tracking
-        Text("Smart Motion Tracking", color = TextSecondary, fontSize = 12.sp)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Automatically moves and scales blur with target — zero frame-by-frame effort.",
-            color = TextTertiary,
-            fontSize = 11.sp
-        )
-        Spacer(Modifier.height(8.dp))
-
-        if (blurItem.keyframes.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Surface3, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "⚡ Active Tracking (${blurItem.keyframes.size} keyframes)",
-                    color = AccentPrimary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = onClearTracking) {
-                    Text("Clear Tracking", color = Color(0xFFE53935), fontSize = 12.sp)
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-        }
-
-        if (onAutoBlackoutAllPeople != null) {
-            PrimaryButton(
-                "🧍 Auto-Blackout All People (Full Body Head-to-Toe)",
-                onClick = {
-                    onAutoBlackoutAllPeople(BlurType.BLACKOUT, BlurShape.RECTANGLE, 1.0f, 0.15f, null)
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(6.dp))
-        }
-
-        if (onAutoBlurAllFaces != null) {
-            PrimaryButton(
-                "⚡ Auto-Blackout All Faces (Solid Censor)",
-                onClick = {
-                    onAutoBlurAllFaces(BlurType.BLACKOUT, blurItem.shape, 1.0f, 0.15f, null)
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(6.dp))
-            SecondaryButton(
-                "🌫️ Auto-Blur All Faces (Full Solid Frosted)",
-                onClick = {
-                    onAutoBlurAllFaces(BlurType.GAUSSIAN, blurItem.shape, 1.0f, 0.20f, null)
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-            if (blurItem.blurType == BlurType.MOSAIC || blurItem.blurType == BlurType.IMAGE) {
+                Text("Free-form Dimensions", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
-                SecondaryButton(
-                    "✨ Auto-Apply ${blurItem.blurType.displayName} to All Faces",
-                    onClick = {
-                        onAutoBlurAllFaces(blurItem.blurType, blurItem.shape, blurItem.intensity, blurItem.feather, blurItem.customImageUri)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Width: ${(blurItem.width * 100).toInt()}%", color = Color.White, fontSize = 11.sp)
+                        Slider(
+                            value = blurItem.width,
+                            onValueChange = { onUpdate(blurItem.copy(width = it)) },
+                            valueRange = 0.05f..1.0f,
+                            colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Height: ${(blurItem.height * 100).toInt()}%", color = Color.White, fontSize = 11.sp)
+                        Slider(
+                            value = blurItem.height,
+                            onValueChange = { onUpdate(blurItem.copy(height = it)) },
+                            valueRange = 0.05f..1.0f,
+                            colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                Text("Quick Aspect Ratio Presets", color = TextSecondary, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    EditorFilterChip("🧍 Full Person", blurItem.height >= 0.70f) {
+                        onUpdate(blurItem.copy(shape = BlurShape.RECTANGLE, width = 0.35f, height = 0.82f))
+                    }
+                    EditorFilterChip("Face Oval", blurItem.shape == BlurShape.OVAL && blurItem.height < 0.50f) {
+                        onUpdate(blurItem.copy(shape = BlurShape.OVAL, width = 0.28f, height = 0.35f))
+                    }
+                    EditorFilterChip("License Plate", blurItem.width > blurItem.height * 1.5f) {
+                        onUpdate(blurItem.copy(shape = BlurShape.RECTANGLE, width = 0.45f, height = 0.16f))
+                    }
+                    EditorFilterChip("Square 1:1", blurItem.width == blurItem.height && blurItem.height < 0.50f) {
+                        onUpdate(blurItem.copy(width = 0.25f, height = 0.25f))
+                    }
+                }
             }
-            Spacer(Modifier.height(8.dp))
-        }
 
-        PrimaryButton(
-            "🧍 Track Full Body (Follow Whole Person)",
-            onClick = { onStartTracking(com.clipcut.core.feature.TrackingMode.BODY) },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SecondaryButton(
-                "⚡ Track Face (AI)",
-                onClick = { onStartTracking(com.clipcut.core.feature.TrackingMode.FACE) },
-                modifier = Modifier.weight(1f)
-            )
-            SecondaryButton(
-                "Track Moving Object",
-                onClick = { onStartTracking(com.clipcut.core.feature.TrackingMode.OBJECT) },
-                modifier = Modifier.weight(1f)
-            )
-        }
+            BlurSubTab.TIMELINE -> {
+                // TAB 5: TIMELINE DURATION & MULTI-BOX MANAGEMENT
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Active Boxes (${allBlurItems.size.coerceAtLeast(1)})",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    TextButton(
+                        onClick = { onAddNewBlurTrack?.invoke() },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("+ Add Box", color = AccentPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
 
-        Spacer(Modifier.height(14.dp))
+                if (allBlurItems.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        allBlurItems.forEachIndexed { index, item ->
+                            val isSelected = item.id == blurItem.id
+                            EditorFilterChip(
+                                text = "Box ${index + 1} (${item.blurType.displayName})",
+                                selected = isSelected
+                            ) {
+                                onSelectBlur?.invoke(item.id)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                }
 
-        // Section 6: Timeline Duration
-        Text("Timing & Duration", color = TextSecondary, fontSize = 12.sp)
-        Spacer(Modifier.height(4.dp))
-        val curStartSec = blurItem.timelineStartUs / 1_000_000f
-        val curEndSec = blurItem.timelineEndUs / 1_000_000f
-        val durSec = curEndSec - curStartSec
-        Text(
-            String.format(java.util.Locale.US, "%.1fs – %.1fs (Total: %.1fs)", curStartSec, curEndSec, durSec),
-            color = Color.White,
-            fontSize = 12.sp
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            SecondaryButton(
-                "Entire Video",
-                onClick = {
-                    onUpdate(blurItem.copy(timelineStartUs = 0L, timelineEndUs = totalDurationUs.coerceAtLeast(1_000_000L)))
-                },
-                modifier = Modifier.weight(1f)
-            )
-            SecondaryButton(
-                "+ 3 Seconds",
-                onClick = {
-                    val newEnd = (blurItem.timelineStartUs + 3_000_000L).coerceAtMost(totalDurationUs)
-                    onUpdate(blurItem.copy(timelineEndUs = newEnd))
-                },
-                modifier = Modifier.weight(1f)
-            )
-        }
+                Text("Timing & Duration", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                val curStartSec = blurItem.timelineStartUs / 1_000_000f
+                val curEndSec = blurItem.timelineEndUs / 1_000_000f
+                val durSec = curEndSec - curStartSec
+                Text(
+                    String.format(java.util.Locale.US, "%.1fs – %.1fs (Total: %.1fs)", curStartSec, curEndSec, durSec),
+                    color = Color.White,
+                    fontSize = 12.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    SecondaryButton(
+                        "Entire Video",
+                        onClick = {
+                            onUpdate(blurItem.copy(timelineStartUs = 0L, timelineEndUs = totalDurationUs.coerceAtLeast(1_000_000L)))
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    SecondaryButton(
+                        "+ 3 Seconds",
+                        onClick = {
+                            val newEnd = (blurItem.timelineStartUs + 3_000_000L).coerceAtMost(totalDurationUs)
+                            onUpdate(blurItem.copy(timelineEndUs = newEnd))
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
 
-        Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(16.dp))
 
-        // Add Another Blur Box CTA
-        PrimaryButton(
-            "➕ Add Another Blur / Blackout Box",
-            onClick = { onAddNewBlurTrack?.invoke() },
-            modifier = Modifier.fillMaxWidth(),
-            icon = Icons.Filled.Add
-        )
+                PrimaryButton(
+                    "➕ Add Another Blur / Blackout Box",
+                    onClick = { onAddNewBlurTrack?.invoke() },
+                    modifier = Modifier.fillMaxWidth(),
+                    icon = Icons.Filled.Add
+                )
 
-        Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
 
-        // Delete button
-        OutlinedButton(
-            onClick = onDelete,
-            modifier = Modifier.fillMaxWidth(),
-            border = BorderStroke(1.dp, Color(0xFFE53935)),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935))
-        ) {
-            Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Delete Current Blur Box", fontSize = 13.sp)
+                OutlinedButton(
+                    onClick = onDelete,
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(1.dp, Color(0xFFE53935)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935))
+                ) {
+                    Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Delete Current Blur Box", fontSize = 13.sp)
+                }
+            }
         }
     }
 }
