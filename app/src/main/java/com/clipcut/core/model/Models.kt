@@ -81,7 +81,19 @@ enum class FontFamilyOption(val label: String, val assetPath: String? = null) {
     PERMANENT_MARKER("Marker", "fonts/PermanentMarker.ttf"),
     BLACKOUT("Blackout", "fonts/Blackout-2am.ttf"),
     AMATIC("Amatic SC", "fonts/AmaticSC-Regular.ttf"),
-    CAVIAR_DREAMS("Caviar Dreams", "fonts/CaviarDreams.ttf")
+    CAVIAR_DREAMS("Caviar Dreams", "fonts/CaviarDreams.ttf"),
+    MONTSERRAT("Montserrat", "fonts/Montserrat-Regular.ttf"),
+    MONTSERRAT_HEAVY("Montserrat Heavy", "fonts/Montserrat-ExtraBold.ttf"),
+    CINZEL("Cinzel Cinema", "fonts/Cinzel_Decorative_Bold.ttf"),
+    GOCHI_HAND("Gochi Hand", "fonts/Gochi_Hand.ttf"),
+    BANGERS("Bangers Comic", "fonts/Bangers_Regular.ttf"),
+    ALFA_SLAB("Alfa Slab", "fonts/AlfaSlabOne-Regular.ttf"),
+    CAVEAT("Caveat Script", "fonts/Caveat-VariableFont_wght.ttf"),
+    HEAVYWEIGHT("Impact Bold", "fonts/HeavyweightImpact-Bold.otf"),
+    TYPEWRITER("Typewriter", "fonts/Typewriter.otf"),
+    PLAYBALL("Playball", "fonts/Playball-Regular.ttf"),
+    BARLOW("Barlow Bold", "fonts/Barlow-Bold.ttf"),
+    HONEY_JAR("Honey Jar", "fonts/HoneyJar.otf")
 }
 
 data class CropRect(

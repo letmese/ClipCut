@@ -102,8 +102,56 @@ fun AudioSheet(
     onDeleteTrack: (String) -> Unit = {},
     onTrimTrack: (String, Long, Long) -> Unit = { _, _, _ -> },
     onVoiceoverClick: () -> Unit = {},
+    onAddAssetAudio: (String, String) -> Unit = { _, _ -> },
     onDismiss: () -> Unit
 ) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var activeCategory by remember { mutableStateOf("Sound FX") }
+    var currentlyPlayingPath by remember { mutableStateOf<String?>(null) }
+    val mediaPlayerRef = remember { mutableStateOf<android.media.MediaPlayer?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                mediaPlayerRef.value?.stop()
+                mediaPlayerRef.value?.release()
+            } catch (_: Throwable) {}
+            mediaPlayerRef.value = null
+        }
+    }
+
+    fun playPreview(assetPath: String) {
+        try {
+            if (currentlyPlayingPath == assetPath && mediaPlayerRef.value?.isPlaying == true) {
+                mediaPlayerRef.value?.stop()
+                mediaPlayerRef.value?.release()
+                mediaPlayerRef.value = null
+                currentlyPlayingPath = null
+                return
+            }
+            mediaPlayerRef.value?.stop()
+            mediaPlayerRef.value?.release()
+            mediaPlayerRef.value = null
+
+            val tempFile = java.io.File(ctx.cacheDir, "preview_audio.tmp")
+            ctx.assets.open(assetPath).use { input ->
+                tempFile.outputStream().use { output -> input.copyTo(output) }
+            }
+            val mp = android.media.MediaPlayer().apply {
+                setDataSource(tempFile.absolutePath)
+                setOnCompletionListener {
+                    currentlyPlayingPath = null
+                }
+                prepare()
+                start()
+            }
+            mediaPlayerRef.value = mp
+            currentlyPlayingPath = assetPath
+        } catch (_: Throwable) {
+            currentlyPlayingPath = null
+        }
+    }
+
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         SheetHeader("Audio Controls", onDismiss)
         Spacer(Modifier.height(12.dp))
@@ -116,7 +164,7 @@ fun AudioSheet(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             PrimaryButton(
-                text = "Add Music",
+                text = "Pick Custom File",
                 onClick = onPickMusicClick,
                 icon = Icons.Filled.MusicNote,
                 modifier = Modifier.weight(1f)
@@ -127,6 +175,99 @@ fun AudioSheet(
                 icon = Icons.Filled.Mic,
                 modifier = Modifier.weight(1f)
             )
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Text("Creator Audio & SFX Library", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text("Instant sound effects & soundtrack from benchmark editors", color = TextSecondary, fontSize = 11.sp)
+        Spacer(Modifier.height(8.dp))
+
+        // Categories
+        val categories = listOf("Sound FX", "Gaming & Memes", "Transitions", "Chill BGM")
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(categories) { cat ->
+                EditorFilterChip(cat, activeCategory == cat) { activeCategory = cat }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+
+        val currentItems = when (activeCategory) {
+            "Sound FX" -> listOf(
+                Triple("Vine Boom", "💥", "audio/sfx/Memes-Vine_Boom.mp3"),
+                Triple("Whoosh Swoosh", "💨", "audio/sfx/Whoosh_Swoosh_08.mp3"),
+                Triple("Air Tail Woosh", "🚀", "audio/sfx/Air_Tail_Woosh.mp3"),
+                Triple("Camera Shutter", "📸", "audio/sfx/Camera_Shutter_02.mp3"),
+                Triple("Magic Pop Ding", "🔔", "audio/sfx/Magic_Pop_Ding.mp3"),
+                Triple("Explosion", "💣", "audio/sfx/Explosion.mp3"),
+                Triple("Suspense Impact", "⚡", "audio/sfx/Suspense_Impact.wav"),
+                Triple("Camera Scan Beep", "🔍", "audio/sfx/camera_scan_beep.mp3")
+            )
+            "Gaming & Memes" -> listOf(
+                Triple("Mario Jump", "🍄", "audio/sfx/Memes-Mario_Jump.mp3"),
+                Triple("Meme Alert", "🚨", "audio/sfx/Memes-Alert.mp3"),
+                Triple("Baby Laughing", "👶", "audio/sfx/Memes-Baby_Laughing.mp3"),
+                Triple("Cartoon Running", "🏃", "audio/sfx/Memes-Cartoon_Running.mp3"),
+                Triple("Children Yay!", "🎉", "audio/sfx/Memes-Children_Yay.mp3"),
+                Triple("Funny Laugh", "😂", "audio/sfx/Memes-Funny_Laugh_01.mp3"),
+                Triple("Laser Pew Pew", "🔫", "audio/sfx/Memes-Pew.mp3"),
+                Triple("Kid Oof", "💀", "audio/sfx/Memes-Kid_Oof.mp3"),
+                Triple("Asian Huh?", "❓", "audio/sfx/Memes-Asian_Huh.mp3")
+            )
+            "Transitions" -> listOf(
+                Triple("Film Transition 1", "🎬", "audio/transitions/audio_trans_film01.mp3"),
+                Triple("Film Transition 2", "🎬", "audio/transitions/audio_trans_film02.mp3"),
+                Triple("Film Transition 3", "🎬", "audio/transitions/audio_trans_film03.mp3"),
+                Triple("Film Transition 4", "🎬", "audio/transitions/audio_trans_film04.mp3"),
+                Triple("Film Transition 5", "🎬", "audio/transitions/audio_trans_film05.mp3"),
+                Triple("Film Transition 6", "🎬", "audio/transitions/audio_trans_film06.mp3"),
+                Triple("Film Transition 7", "🎬", "audio/transitions/audio_trans_film07.mp3"),
+                Triple("Classic Film Whoosh", "🎞️", "audio/transitions/flim_transition.mp3")
+            )
+            else -> listOf(
+                Triple("Autumn Afternoon (Lofi)", "☕", "audio/bgm/autumn_afternoon_lofi.mp3"),
+                Triple("Holiday Acoustic (Santa)", "🎄", "audio/bgm/holiday_acoustic_santa.mp3")
+            )
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            currentItems.forEach { (name, icon, path) ->
+                val isPlaying = currentlyPlayingPath == path
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Surface2)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(icon, fontSize = 18.sp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        name,
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = { playPreview(path) },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Text(if (isPlaying) "⏹" else "▶", fontSize = 14.sp, color = AccentPrimary)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(AccentPrimary.copy(alpha = 0.2f))
+                            .clickable {
+                                onAddAssetAudio(path, name)
+                            }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text("+ Add", color = AccentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
         }
 
         if (audioTracks.isNotEmpty()) {
@@ -585,14 +726,32 @@ fun LutPickerDialog(
             Triple("Warm Sunset", "FILTER_WARM.png", Pair(Color(0xFFF77F00), Color(0xFFFCBF49))),
             Triple("Antique", "FILTER_ANTIQUE.png", Pair(Color(0xFF8D6E63), Color(0xFFD7CCC8))),
             Triple("Food Fresh", "FD1.png", Pair(Color(0xFFE63946), Color(0xFFA8DADC))),
-            Triple("Food Crispy", "FD2.png", Pair(Color(0xFFFFB703), Color(0xFF2A9D8F)))
+            Triple("HDR Warm", "cube/Landscape HDR Warm 01.cube", Pair(Color(0xFFF77F00), Color(0xFFFCBF49))),
+            Triple("HDR Cold", "cube/Landscape HDR Cold 01.cube", Pair(Color(0xFF0077B6), Color(0xFF90E0EF))),
+            Triple("Spring Cool", "cube/Spring_Cool & Bright_heavy.cube", Pair(Color(0xFF00B4D8), Color(0xFF7209B7))),
+            Triple("Amber Glow", "cube/Spring_Amber Highlight_heavy.cube", Pair(Color(0xFFFFB703), Color(0xFFFB8500))),
+            Triple("Vintage Kick", "cube/Spring_Vintage Kick_heavy.cube", Pair(Color(0xFFCB997E), Color(0xFFDDB892))),
+            Triple("Fresh Burst", "cube/Spring_Fresh Burst_heavy.cube", Pair(Color(0xFF2A9D8F), Color(0xFFE9C46A))),
+            Triple("Luminescent", "cube/Spring_Luminescent_heavy.cube", Pair(Color(0xFFF72585), Color(0xFF7209B7)))
         )
 
+        val ctx = androidx.compose.ui.platform.LocalContext.current
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             items(realLuts.size) { idx ->
                 val (title, fileName, colors) = realLuts[idx]
                 val lutAssetPath = "asset://luts/$fileName"
                 val isSelected = currentLut?.uri == lutAssetPath || currentLut?.name == title
+
+                val thumbBmp = remember(fileName) {
+                    try {
+                        val base = fileName.substringAfterLast('/').removeSuffix(".png").removeSuffix(".cube").replace(" ", "_")
+                        val thumbPath = "luts/thumbs/${base}_thumb.png"
+                        ctx.assets.open(thumbPath).use {
+                            android.graphics.BitmapFactory.decodeStream(it)
+                        }?.asImageBitmap()
+                    } catch (_: Throwable) { null }
+                }
+
                 Column(
                     modifier = Modifier
                         .width(88.dp)
@@ -606,17 +765,29 @@ fun LutPickerDialog(
                         .padding(8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                androidx.compose.ui.graphics.Brush.linearGradient(
-                                    colors = listOf(colors.first, colors.second)
+                    if (thumbBmp != null) {
+                        androidx.compose.foundation.Image(
+                            bitmap = thumbBmp,
+                            contentDescription = title,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp)
+                                .clip(RoundedCornerShape(6.dp)),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    androidx.compose.ui.graphics.Brush.linearGradient(
+                                        colors = listOf(colors.first, colors.second)
+                                    )
                                 )
-                            )
-                    )
+                        )
+                    }
                     Spacer(Modifier.height(6.dp))
                     Text(
                         title,
@@ -1029,6 +1200,52 @@ fun OverlaySheet(
         }, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))
         SecondaryButton("Add PiP Video/Image", onClick = onOpenPiP, modifier = Modifier.fillMaxWidth())
+
+        Spacer(Modifier.height(16.dp))
+        Text("Cinematic Frames & Camera Masks", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text("Authentic camera viewfinders, phones, polaroids & masks from VN", color = TextSecondary, fontSize = 11.sp)
+        Spacer(Modifier.height(8.dp))
+
+        val framePresets = listOf(
+            Triple("Camera REC", "Camera.png", "📷"),
+            Triple("Smartphone", "Phone.png", "📱"),
+            Triple("Polaroid", "Photo.png", "📸"),
+            Triple("Heart Mask", "Heart.png", "💖"),
+            Triple("Circular Lens", "Circular.png", "🔘"),
+            Triple("Water Ripple", "Water.png", "🌊"),
+            Triple("Film Box", "Square.png", "🎞️")
+        )
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(framePresets) { (label, file, emoji) ->
+                Column(
+                    modifier = Modifier
+                        .width(100.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Surface2)
+                        .border(1.dp, HairlineBorder, RoundedCornerShape(8.dp))
+                        .clickable {
+                            val assetUri = "asset://overlays/frames/$file"
+                            onAddOverlay(
+                                OverlayItem(
+                                    text = assetUri,
+                                    imageUri = assetUri,
+                                    timelineStartUs = initialPlayheadUs,
+                                    timelineEndUs = if (totalDurationUs > 0L) totalDurationUs else initialPlayheadUs + 5_000_000L,
+                                    scale = 1.0f
+                                )
+                            )
+                        }
+                        .padding(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(emoji, fontSize = 24.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(label, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text("+ Add Frame", color = AccentPrimary, fontSize = 9.sp)
+                }
+            }
+        }
     }
 }
 
@@ -2420,8 +2637,8 @@ fun TextSheet(
         Spacer(Modifier.height(12.dp))
         Text("Font Family", color = TextSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            FontFamilyOption.values().forEach { font ->
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(FontFamilyOption.values().toList()) { font ->
                 EditorFilterChip(font.label, selectedFont == font) { selectedFont = font }
             }
         }
@@ -2528,7 +2745,7 @@ fun StickerSheet(onPick: (String) -> Unit, onDismiss: () -> Unit) {
     Column {
         SheetHeader("Stickers & Overlays", onDismiss)
         Spacer(Modifier.height(10.dp))
-        val categories = listOf("Trending", "InShot Emojis", "Censor Stamps", "Reels & Social", "Arrows & Pointers", "Vlog & Life", "Retro Y2K", "Aesthetic", "Emoji", "Badges")
+        val categories = listOf("Trending", "InShot Emojis", "Frames & Masks", "Censor Stamps", "Reels & Social", "Arrows & Pointers", "Vlog & Life", "Retro Y2K", "Aesthetic", "Emoji", "Badges")
         var category by remember { mutableStateOf("Trending") }
 
         ScrollableTabRow(
@@ -2566,6 +2783,15 @@ fun StickerSheet(onPick: (String) -> Unit, onDismiss: () -> Unit) {
                 "asset://stickers/aniemoji/aniemoji01_10_cover.png",
                 "asset://stickers/aniemoji/aniemoji01_11_cover.png",
                 "asset://stickers/aniemoji/aniemoji01_12_cover.png"
+            )
+            "Frames & Masks" -> listOf(
+                "asset://overlays/frames/Camera.png",
+                "asset://overlays/frames/Phone.png",
+                "asset://overlays/frames/Photo.png",
+                "asset://overlays/frames/Heart.png",
+                "asset://overlays/frames/Circular.png",
+                "asset://overlays/frames/Water.png",
+                "asset://overlays/frames/Square.png"
             )
             "Censor Stamps" -> listOf(
                 "⛔ CENSORED", "🔒 TOP SECRET", "⚠️ WARNING", "🔞 18+ ONLY",

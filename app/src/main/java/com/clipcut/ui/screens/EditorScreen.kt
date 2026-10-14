@@ -1926,6 +1926,7 @@ fun EditorScreen(
                     onDeleteTrack = { id -> viewModel.removeAudioTrack(id) },
                     onTrimTrack = { id, s, e -> viewModel.trimAudioTrack(id, s, e) },
                     onVoiceoverClick = { activeSpecialSheet = "voiceover" },
+                    onAddAssetAudio = { path, name -> viewModel.addAssetAudioTrack(path, name) },
                     onDismiss = { selectedTool = null }
                 )
             EditorTool.EFFECTS -> EffectsSheet(

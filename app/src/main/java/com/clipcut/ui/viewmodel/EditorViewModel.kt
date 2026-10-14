@@ -823,6 +823,48 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
+
+    fun addAssetAudioTrack(assetPath: String, displayName: String) {
+        val app = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            val audioDir = java.io.File(app.filesDir, "audio_tracks").apply { mkdirs() }
+            val cleanName = assetPath.substringAfterLast('/')
+            val destFile = java.io.File(audioDir, "asset_${System.currentTimeMillis()}_$cleanName")
+            try {
+                app.assets.open(assetPath).use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            } catch (t: Throwable) {
+                AppLog.e(TAG, "Failed to copy asset audio to filesDir: ${t.message}")
+                return@launch
+            }
+
+            val durationUs = try {
+                val retriever = android.media.MediaMetadataRetriever()
+                retriever.setDataSource(destFile.absolutePath)
+                val durStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                retriever.release()
+                (durStr?.toLongOrNull() ?: 3_000L) * 1000L
+            } catch (t: Throwable) {
+                3_000_000L
+            }
+
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                val item = AudioTrackItem(
+                    uri = android.net.Uri.fromFile(destFile).toString(),
+                    name = displayName,
+                    sourceDurationUs = durationUs,
+                    timelineStartUs = playerManager.currentPositionUs.value,
+                    trimStartUs = 0L,
+                    trimEndUs = durationUs.coerceAtLeast(500_000L)
+                )
+                addAudioTrack(item)
+            }
+        }
+    }
+
     fun removeAudioTrack(id: String) = mutate { it.copy(audioTracks = it.audioTracks.filterNot { a -> a.id == id }) }
     fun trimAudioTrack(id: String, startUs: Long, endUs: Long) = mutate { p ->
         p.copy(audioTracks = p.audioTracks.map {
