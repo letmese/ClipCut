@@ -345,39 +345,144 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun updateBlurTrack(item: com.clipcut.core.model.BlurTrackItem) = updateBlurTrack(item.id) { item }
 
-    fun commitBlurTransform(id: String, normX: Float, normY: Float, width: Float, height: Float, rotation: Float = 0.0f) = mutate { p ->
+    fun commitBlurTransform(
+        id: String,
+        normX: Float,
+        normY: Float,
+        width: Float,
+        height: Float,
+        rotation: Float = 0.0f,
+        autoKeyframeAtPlayhead: Boolean = false
+    ) = mutate { p ->
         p.copy(blurTracks = p.blurTracks.map { old ->
             if (old.id == id) {
-                val oldW = old.width.coerceAtLeast(0.01f)
-                val oldH = old.height.coerceAtLeast(0.01f)
-                val scaleW = width / oldW
-                val scaleH = height / oldH
-                val dx = normX - old.normalizedX
-                val dy = normY - old.normalizedY
-
-                val updatedKfs = if (old.keyframes.isNotEmpty()) {
-                    old.keyframes.map { kf ->
-                        kf.copy(
-                            normalizedX = (kf.normalizedX + dx).coerceIn(0.02f, 0.98f),
-                            normalizedY = (kf.normalizedY + dy).coerceIn(0.02f, 0.98f),
-                            width = (kf.width * scaleW).coerceIn(0.03f, 1.2f),
-                            height = (kf.height * scaleH).coerceIn(0.03f, 1.2f),
-                            rotation = (kf.rotation + (rotation - old.rotation))
-                        )
-                    }
-                } else emptyList()
-
-                old.copy(
-                    normalizedX = normX.coerceIn(0.01f, 0.99f),
-                    normalizedY = normY.coerceIn(0.01f, 0.99f),
-                    width = width.coerceIn(0.03f, 1.2f),
-                    height = height.coerceIn(0.03f, 1.2f),
-                    rotation = (rotation % 360f + 360f) % 360f,
-                    keyframes = updatedKfs
-                )
+                if (autoKeyframeAtPlayhead || old.keyframes.isNotEmpty()) {
+                    // Manual keyframe mode: update or insert keyframe at current playhead position
+                    val playheadUs = playerManager.currentPositionUs.value
+                    val offsetUs = (playheadUs - old.timelineStartUs).coerceIn(0L, old.durationUs)
+                    val filtered = old.keyframes.filterNot { kotlin.math.abs(it.timeOffsetUs - offsetUs) < 25_000L }
+                    val newKf = com.clipcut.core.model.BlurKeyframe(
+                        timeOffsetUs = offsetUs,
+                        normalizedX = normX.coerceIn(0.01f, 0.99f),
+                        normalizedY = normY.coerceIn(0.01f, 0.99f),
+                        width = width.coerceIn(0.03f, 1.2f),
+                        height = height.coerceIn(0.03f, 1.2f),
+                        rotation = (rotation % 360f + 360f) % 360f
+                    )
+                    val updatedKfs = (filtered + newKf).sortedBy { it.timeOffsetUs }
+                    old.copy(
+                        normalizedX = normX.coerceIn(0.01f, 0.99f),
+                        normalizedY = normY.coerceIn(0.01f, 0.99f),
+                        width = width.coerceIn(0.03f, 1.2f),
+                        height = height.coerceIn(0.03f, 1.2f),
+                        rotation = (rotation % 360f + 360f) % 360f,
+                        keyframes = updatedKfs
+                    )
+                } else {
+                    old.copy(
+                        normalizedX = normX.coerceIn(0.01f, 0.99f),
+                        normalizedY = normY.coerceIn(0.01f, 0.99f),
+                        width = width.coerceIn(0.03f, 1.2f),
+                        height = height.coerceIn(0.03f, 1.2f),
+                        rotation = (rotation % 360f + 360f) % 360f
+                    )
+                }
             } else old
         })
     }
+
+    fun setBlurKeyframeAtPlayhead(
+        blurId: String,
+        playheadUs: Long = playerManager.currentPositionUs.value,
+        normX: Float? = null,
+        normY: Float? = null,
+        width: Float? = null,
+        height: Float? = null,
+        rotation: Float? = null
+    ) {
+        val proj = _project.value ?: return
+        val blur = proj.blurTracks.find { it.id == blurId } ?: return
+        val offsetUs = (playheadUs - blur.timelineStartUs).coerceIn(0L, blur.durationUs)
+
+        val cur = blur.getTransformAt(playheadUs)
+        val finalX = normX ?: cur.normalizedX
+        val finalY = normY ?: cur.normalizedY
+        val finalW = width ?: cur.width
+        val finalH = height ?: cur.height
+        val finalRot = rotation ?: cur.rotation
+
+        val filtered = blur.keyframes.filterNot { kotlin.math.abs(it.timeOffsetUs - offsetUs) < 25_000L }
+        val newKf = com.clipcut.core.model.BlurKeyframe(
+            timeOffsetUs = offsetUs,
+            normalizedX = finalX.coerceIn(0.01f, 0.99f),
+            normalizedY = finalY.coerceIn(0.01f, 0.99f),
+            width = finalW.coerceIn(0.03f, 1.2f),
+            height = finalH.coerceIn(0.03f, 1.2f),
+            rotation = (finalRot % 360f + 360f) % 360f
+        )
+        val updated = (filtered + newKf).sortedBy { it.timeOffsetUs }
+        updateBlurTrack(blurId) { it.copy(keyframes = updated) }
+    }
+
+    fun removeBlurKeyframeAtPlayhead(
+        blurId: String,
+        playheadUs: Long = playerManager.currentPositionUs.value
+    ) {
+        val proj = _project.value ?: return
+        val blur = proj.blurTracks.find { it.id == blurId } ?: return
+        val offsetUs = (playheadUs - blur.timelineStartUs).coerceIn(0L, blur.durationUs)
+        val updated = blur.keyframes.filterNot { kotlin.math.abs(it.timeOffsetUs - offsetUs) < 35_000L }
+        updateBlurTrack(blurId) { it.copy(keyframes = updated) }
+    }
+
+    fun stepPlayheadByFrames(framesDelta: Int, fps: Int = 30) {
+        val frameDurationUs = 1_000_000L / fps
+        val currentUs = playerManager.currentPositionUs.value
+        val totalDur = _project.value?.totalDurationUs ?: 5_000_000L
+        val targetUs = (currentUs + framesDelta * frameDurationUs).coerceIn(0L, totalDur)
+        playerManager.seekToUs(targetUs)
+    }
+
+    fun seekToPrevBlurKeyframe(blurId: String) {
+        val proj = _project.value ?: return
+        val blur = proj.blurTracks.find { it.id == blurId } ?: return
+        val currentOffsetUs = playerManager.currentPositionUs.value - blur.timelineStartUs
+        val prevKf = blur.keyframes.filter { it.timeOffsetUs < currentOffsetUs - 20_000L }.maxByOrNull { it.timeOffsetUs }
+        if (prevKf != null) {
+            playerManager.seekToUs((blur.timelineStartUs + prevKf.timeOffsetUs).coerceAtLeast(0L))
+        }
+    }
+
+    fun seekToNextBlurKeyframe(blurId: String) {
+        val proj = _project.value ?: return
+        val blur = proj.blurTracks.find { it.id == blurId } ?: return
+        val currentOffsetUs = playerManager.currentPositionUs.value - blur.timelineStartUs
+        val nextKf = blur.keyframes.filter { it.timeOffsetUs > currentOffsetUs + 20_000L }.minByOrNull { it.timeOffsetUs }
+        if (nextKf != null) {
+            playerManager.seekToUs((blur.timelineStartUs + nextKf.timeOffsetUs).coerceAtLeast(0L))
+        }
+    }
+
+    fun nudgeBlurPosition(blurId: String, dx: Float, dy: Float) {
+        val proj = _project.value ?: return
+        val blur = proj.blurTracks.find { it.id == blurId } ?: return
+        val playheadUs = playerManager.currentPositionUs.value
+        val cur = blur.getTransformAt(playheadUs)
+        val newX = (cur.normalizedX + dx).coerceIn(0.01f, 0.99f)
+        val newY = (cur.normalizedY + dy).coerceIn(0.01f, 0.99f)
+        commitBlurTransform(blurId, newX, newY, cur.width, cur.height, cur.rotation, autoKeyframeAtPlayhead = true)
+    }
+
+    fun nudgeBlurSize(blurId: String, dw: Float, dh: Float) {
+        val proj = _project.value ?: return
+        val blur = proj.blurTracks.find { it.id == blurId } ?: return
+        val playheadUs = playerManager.currentPositionUs.value
+        val cur = blur.getTransformAt(playheadUs)
+        val newW = (cur.width + dw).coerceIn(0.04f, 1.0f)
+        val newH = (cur.height + dh).coerceIn(0.04f, 1.0f)
+        commitBlurTransform(blurId, cur.normalizedX, cur.normalizedY, newW, newH, cur.rotation, autoKeyframeAtPlayhead = true)
+    }
+
     fun clearBlurTracking(id: String) = updateBlurTrack(id) { it.copy(keyframes = emptyList()) }
 
     fun startMotionTracking(

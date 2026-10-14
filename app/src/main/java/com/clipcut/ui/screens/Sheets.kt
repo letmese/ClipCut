@@ -921,7 +921,8 @@ fun OverlaySheet(
 
 // ── BlurSubTab ────────────────────────────────────────────────────────
 enum class BlurSubTab(val title: String, val icon: String) {
-    TRACKING("Tracking Engines", "🎯"),
+    MANUAL("Manual Tracking", "🎬"),
+    TRACKING("Auto Tracking", "🎯"),
     CENSOR("Censor Style", "🌫️"),
     AUTO("Auto AI (Batch)", "⚡"),
     SHAPE("Shape & Size", "📐"),
@@ -934,6 +935,8 @@ fun BlurSheet(
     blurItem: BlurTrackItem,
     totalDurationUs: Long,
     trackingStatus: String?,
+    currentPlayheadUs: Long = 0L,
+    isPlaying: Boolean = false,
     allBlurItems: List<BlurTrackItem> = emptyList(),
     selectedBlurId: String? = null,
     onSelectBlur: ((String) -> Unit)? = null,
@@ -944,10 +947,19 @@ fun BlurSheet(
     onAutoBlackoutAllPeople: ((BlurType, BlurShape, Float, Float, String?) -> Unit)? = null,
     onPickCustomImage: (() -> Unit)? = null,
     onClearTracking: () -> Unit,
+    onAddKeyframeAtPlayhead: (() -> Unit)? = null,
+    onRemoveKeyframeAtPlayhead: (() -> Unit)? = null,
+    onStepFrames: ((Int) -> Unit)? = null,
+    onSeekToPrevKeyframe: (() -> Unit)? = null,
+    onSeekToNextKeyframe: (() -> Unit)? = null,
+    onSeekToUs: ((Long) -> Unit)? = null,
+    onTogglePlayPause: (() -> Unit)? = null,
+    onNudge: ((dx: Float, dy: Float) -> Unit)? = null,
+    onNudgeSize: ((dw: Float, dh: Float) -> Unit)? = null,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var selectedSubTab by remember { mutableStateOf(BlurSubTab.TRACKING) }
+    var selectedSubTab by remember { mutableStateOf(BlurSubTab.MANUAL) }
     var selectedTrackingMode by remember { mutableStateOf(com.clipcut.core.feature.TrackingMode.INSHOT_SOT) }
 
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
@@ -1010,6 +1022,302 @@ fun BlurSheet(
         Spacer(Modifier.height(14.dp))
 
         when (selectedSubTab) {
+            BlurSubTab.MANUAL -> {
+                // TAB 0: MANUAL FRAME-BY-FRAME TRACKING & KEYFRAMING
+                Text("Frame-by-Frame Manual Tracking", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Step through frames and reposition the blur/blackout box. Keyframes record automatically on movement and smoothly interpolate.",
+                    color = TextTertiary,
+                    fontSize = 11.sp
+                )
+                Spacer(Modifier.height(12.dp))
+
+                val playheadSec = currentPlayheadUs / 1_000_000f
+                val frameIndex = (currentPlayheadUs / 33_333L)
+                val currentOffsetUs = (currentPlayheadUs - blurItem.timelineStartUs).coerceIn(0L, blurItem.durationUs)
+                val hasKeyframeNear = blurItem.keyframes.any { kotlin.math.abs(it.timeOffsetUs - currentOffsetUs) < 35_000L }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Surface2)
+                        .border(1.dp, if (hasKeyframeNear) AccentPrimary else HairlineBorder, RoundedCornerShape(12.dp))
+                        .padding(12.dp)
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    String.format(java.util.Locale.US, "Playhead: %.2fs  (Frame #%d)", playheadSec, frameIndex),
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    if (hasKeyframeNear) "◆ Keyframe Active on this Frame" else "No keyframe at this frame (interpolating)",
+                                    color = if (hasKeyframeNear) AccentPrimary else TextTertiary,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (hasKeyframeNear) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                            Text(
+                                "${blurItem.keyframes.size} Keyframes",
+                                color = if (blurItem.keyframes.isNotEmpty()) AccentPrimary else TextSecondary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // Stepper Bar: -5f, -1f, Play/Pause, +1f, +5f
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { onStepFrames?.invoke(-5) },
+                                modifier = Modifier.weight(1f).height(38.dp),
+                                contentPadding = PaddingValues(0.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                            ) {
+                                Text("-5f", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            OutlinedButton(
+                                onClick = { onStepFrames?.invoke(-1) },
+                                modifier = Modifier.weight(1f).height(38.dp),
+                                contentPadding = PaddingValues(0.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                            ) {
+                                Text("◀ -1f", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                onClick = { onTogglePlayPause?.invoke() },
+                                modifier = Modifier.weight(1.2f).height(38.dp),
+                                contentPadding = PaddingValues(0.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary, contentColor = Color.Black)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.width(2.dp))
+                                Text(if (isPlaying) "Pause" else "Play", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            OutlinedButton(
+                                onClick = { onStepFrames?.invoke(1) },
+                                modifier = Modifier.weight(1f).height(38.dp),
+                                contentPadding = PaddingValues(0.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                            ) {
+                                Text("+1f ▶", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            OutlinedButton(
+                                onClick = { onStepFrames?.invoke(5) },
+                                modifier = Modifier.weight(1f).height(38.dp),
+                                contentPadding = PaddingValues(0.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                            ) {
+                                Text("+5f", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // Keyframe Actions: Add KF, Delete KF, Prev KF, Next KF
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    if (hasKeyframeNear) onRemoveKeyframeAtPlayhead?.invoke()
+                                    else onAddKeyframeAtPlayhead?.invoke()
+                                },
+                                modifier = Modifier.weight(1.3f).height(36.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (hasKeyframeNear) Color(0xFFE53935) else AccentPrimary,
+                                    contentColor = if (hasKeyframeNear) Color.White else Color.Black
+                                )
+                            ) {
+                                Text(
+                                    if (hasKeyframeNear) "◆ Delete Keyframe" else "◆+ Add Keyframe",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = { onSeekToPrevKeyframe?.invoke() },
+                                modifier = Modifier.weight(1f).height(36.dp),
+                                contentPadding = PaddingValues(0.dp),
+                                enabled = blurItem.keyframes.isNotEmpty(),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                            ) {
+                                Text("⏮ Prev", fontSize = 11.sp)
+                            }
+
+                            OutlinedButton(
+                                onClick = { onSeekToNextKeyframe?.invoke() },
+                                modifier = Modifier.weight(1f).height(36.dp),
+                                contentPadding = PaddingValues(0.dp),
+                                enabled = blurItem.keyframes.isNotEmpty(),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                            ) {
+                                Text("Next ⏭", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+
+                // Precision Nudge Controls (D-Pad + Size)
+                Text("Precision Nudge Controls", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                Text("Tap arrows to fine-tune blur box placement by 1.5% without blocking your view with your fingers.", color = TextTertiary, fontSize = 11.sp)
+                Spacer(Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // D-Pad for position nudging
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(start = 12.dp)
+                    ) {
+                        IconButton(
+                            onClick = { onNudge?.invoke(0f, -0.015f) },
+                            modifier = Modifier.size(36.dp).background(Surface3, RoundedCornerShape(8.dp))
+                        ) {
+                            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Nudge Up", tint = Color.White)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            IconButton(
+                                onClick = { onNudge?.invoke(-0.015f, 0f) },
+                                modifier = Modifier.size(36.dp).background(Surface3, RoundedCornerShape(8.dp))
+                            ) {
+                                Icon(Icons.Filled.KeyboardArrowLeft, contentDescription = "Nudge Left", tint = Color.White)
+                            }
+                            IconButton(
+                                onClick = { onNudge?.invoke(0f, 0.015f) },
+                                modifier = Modifier.size(36.dp).background(Surface3, RoundedCornerShape(8.dp))
+                            ) {
+                                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Nudge Down", tint = Color.White)
+                            }
+                            IconButton(
+                                onClick = { onNudge?.invoke(0.015f, 0f) },
+                                modifier = Modifier.size(36.dp).background(Surface3, RoundedCornerShape(8.dp))
+                            ) {
+                                Icon(Icons.Filled.KeyboardArrowRight, contentDescription = "Nudge Right", tint = Color.White)
+                            }
+                        }
+                    }
+
+                    // Size nudging
+                    Column(
+                        modifier = Modifier.padding(end = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { onNudgeSize?.invoke(0.03f, 0.03f) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Surface3, contentColor = Color.White),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Text("➕ Grow Box", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Button(
+                            onClick = { onNudgeSize?.invoke(-0.03f, -0.03f) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Surface3, contentColor = Color.White),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Text("➖ Shrink Box", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+
+                // Keyframe List Strip (if keyframes exist)
+                if (blurItem.keyframes.isNotEmpty()) {
+                    Text("Recorded Keyframe Strip (Tap to Jump)", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        blurItem.keyframes.forEachIndexed { idx, kf ->
+                            val kfSec = (blurItem.timelineStartUs + kf.timeOffsetUs) / 1_000_000f
+                            val isAtKf = kotlin.math.abs(currentOffsetUs - kf.timeOffsetUs) < 35_000L
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isAtKf) AccentPrimary else Surface3)
+                                    .border(1.dp, if (isAtKf) AccentPrimary else HairlineBorder, RoundedCornerShape(8.dp))
+                                    .clickable { onSeekToUs?.invoke(blurItem.timelineStartUs + kf.timeOffsetUs) }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    String.format(java.util.Locale.US, "#%d: %.2fs", idx + 1, kfSec),
+                                    color = if (isAtKf) Color.Black else Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isAtKf) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = onClearTracking,
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(1.dp, Color(0xFFE53935).copy(alpha = 0.6f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935))
+                    ) {
+                        Text("Clear All Keyframes (${blurItem.keyframes.size})", fontSize = 12.sp)
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+
+                // Step-by-step instructions card
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Surface3.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                        .padding(10.dp)
+                ) {
+                    Column {
+                        Text("💡 Frame-by-Frame Pro Workflow:", color = AccentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "1. Position the box on the target at the start.\n" +
+                            "2. Tap '+1f' or '+5f' to advance the video.\n" +
+                            "3. Drag the box or tap the D-pad arrows to follow target.\n" +
+                            "4. ClipCut automatically creates keyframes and smoothly interpolates frames between them!",
+                            color = TextSecondary,
+                            fontSize = 10.sp,
+                            lineHeight = 15.sp
+                        )
+                    }
+                }
+            }
+
             BlurSubTab.TRACKING -> {
                 // TAB 1: SMART MOTION TRACKING ENGINES
                 Text("Select On-Device Tracking Engine", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)

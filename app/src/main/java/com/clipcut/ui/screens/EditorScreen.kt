@@ -919,11 +919,11 @@ fun EditorScreen(
                                                         viewModel.previewRenderer.setEditingBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
                                                     },
                                                     onDragEnd = {
-                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation, autoKeyframeAtPlayhead = (blur.keyframes.isNotEmpty() || selectedTool == EditorTool.BLUR))
                                                         viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                     },
                                                     onDragCancel = {
-                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation, autoKeyframeAtPlayhead = (blur.keyframes.isNotEmpty() || selectedTool == EditorTool.BLUR))
                                                         viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                     }
                                                 )
@@ -993,11 +993,11 @@ fun EditorScreen(
                                                         viewModel.previewRenderer.setEditingBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
                                                     },
                                                     onDragEnd = {
-                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation, autoKeyframeAtPlayhead = (blur.keyframes.isNotEmpty() || selectedTool == EditorTool.BLUR))
                                                         viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                     },
                                                     onDragCancel = {
-                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                        viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation, autoKeyframeAtPlayhead = (blur.keyframes.isNotEmpty() || selectedTool == EditorTool.BLUR))
                                                         viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                     }
                                                 )
@@ -1061,11 +1061,11 @@ fun EditorScreen(
                                                             viewModel.previewRenderer.setEditingBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
                                                         },
                                                         onDragEnd = {
-                                                            viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                            viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation, autoKeyframeAtPlayhead = (blur.keyframes.isNotEmpty() || selectedTool == EditorTool.BLUR))
                                                             viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                         },
                                                         onDragCancel = {
-                                                            viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation)
+                                                            viewModel.commitBlurTransform(blur.id, localNormX, localNormY, localWidth, localHeight, localRotation, autoKeyframeAtPlayhead = (blur.keyframes.isNotEmpty() || selectedTool == EditorTool.BLUR))
                                                             viewModel.previewRenderer.setEditingBlurTransform(null, null, null, null, null, null)
                                                         }
                                                     )
@@ -1353,6 +1353,41 @@ fun EditorScreen(
                                     modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(Icons.Filled.Edit, "Edit Blur", tint = AccentPrimary, modifier = Modifier.size(18.dp))
+                                }
+
+                                val blurOffsetUs = (positionUs - activeBlur.timelineStartUs).coerceIn(0L, activeBlur.durationUs)
+                                val hasKfHere = activeBlur.keyframes.any { kotlin.math.abs(it.timeOffsetUs - blurOffsetUs) < 35_000L }
+
+                                IconButton(
+                                    onClick = { viewModel.stepPlayheadByFrames(-1) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Text("◀", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        if (hasKfHere) {
+                                            viewModel.removeBlurKeyframeAtPlayhead(activeBlur.id, positionUs)
+                                        } else {
+                                            viewModel.setBlurKeyframeAtPlayhead(activeBlur.id, positionUs)
+                                        }
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Text(
+                                        "◆",
+                                        color = if (hasKfHere) AccentPrimary else Color.White.copy(alpha = 0.5f),
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = { viewModel.stepPlayheadByFrames(1) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Text("▶", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 IconButton(
@@ -1881,6 +1916,8 @@ fun EditorScreen(
                     selectedBlurId = itemToEdit.id,
                     totalDurationUs = totalDur,
                     trackingStatus = trackingStatus,
+                    currentPlayheadUs = positionUs,
+                    isPlaying = isPlaying,
                     onSelectBlur = { newId ->
                         selectedBlurId = newId
                     },
@@ -1935,6 +1972,33 @@ fun EditorScreen(
                     },
                     onClearTracking = {
                         viewModel.clearBlurTracking(itemToEdit.id)
+                    },
+                    onAddKeyframeAtPlayhead = {
+                        viewModel.setBlurKeyframeAtPlayhead(itemToEdit.id, positionUs)
+                    },
+                    onRemoveKeyframeAtPlayhead = {
+                        viewModel.removeBlurKeyframeAtPlayhead(itemToEdit.id, positionUs)
+                    },
+                    onStepFrames = { delta ->
+                        viewModel.stepPlayheadByFrames(delta)
+                    },
+                    onSeekToPrevKeyframe = {
+                        viewModel.seekToPrevBlurKeyframe(itemToEdit.id)
+                    },
+                    onSeekToNextKeyframe = {
+                        viewModel.seekToNextBlurKeyframe(itemToEdit.id)
+                    },
+                    onSeekToUs = { targetUs ->
+                        viewModel.playerManager.seekToUs(targetUs)
+                    },
+                    onTogglePlayPause = {
+                        viewModel.playerManager.togglePlayPause()
+                    },
+                    onNudge = { dx, dy ->
+                        viewModel.nudgeBlurPosition(itemToEdit.id, dx, dy)
+                    },
+                    onNudgeSize = { dw, dh ->
+                        viewModel.nudgeBlurSize(itemToEdit.id, dw, dh)
                     },
                     onDelete = {
                         viewModel.removeBlurTrack(itemToEdit.id)
