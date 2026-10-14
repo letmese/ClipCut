@@ -99,7 +99,7 @@ fun ProjectListScreen(
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                "v1.2.54",
+                                "v${com.clipcut.BuildConfig.VERSION_NAME}",
                                 color = TextSecondary,
                                 fontWeight = FontWeight.Medium,
                                 fontSize = 10.sp
@@ -594,8 +594,8 @@ private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(68.dp)
                 .navigationBarsPadding()
+                .height(64.dp)
                 .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly

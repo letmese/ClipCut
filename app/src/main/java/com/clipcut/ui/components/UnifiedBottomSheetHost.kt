@@ -82,7 +82,13 @@ fun UnifiedBottomSheetHost(
                 }
             }
             Spacer(Modifier.height(12.dp))
-            content()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.75f)
+            ) {
+                content()
+            }
         }
     }
 }

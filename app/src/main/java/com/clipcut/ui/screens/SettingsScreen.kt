@@ -76,7 +76,13 @@ fun SettingsScreen(
             }
         }
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+        ) {
             SettingsSection("Appearance") {
                 SegmentedRow(listOf("Dark", "Light", "System"), theme) { vm.setTheme(it.lowercase()) }
                 Spacer(Modifier.height(12.dp))

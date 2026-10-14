@@ -49,10 +49,16 @@ fun OnboardingScreen(onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     Box(modifier = Modifier.fillMaxSize().background(DarkBackground)) {
-        Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-            Spacer(Modifier.height(40.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+        ) {
+            Spacer(Modifier.height(16.dp))
             Text("ClipCut", color = AccentPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(40.dp))
+            Spacer(Modifier.height(16.dp))
 
             HorizontalPager(state = pager, modifier = Modifier.weight(1f)) { page ->
                 OnboardingSlide(page)
