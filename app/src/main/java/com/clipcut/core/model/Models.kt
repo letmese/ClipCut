@@ -70,9 +70,18 @@ enum class AspectRatio(val label: String, val wRatio: Float, val hRatio: Float, 
     }
 }
 
-enum class FontFamilyOption(val label: String) {
-    DEFAULT("Default"), SERIF("Serif"), MONOSPACE("Mono"),
-    SANS_SERIF_CONDENSED("Condensed")
+enum class FontFamilyOption(val label: String, val assetPath: String? = null) {
+    DEFAULT("Default", null),
+    SERIF("Serif", null),
+    MONOSPACE("Mono", null),
+    SANS_SERIF_CONDENSED("Condensed", null),
+    BEBAS("Bebas Pro", "fonts/BEBAS.ttf"),
+    LOBSTER("Lobster", "fonts/Lobster_1.3.otf"),
+    LUCKIEST_GUY("Luckiest Guy", "fonts/LuckiestGuy-Regular.ttf"),
+    PERMANENT_MARKER("Marker", "fonts/PermanentMarker.ttf"),
+    BLACKOUT("Blackout", "fonts/Blackout-2am.ttf"),
+    AMATIC("Amatic SC", "fonts/AmaticSC-Regular.ttf"),
+    CAVIAR_DREAMS("Caviar Dreams", "fonts/CaviarDreams.ttf")
 }
 
 data class CropRect(

@@ -29,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -570,47 +571,58 @@ fun LutPickerDialog(
         Text("Apply Hollywood cinematic color grading lookup tables", color = TextSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(12.dp))
 
-        val luts = listOf(
-            Triple("Neutral", Color(0xFF90A4AE), Color(0xFF546E7A)),
-            Triple("TealOrange", Color(0xFF00B4D8), Color(0xFFF77F00)),
-            Triple("Vintage", Color(0xFFD4A373), Color(0xFFCCD5AE)),
-            Triple("Noir", Color(0xFFECEFF1), Color(0xFF263238)),
-            Triple("Bloom", Color(0xFFFFB703), Color(0xFFFB8500))
+        val realLuts = listOf(
+            Triple("Cinema 01", "table_CINEMA01.png", Pair(Color(0xFF0077B6), Color(0xFFF77F00))),
+            Triple("Cinema 02", "table_CINEMA02.png", Pair(Color(0xFF03045E), Color(0xFF00B4D8))),
+            Triple("Cinema 03", "table_CINEMA03.png", Pair(Color(0xFF1F2421), Color(0xFF99D98C))),
+            Triple("Kodak Film", "FILTER_FILM_01.png", Pair(Color(0xFFE76F51), Color(0xFFF4A261))),
+            Triple("Fuji Film", "FILTER_FILM_02.png", Pair(Color(0xFF2A9D8F), Color(0xFFE9C46A))),
+            Triple("Retro Film", "FILTER_FILM_03.png", Pair(Color(0xFF6B705C), Color(0xFFDDB892))),
+            Triple("Golden Hour", "FILTER_GOLD.png", Pair(Color(0xFFFFB703), Color(0xFFFB8500))),
+            Triple("Vintage 90s", "FILTER_VINTAGE.png", Pair(Color(0xFFCB997E), Color(0xFFEDDCD2))),
+            Triple("Lomo Pop", "FILTER_LOMO.png", Pair(Color(0xFFD62828), Color(0xFF003049))),
+            Triple("Pastel Glow", "FILTER_PINK.png", Pair(Color(0xFFFFB4A2), Color(0xFFE5989B))),
+            Triple("Warm Sunset", "FILTER_WARM.png", Pair(Color(0xFFF77F00), Color(0xFFFCBF49))),
+            Triple("Antique", "FILTER_ANTIQUE.png", Pair(Color(0xFF8D6E63), Color(0xFFD7CCC8))),
+            Triple("Food Fresh", "FD1.png", Pair(Color(0xFFE63946), Color(0xFFA8DADC))),
+            Triple("Food Crispy", "FD2.png", Pair(Color(0xFFFFB703), Color(0xFF2A9D8F)))
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            luts.forEach { (name, c1, c2) ->
-                val isSelected = currentLut?.name == name
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            items(realLuts.size) { idx ->
+                val (title, fileName, colors) = realLuts[idx]
+                val lutAssetPath = "asset://luts/$fileName"
+                val isSelected = currentLut?.uri == lutAssetPath || currentLut?.name == title
                 Column(
                     modifier = Modifier
-                        .weight(1f)
+                        .width(88.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (isSelected) AccentPrimary.copy(alpha = 0.15f) else Surface3)
+                        .background(if (isSelected) AccentPrimary.copy(alpha = 0.18f) else Surface3)
                         .border(1.5.dp, if (isSelected) AccentPrimary else HairlineBorder, RoundedCornerShape(10.dp))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
-                        ) { onApply(LutConfig(name = name, uri = "asset://luts/${name.lowercase()}.png")) }
+                        ) { onApply(LutConfig(name = title, uri = lutAssetPath, intensity = 0.85f)) }
                         .padding(8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(44.dp)
+                            .height(52.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(
                                 androidx.compose.ui.graphics.Brush.linearGradient(
-                                    colors = listOf(c1, c2)
+                                    colors = listOf(colors.first, colors.second)
                                 )
                             )
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        name,
+                        title,
                         color = if (isSelected) AccentPrimary else Color.White,
                         fontSize = 11.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1
                     )
                 }
@@ -2516,7 +2528,7 @@ fun StickerSheet(onPick: (String) -> Unit, onDismiss: () -> Unit) {
     Column {
         SheetHeader("Stickers & Overlays", onDismiss)
         Spacer(Modifier.height(10.dp))
-        val categories = listOf("Trending", "Censor Stamps", "Reels & Social", "Arrows & Pointers", "Vlog & Life", "Retro Y2K", "Aesthetic", "Emoji", "Badges")
+        val categories = listOf("Trending", "InShot Emojis", "Censor Stamps", "Reels & Social", "Arrows & Pointers", "Vlog & Life", "Retro Y2K", "Aesthetic", "Emoji", "Badges")
         var category by remember { mutableStateOf("Trending") }
 
         ScrollableTabRow(
@@ -2540,6 +2552,20 @@ fun StickerSheet(onPick: (String) -> Unit, onDismiss: () -> Unit) {
             "Trending" -> listOf(
                 "🔥", "✨", "⚡", "💥", "🎬", "🍿", "💯", "🚀", "👑", "🚨", "💎", "🎯",
                 "🎉", "🥂", "🏆", "🌟", "💫", "🦄", "💖", "🌸", "⭐", "🌈", "🦋", "🍄"
+            )
+            "InShot Emojis" -> listOf(
+                "asset://stickers/aniemoji/aniemoji01_01_cover.png",
+                "asset://stickers/aniemoji/aniemoji01_02_cover.png",
+                "asset://stickers/aniemoji/aniemoji01_03_cover.png",
+                "asset://stickers/aniemoji/aniemoji01_04_cover.png",
+                "asset://stickers/aniemoji/aniemoji01_05_cover.png",
+                "asset://stickers/aniemoji/aniemoji01_06_cover.png",
+                "asset://stickers/aniemoji/aniemoji01_07_cover.png",
+                "asset://stickers/aniemoji/aniemoji01_08_cover.png",
+                "asset://stickers/aniemoji/aniemoji01_09_cover.png",
+                "asset://stickers/aniemoji/aniemoji01_10_cover.png",
+                "asset://stickers/aniemoji/aniemoji01_11_cover.png",
+                "asset://stickers/aniemoji/aniemoji01_12_cover.png"
             )
             "Censor Stamps" -> listOf(
                 "⛔ CENSORED", "🔒 TOP SECRET", "⚠️ WARNING", "🔞 18+ ONLY",
@@ -2597,7 +2623,26 @@ fun StickerSheet(onPick: (String) -> Unit, onDismiss: () -> Unit) {
                         ) { onPick(g) },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (g.length > 3) {
+                    if (g.startsWith("asset://")) {
+                        val clean = g.removePrefix("asset://")
+                        val ctx = androidx.compose.ui.platform.LocalContext.current
+                        val bmp = remember(g) {
+                            try {
+                                ctx.assets.open(clean).use { stream ->
+                                    android.graphics.BitmapFactory.decodeStream(stream)
+                                }?.asImageBitmap()
+                            } catch (_: Throwable) { null }
+                        }
+                        if (bmp != null) {
+                            androidx.compose.foundation.Image(
+                                bitmap = bmp,
+                                contentDescription = "Sticker",
+                                modifier = Modifier.size(40.dp)
+                            )
+                        } else {
+                            Text("🎭", fontSize = 24.sp)
+                        }
+                    } else if (g.length > 3) {
                         Text(
                             text = g,
                             color = AccentPrimary,

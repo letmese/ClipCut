@@ -44,6 +44,24 @@ class OverlayRenderer(private val context: Context) {
     }
 
     private val imageCache = mutableMapOf<String, Bitmap>()
+    private val typefaceCache = mutableMapOf<String, Typeface>()
+
+    private fun getTypefaceFor(option: FontFamilyOption): Typeface {
+        val asset = option.assetPath ?: return when (option) {
+            FontFamilyOption.SERIF -> Typeface.SERIF
+            FontFamilyOption.MONOSPACE -> Typeface.MONOSPACE
+            FontFamilyOption.SANS_SERIF_CONDENSED -> Typeface.create("sans-serif-condensed", Typeface.NORMAL)
+            else -> Typeface.DEFAULT
+        }
+        return typefaceCache.getOrPut(asset) {
+            try {
+                Typeface.createFromAsset(context.assets, asset)
+            } catch (_: Throwable) {
+                Typeface.DEFAULT
+            }
+        }
+    }
+
     private val stickerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
     }
@@ -53,7 +71,12 @@ class OverlayRenderer(private val context: Context) {
         if (cached != null && !cached.isRecycled) return cached
 
         return try {
-            val bmp = if (uriStr.startsWith("content://")) {
+            val bmp = if (uriStr.startsWith("asset://") || (!uriStr.contains("://") && (uriStr.endsWith(".png") || uriStr.endsWith(".webp")))) {
+                val clean = uriStr.removePrefix("asset://").removePrefix("/")
+                context.assets.open(clean).use {
+                    android.graphics.BitmapFactory.decodeStream(it)
+                }
+            } else if (uriStr.startsWith("content://")) {
                 context.contentResolver.openInputStream(android.net.Uri.parse(uriStr))?.use {
                     android.graphics.BitmapFactory.decodeStream(it)
                 }
@@ -162,18 +185,26 @@ class OverlayRenderer(private val context: Context) {
             textPaint.textSize = o.textSizeSp * scale * animScaleMul * (width / 1080f)
             textPaint.isFakeBoldText = o.textBold
             textPaint.textSkewX = if (o.textItalic) -0.25f else 0f
-            textPaint.typeface = when (o.fontFamily) {
-                FontFamilyOption.SERIF -> Typeface.SERIF
-                FontFamilyOption.MONOSPACE -> Typeface.MONOSPACE
-                FontFamilyOption.SANS_SERIF_CONDENSED -> Typeface.create("sans-serif-condensed", Typeface.NORMAL)
-                else -> Typeface.DEFAULT
-            }
+            textPaint.typeface = getTypefaceFor(o.fontFamily)
             if (o.dropShadow) {
                 textPaint.setShadowLayer(8f * (width / 1080f), 3f * (width / 1080f), 3f * (width / 1080f), 0xCC000000.toInt())
             }
 
             val text = applyAnimation(o, currentPtsUs)
-            if (text.isNotEmpty()) {
+            if (text.startsWith("asset://") || (!text.contains(" ") && (text.endsWith(".png") || text.endsWith(".webp")))) {
+                val bmp = getOrLoadBitmap(text)
+                if (bmp != null) {
+                    canvas.save()
+                    canvas.translate(cx.toFloat() + animOffsetX, cy.toFloat() + animOffsetY)
+                    canvas.rotate(rot)
+                    val iconW = 140f * scale * animScaleMul * (width / 1080f)
+                    val iconH = 140f * scale * animScaleMul * (height / 1920f)
+                    val rect = android.graphics.RectF(-iconW / 2f, -iconH / 2f, iconW / 2f, iconH / 2f)
+                    stickerPaint.alpha = (255 * animAlpha.coerceIn(0f, 1f)).toInt()
+                    canvas.drawBitmap(bmp, null, rect, stickerPaint)
+                    canvas.restore()
+                }
+            } else if (text.isNotEmpty()) {
                 val fm = textPaint.fontMetrics
                 val textWidth = textPaint.measureText(text)
                 val textHeight = fm.descent - fm.ascent
@@ -271,17 +302,17 @@ class OverlayRenderer(private val context: Context) {
         }
         for (blurItem in activePaintBlurs) {
             for (stroke in blurItem.paintStrokes) {
-                if (stroke.points.size < 2) continue
-                strokePaint.strokeWidth = (stroke.strokeWidthNorm * width).coerceAtLeast(4f)
+                if (stroke.points.isEmpty()) continue
+                strokePaint.strokeWidth = (stroke.strokeWidthNorm * width).coerceAtLeast(6f)
                 if (stroke.isBlackout) {
-                    strokePaint.color = stroke.color.toInt()
+                    strokePaint.color = 0xFF000000.toInt()
                     strokePaint.alpha = 255
                     strokePaint.maskFilter = null
                 } else {
-                    strokePaint.color = 0xDDCCCCCC.toInt()
+                    strokePaint.color = 0xEE1E1E1E.toInt()
                     try {
                         strokePaint.maskFilter = android.graphics.BlurMaskFilter(
-                            (strokePaint.strokeWidth / 2f).coerceAtLeast(1f),
+                            (strokePaint.strokeWidth / 2f).coerceAtLeast(2f),
                             android.graphics.BlurMaskFilter.Blur.NORMAL
                         )
                     } catch (_: Throwable) {
@@ -291,9 +322,13 @@ class OverlayRenderer(private val context: Context) {
                 val path = android.graphics.Path()
                 val first = stroke.points.first()
                 path.moveTo(first.x * width, first.y * height)
-                for (i in 1 until stroke.points.size) {
-                    val pt = stroke.points[i]
-                    path.lineTo(pt.x * width, pt.y * height)
+                if (stroke.points.size == 1) {
+                    path.lineTo(first.x * width + 0.1f, first.y * height + 0.1f)
+                } else {
+                    for (i in 1 until stroke.points.size) {
+                        val pt = stroke.points[i]
+                        path.lineTo(pt.x * width, pt.y * height)
+                    }
                 }
                 canvas.drawPath(path, strokePaint)
             }

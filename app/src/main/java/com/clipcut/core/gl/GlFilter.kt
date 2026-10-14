@@ -606,7 +606,12 @@ class LutFilter(
         // Load LUT bitmap asynchronously — guard with try/catch since missing
         // LUT must not crash the whole pipeline.
         try {
-            val input = context.contentResolver.openInputStream(android.net.Uri.parse(lutUri))
+            val input = if (lutUri.startsWith("asset://") || (!lutUri.contains("://") && (lutUri.endsWith(".png") || lutUri.endsWith(".webp")))) {
+                val clean = lutUri.removePrefix("asset://").removePrefix("/")
+                context.assets.open(clean)
+            } else {
+                context.contentResolver.openInputStream(android.net.Uri.parse(lutUri))
+            }
             if (input != null) {
                 val bmp = BitmapFactory.decodeStream(input)
                 input.close()
