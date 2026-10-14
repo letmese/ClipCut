@@ -1154,7 +1154,7 @@ fun EditorScreen(
                         }
 
                         // ── Top-Layer Interactive Finger-Painting Censor & Blackout Canvas ──
-                        if (isFingerPaintActive && selectedTool == EditorTool.BLUR) {
+                        if (isFingerPaintActive) {
                             androidx.compose.foundation.Canvas(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -1407,7 +1407,10 @@ fun EditorScreen(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(8.dp))
                                                 .background(AccentPrimary)
-                                                .clickable { isFingerPaintActive = false }
+                                                .clickable {
+                                                    isFingerPaintActive = false
+                                                    selectedTool = EditorTool.BLUR
+                                                }
                                                 .padding(horizontal = 10.dp, vertical = 6.dp)
                                         ) {
                                             Text("✓ Done", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -1889,7 +1892,7 @@ fun EditorScreen(
         },
         onDone = { selectedTool = null; activeSpecialSheet = null },
         onDismiss = { selectedTool = null; activeSpecialSheet = null },
-        visible = tool != null || activeSpecialSheet != null
+        visible = (tool != null || activeSpecialSheet != null) && !isFingerPaintActive
     ) {
         if (activeSpecialSheet != null) {
             when (activeSpecialSheet) {
@@ -2272,7 +2275,6 @@ fun EditorScreen(
                         selectedTool = null
                     },
                     onDismiss = {
-                        isFingerPaintActive = false
                         selectedTool = null
                     }
                 )

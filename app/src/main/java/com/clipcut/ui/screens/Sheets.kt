@@ -1301,10 +1301,6 @@ fun BlurSheet(
     var selectedSubTab by remember { mutableStateOf(BlurSubTab.PAINT) }
     var selectedTrackingMode by remember { mutableStateOf(com.clipcut.core.feature.TrackingMode.INSHOT_SOT) }
 
-    LaunchedEffect(selectedSubTab) {
-        onTogglePainting?.invoke(selectedSubTab == BlurSubTab.PAINT)
-    }
-
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         SheetHeader("Censor, Blur & Tracking Studio", onDismiss)
         Spacer(Modifier.height(8.dp))
@@ -1367,10 +1363,18 @@ fun BlurSheet(
         when (selectedSubTab) {
             BlurSubTab.PAINT -> {
                 // TAB: FINGER-PAINT CENSOR & BLACKOUT
-                Text("Finger-Paint Censor & Blackout", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                PrimaryButton(
+                    text = "🖌️ Start Painting on Video",
+                    onClick = { onTogglePainting?.invoke(true) },
+                    icon = Icons.Filled.Edit,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
+
+                Text("Finger-Paint Settings", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Touch and drag directly over the video player above to paint censor strokes with your finger.",
+                    "Select mode and brush size below, then tap 'Start Painting' to draw directly on the video player with zero obstruction.",
                     color = TextTertiary,
                     fontSize = 11.sp
                 )
