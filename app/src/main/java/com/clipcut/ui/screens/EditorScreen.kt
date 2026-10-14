@@ -1821,76 +1821,10 @@ fun EditorScreen(
                 onRemoveKeyframe = { ovId, kfId -> viewModel.removeKeyframe(ovId, kfId) },
                 onDismiss = { selectedTool = null }
             )
-            EditorTool.MORE -> MoreToolsSheet(
-                clipLabel = selectedClipId?.let { "Clip ${it.take(8)}" },
-                playheadText = String.format(java.util.Locale.US, "%.1fs", positionUs / 1_000_000f),
-                onAction = { action ->
-                    val sid = selectedClipId
-                    when (action) {
-                        MoreAction.REVERSE -> if (sid != null) {
-                            viewModel.setClipReversed(sid, !(clip?.isReversed ?: false))
-                            android.widget.Toast.makeText(ctx, "Clip reversed", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                        MoreAction.FREEZE -> if (sid != null) {
-                            viewModel.setClipFreeze(sid, positionUs)
-                            android.widget.Toast.makeText(ctx, "Frozen at playhead", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                        MoreAction.FADE -> if (sid != null) {
-                            viewModel.setClipFade(sid, 300, 300)
-                            android.widget.Toast.makeText(ctx, "Fade 300ms in/out", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                        MoreAction.BEAT_MARK -> {
-                            viewModel.addBeatMarker(positionUs)
-                            android.widget.Toast.makeText(ctx, "Beat added at playhead", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                        MoreAction.CLEAR_BEATS -> {
-                            viewModel.clearBeatMarkers()
-                            android.widget.Toast.makeText(ctx, "Beat markers cleared", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                        MoreAction.AUDIO_DUCK -> {
-                            viewModel.setAudioDucking(!(project?.audioDuckingEnabled ?: false), 0.3f)
-                            android.widget.Toast.makeText(ctx, "Audio ducking toggled", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                        MoreAction.TRANSITIONS_ALL -> {
-                            selectedTool = EditorTool.TRANSITIONS
-                        }
-                        MoreAction.DELETE_CLIP -> if (sid != null) {
-                            viewModel.deleteClip(sid)
-                            android.widget.Toast.makeText(ctx, "Clip deleted", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                        MoreAction.UNDO -> {
-                            viewModel.undo()
-                            android.widget.Toast.makeText(ctx, "Undo", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                        MoreAction.REDO -> {
-                            viewModel.redo()
-                            android.widget.Toast.makeText(ctx, "Redo", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                        MoreAction.CAPTION, MoreAction.STICKER -> Unit
-                    }
-                },
-                onAddCaption = { text ->
-                    if (text.isNotBlank()) {
-                        viewModel.addOverlay(
-                            com.clipcut.core.model.OverlayItem(
-                                text = text, textBold = true,
-                                timelineStartUs = positionUs, timelineEndUs = positionUs + 3_000_000L
-                            )
-                        )
-                        android.widget.Toast.makeText(ctx, "Caption added", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                },
-                onAddSticker = { text ->
-                    if (text.isNotBlank()) {
-                        viewModel.addOverlay(
-                            com.clipcut.core.model.OverlayItem(
-                                text = text, textSizeSp = 56f,
-                                timelineStartUs = positionUs, timelineEndUs = positionUs + 3_000_000L
-                            )
-                        )
-                        android.widget.Toast.makeText(ctx, "Sticker added", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                },
+            EditorTool.MORE -> AudioDuckingSheet(
+                enabled = project?.audioDuckingEnabled ?: false,
+                level = project?.audioDuckLevel ?: 0.3f,
+                onApply = { e, l -> viewModel.setAudioDucking(e, l) },
                 onDismiss = { selectedTool = null }
             )
             EditorTool.BLUR -> {
