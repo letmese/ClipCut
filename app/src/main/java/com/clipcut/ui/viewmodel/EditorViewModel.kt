@@ -85,6 +85,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     var voicePreset by mutableStateOf(com.clipcut.core.audio.AudioDsp.VoicePreset.NATURAL)
     var brandKitConfig by mutableStateOf<com.clipcut.core.model.BrandKitConfig?>(null)
 
+    fun updateEqualizerGains(gains: List<Float>) {
+        equalizerGains = gains
+        playerManager.setEqualizerGains(gains)
+    }
+
+    fun updateVoicePreset(preset: com.clipcut.core.audio.AudioDsp.VoicePreset) {
+        voicePreset = preset
+        playerManager.setVoicePreset(preset)
+    }
+
     fun applyBrandKit(config: com.clipcut.core.model.BrandKitConfig?) {
         brandKitConfig = config
         if (config != null && config.watermarkText.isNotBlank()) {
@@ -231,7 +241,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun setClipFlipV(clipId: String, flip: Boolean) = mutateClip(clipId) { it.copy(flipVertical = flip) }
     fun setClipCrop(clipId: String, crop: CropRect) = mutateClip(clipId) { it.copy(cropRect = crop) }
     fun setClipFade(clipId: String, fadeInMs: Int, fadeOutMs: Int) = mutateClip(clipId) { it.copy(fadeInMs = fadeInMs, fadeOutMs = fadeOutMs) }
-    fun setClipSpeedRamp(clipId: String, ramp: SpeedRamp) = mutateClip(clipId) { it.copy(speedRamp = ramp) }
+    fun setClipSpeedRamp(clipId: String, ramp: SpeedRamp) {
+        val avgSpeed = if (ramp.isActive) ramp.keyframes.map { it.speed }.average().toFloat().coerceIn(0.1f, 10f) else 1.0f
+        mutateClip(clipId) { it.copy(speedRamp = ramp, speed = avgSpeed) }
+    }
     fun setClipLut(clipId: String, lut: LutConfig?) = mutateClip(clipId) { it.copy(lutConfig = lut) }
     fun setClipChromaKey(clipId: String, color: FloatArray?, threshold: Float, smoothness: Float) = mutateClip(clipId) {
         it.copy(chromaKeyColor = color, chromaKeyThreshold = threshold, chromaKeySmoothness = smoothness)
@@ -580,6 +593,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             com.clipcut.core.model.BlurType.STACK_BLUR -> "InShot StackBlur"
             com.clipcut.core.model.BlurType.MOTION_TRAIL -> "PowerDirector Trail"
             com.clipcut.core.model.BlurType.IMAGE -> "Stickers"
+            com.clipcut.core.model.BlurType.PAINT -> "Finger Paint"
         }
 
         _trackingState.value = "Scanning frame for all faces ($styleDesc)..."
@@ -664,6 +678,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             com.clipcut.core.model.BlurType.STACK_BLUR -> "InShot StackBlur"
             com.clipcut.core.model.BlurType.MOTION_TRAIL -> "PowerDirector Trail"
             com.clipcut.core.model.BlurType.IMAGE -> "Stickers"
+            com.clipcut.core.model.BlurType.PAINT -> "Finger Paint"
         }
 
         _trackingState.value = "Scanning frame for all people ($styleDesc)..."

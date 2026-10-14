@@ -126,6 +126,10 @@ fun EditorScreen(
     var selectedPipId by remember { mutableStateOf<String?>(null) }
     var selectedBlurId by remember { mutableStateOf<String?>(null) }
     val trackingStatus by viewModel.trackingState.collectAsState()
+    var isFingerPaintActive by remember { mutableStateOf(false) }
+    var paintBrushWidth by remember { mutableFloatStateOf(0.06f) }
+    var paintIsBlackout by remember { mutableStateOf(true) }
+    var activeDrawingPoints by remember { mutableStateOf<List<com.clipcut.core.model.PaintPoint>>(emptyList()) }
 
     val ctx = LocalContext.current
     val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
@@ -317,6 +321,84 @@ fun EditorScreen(
                     val bh = previewBoxSize.height.toFloat()
 
                     if (bw > 0f && bh > 0f) {
+                        // ── Render Finger-Painted Censor / Blackout Layer ──
+                        if (isFingerPaintActive && selectedTool == EditorTool.BLUR) {
+                            androidx.compose.foundation.Canvas(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .pointerInput(selectedBlurId, paintBrushWidth, paintIsBlackout) {
+                                        detectDragGestures(
+                                            onDragStart = { offset ->
+                                                val normX = (offset.x / bw).coerceIn(0f, 1f)
+                                                val normY = (offset.y / bh).coerceIn(0f, 1f)
+                                                activeDrawingPoints = listOf(com.clipcut.core.model.PaintPoint(normX, normY))
+                                            },
+                                            onDrag = { change, _ ->
+                                                change.consume()
+                                                val normX = (change.position.x / bw).coerceIn(0f, 1f)
+                                                val normY = (change.position.y / bh).coerceIn(0f, 1f)
+                                                activeDrawingPoints = activeDrawingPoints + com.clipcut.core.model.PaintPoint(normX, normY)
+                                            },
+                                            onDragEnd = {
+                                                if (activeDrawingPoints.size >= 2) {
+                                                    val newStroke = com.clipcut.core.model.PaintStroke(
+                                                        points = activeDrawingPoints,
+                                                        strokeWidthNorm = paintBrushWidth,
+                                                        isBlackout = paintIsBlackout
+                                                    )
+                                                    val targetBlur = project?.blurTracks?.find { it.id == selectedBlurId }
+                                                        ?: project?.blurTracks?.firstOrNull()
+                                                    if (targetBlur != null) {
+                                                        viewModel.updateBlurTrack(targetBlur.copy(paintStrokes = targetBlur.paintStrokes + newStroke))
+                                                    } else {
+                                                        val newTrack = com.clipcut.core.model.BlurTrackItem(
+                                                            timelineStartUs = positionUs,
+                                                            timelineEndUs = minOf((project?.totalDurationUs ?: 10_000_000L), positionUs + 5_000_000L),
+                                                            paintStrokes = listOf(newStroke)
+                                                        )
+                                                        viewModel.addBlurTrack(newTrack)
+                                                        selectedBlurId = newTrack.id
+                                                    }
+                                                }
+                                                activeDrawingPoints = emptyList()
+                                            },
+                                            onDragCancel = {
+                                                activeDrawingPoints = emptyList()
+                                            }
+                                        )
+                                    }
+                            ) {
+                                val currentBlur = project?.blurTracks?.find { it.id == selectedBlurId } ?: project?.blurTracks?.firstOrNull()
+                                val allStrokes = (currentBlur?.paintStrokes ?: emptyList()) + (
+                                    if (activeDrawingPoints.size >= 2) listOf(
+                                        com.clipcut.core.model.PaintStroke(
+                                            points = activeDrawingPoints,
+                                            strokeWidthNorm = paintBrushWidth,
+                                            isBlackout = paintIsBlackout
+                                        )
+                                    ) else emptyList()
+                                )
+                                for (stroke in allStrokes) {
+                                    if (stroke.points.size < 2) continue
+                                    val strokePx = (stroke.strokeWidthNorm * bw).coerceAtLeast(6f)
+                                    val path = androidx.compose.ui.graphics.Path()
+                                    path.moveTo(stroke.points.first().x * bw, stroke.points.first().y * bh)
+                                    for (idx in 1 until stroke.points.size) {
+                                        path.lineTo(stroke.points[idx].x * bw, stroke.points[idx].y * bh)
+                                    }
+                                    drawPath(
+                                        path = path,
+                                        color = if (stroke.isBlackout) Color.Black else Color.White.copy(alpha = 0.85f),
+                                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                            width = strokePx,
+                                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                            join = androidx.compose.ui.graphics.StrokeJoin.Round
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
                         // ── Render Interactive Overlays & Stickers ──
                         activeOverlays.forEach { overlay ->
                             val isSelected = overlay.id == selectedOverlayId
@@ -942,6 +1024,7 @@ fun EditorScreen(
                                                 com.clipcut.core.model.BlurType.GAUSSIAN -> "BLUR"
                                                 com.clipcut.core.model.BlurType.STACK_BLUR -> "STACKBLUR"
                                                 com.clipcut.core.model.BlurType.MOTION_TRAIL -> "TRAIL"
+                                                com.clipcut.core.model.BlurType.PAINT -> "PAINT"
                                             },
                                             color = Color.White,
                                             fontSize = 10.sp,
@@ -1710,7 +1793,7 @@ fun EditorScreen(
             EditorTool.EQUALIZER -> EqualizerSheet(
                 gains = viewModel.equalizerGains,
                 onApply = { gains ->
-                    viewModel.equalizerGains = gains
+                    viewModel.updateEqualizerGains(gains)
                     android.widget.Toast.makeText(ctx, "10-Band EQ applied", android.widget.Toast.LENGTH_SHORT).show()
                 },
                 onDismiss = { selectedTool = null }
@@ -1718,7 +1801,7 @@ fun EditorScreen(
             EditorTool.VOICE -> VoiceRemixSheet(
                 currentPreset = viewModel.voicePreset,
                 onApplyVoice = { preset ->
-                    viewModel.voicePreset = preset
+                    viewModel.updateVoicePreset(preset)
                     android.widget.Toast.makeText(ctx, "Voice effect: ${preset.displayName}", android.widget.Toast.LENGTH_SHORT).show()
                 },
                 onDismiss = { selectedTool = null }
@@ -1971,12 +2054,32 @@ fun EditorScreen(
                     onNudgeSize = { dw, dh ->
                         viewModel.nudgeBlurSize(itemToEdit.id, dw, dh)
                     },
+                    isPainting = isFingerPaintActive,
+                    onTogglePainting = { isFingerPaintActive = it },
+                    paintBrushWidth = paintBrushWidth,
+                    onBrushWidthChange = { paintBrushWidth = it },
+                    paintIsBlackout = paintIsBlackout,
+                    onPaintIsBlackoutChange = { paintIsBlackout = it },
+                    onUndoPaintStroke = {
+                        val b = itemToEdit
+                        if (b.paintStrokes.isNotEmpty()) {
+                            viewModel.updateBlurTrack(b.copy(paintStrokes = b.paintStrokes.dropLast(1)))
+                            android.widget.Toast.makeText(ctx, "Undid stroke", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onClearPaintStrokes = {
+                        viewModel.updateBlurTrack(itemToEdit.copy(paintStrokes = emptyList()))
+                        android.widget.Toast.makeText(ctx, "Cleared painted strokes", android.widget.Toast.LENGTH_SHORT).show()
+                    },
                     onDelete = {
                         viewModel.removeBlurTrack(itemToEdit.id)
                         selectedBlurId = null
                         selectedTool = null
                     },
-                    onDismiss = { selectedTool = null }
+                    onDismiss = {
+                        isFingerPaintActive = false
+                        selectedTool = null
+                    }
                 )
             }
             else -> { /* default */ }

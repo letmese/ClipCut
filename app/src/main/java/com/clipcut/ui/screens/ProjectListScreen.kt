@@ -59,9 +59,10 @@ fun ProjectListScreen(
             HomeBottomBar(
                 tab = selectedBottomTab,
                 onTabChange = { tabIdx ->
-                    selectedBottomTab = tabIdx
-                    if (tabIdx == 3) {
+                    if (tabIdx == 2) {
                         onOpenSettings()
+                    } else {
+                        selectedBottomTab = tabIdx
                     }
                 }
             )
@@ -130,12 +131,22 @@ fun ProjectListScreen(
             }
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-        ) {
+        if (selectedBottomTab == 1) {
+            TemplatesShowcaseView(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                onOpenTemplate = { t ->
+                    viewModel.createProjectFromTemplate(t) { id -> onOpenProject(id) }
+                }
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+            ) {
             Spacer(Modifier.height(16.dp))
 
             // Hero Section: New Project Card
@@ -193,6 +204,7 @@ fun ProjectListScreen(
             Spacer(Modifier.height(40.dp))
         }
     }
+}
 
     projectToDelete?.let { proj ->
         AlertDialog(
@@ -716,7 +728,6 @@ private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
     val tabs = listOf(
         "Create" to Icons.Filled.Movie,
         "Templates" to Icons.Filled.AutoAwesome,
-        "Store" to Icons.Filled.LocalGroceryStore,
         "Settings" to Icons.Filled.Settings
     )
     Surface(
@@ -728,9 +739,9 @@ private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .height(64.dp)
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 24.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceEvenly
+            horizontalArrangement = Arrangement.SpaceAround
         ) {
             tabs.forEachIndexed { i, (label, icon) ->
                 val selected = tab == i
@@ -742,7 +753,7 @@ private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
                         ) { onTabChange(i) }
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
@@ -759,3 +770,346 @@ private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
         }
     }
 }
+
+@Composable
+fun TemplatesShowcaseView(
+    modifier: Modifier = Modifier,
+    onOpenTemplate: (com.clipcut.core.templates.Template) -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val registry = remember { com.clipcut.core.templates.TemplateRegistry(context) }
+    val loadedTemplates = remember { registry.listTemplates() }
+
+    // Fallback/rich curated templates if assets are limited
+    val curatedTemplates = remember(loadedTemplates) {
+        val list = loadedTemplates.toMutableList()
+        val existingIds = list.map { it.id }.toSet()
+
+        if (!existingIds.contains("velocity_hero")) {
+            list.add(
+                com.clipcut.core.templates.Template(
+                    id = "velocity_hero",
+                    name = "Velocity Speed Ramp",
+                    aspectRatio = "9:16",
+                    durationUs = 12_000_000L,
+                    clipSlots = listOf(
+                        com.clipcut.core.templates.Template.ClipSlot(0, 3_000_000L, "Punchy", "motion_blur"),
+                        com.clipcut.core.templates.Template.ClipSlot(1, 2_000_000L, "Cinematic", "zoom_blur"),
+                        com.clipcut.core.templates.Template.ClipSlot(2, 4_000_000L, "Moody", "vignette_pulse"),
+                        com.clipcut.core.templates.Template.ClipSlot(3, 3_000_000L, "Vibrant", "bloom")
+                    ),
+                    transitions = listOf("rotate_zoom", "shake", "spin"),
+                    effects = listOf("motion_blur", "zoom_blur", "vignette_pulse"),
+                    filters = listOf("Punchy", "Cinematic", "Moody"),
+                    musicUrl = null,
+                    textOverlays = listOf(
+                        com.clipcut.core.templates.Template.TextOverlay("FAST FORWARD", 0L, 3_000_000L, "center")
+                    )
+                )
+            )
+        }
+        if (!existingIds.contains("beat_sync_montage")) {
+            list.add(
+                com.clipcut.core.templates.Template(
+                    id = "beat_sync_montage",
+                    name = "Beat Sync Montage",
+                    aspectRatio = "9:16",
+                    durationUs = 16_000_000L,
+                    clipSlots = listOf(
+                        com.clipcut.core.templates.Template.ClipSlot(0, 2_000_000L, "Cyberpunk", "rgb_glitch"),
+                        com.clipcut.core.templates.Template.ClipSlot(1, 2_000_000L, "Vibrant", "flash"),
+                        com.clipcut.core.templates.Template.ClipSlot(2, 2_000_000L, "Moody", "zoom_blur"),
+                        com.clipcut.core.templates.Template.ClipSlot(3, 2_000_000L, "Cinematic", "shake"),
+                        com.clipcut.core.templates.Template.ClipSlot(4, 4_000_000L, "Punchy", "halation"),
+                        com.clipcut.core.templates.Template.ClipSlot(5, 4_000_000L, "Cyberpunk", "bloom")
+                    ),
+                    transitions = listOf("blink", "zoom_blur", "shake", "floodlight", "split_h"),
+                    effects = listOf("rgb_glitch", "flash", "shake", "halation"),
+                    filters = listOf("Cyberpunk", "Vibrant", "Punchy"),
+                    musicUrl = null,
+                    textOverlays = listOf(
+                        com.clipcut.core.templates.Template.TextOverlay("DROP THE BEAT", 0L, 4_000_000L, "center")
+                    )
+                )
+            )
+        }
+        if (!existingIds.contains("gaming_highlights")) {
+            list.add(
+                com.clipcut.core.templates.Template(
+                    id = "gaming_highlights",
+                    name = "Gaming Apex Highlights",
+                    aspectRatio = "16:9",
+                    durationUs = 24_000_000L,
+                    clipSlots = listOf(
+                        com.clipcut.core.templates.Template.ClipSlot(0, 6_000_000L, "Cyberpunk", "shake"),
+                        com.clipcut.core.templates.Template.ClipSlot(1, 6_000_000L, "Punchy", "rgb_glitch"),
+                        com.clipcut.core.templates.Template.ClipSlot(2, 6_000_000L, "Cinematic", "motion_blur"),
+                        com.clipcut.core.templates.Template.ClipSlot(3, 6_000_000L, "Vibrant", "bloom")
+                    ),
+                    transitions = listOf("shake", "split_v", "spin"),
+                    effects = listOf("shake", "rgb_glitch", "bloom"),
+                    filters = listOf("Cyberpunk", "Punchy"),
+                    musicUrl = null,
+                    textOverlays = listOf(
+                        com.clipcut.core.templates.Template.TextOverlay("VICTORY ROYALE", 0L, 4_000_000L, "top")
+                    )
+                )
+            )
+        }
+        if (!existingIds.contains("minimal_aesthetic")) {
+            list.add(
+                com.clipcut.core.templates.Template(
+                    id = "minimal_aesthetic",
+                    name = "Minimalist Mood",
+                    aspectRatio = "1:1",
+                    durationUs = 15_000_000L,
+                    clipSlots = listOf(
+                        com.clipcut.core.templates.Template.ClipSlot(0, 5_000_000L, "Soft Tone", null),
+                        com.clipcut.core.templates.Template.ClipSlot(1, 5_000_000L, "Moody", "film_grain"),
+                        com.clipcut.core.templates.Template.ClipSlot(2, 5_000_000L, "Cinematic", "halation")
+                    ),
+                    transitions = listOf("dissolve", "fade"),
+                    effects = listOf("film_grain", "halation"),
+                    filters = listOf("Soft Tone", "Moody"),
+                    musicUrl = null,
+                    textOverlays = listOf(
+                        com.clipcut.core.templates.Template.TextOverlay("SERENITY", 0L, 5_000_000L, "bottom")
+                    )
+                )
+            )
+        }
+        list
+    }
+
+    val categories = listOf("All", "Cinematic", "Reels & Shorts", "Beat Sync", "Travel Vlog", "Gaming")
+    var selectedCategory by remember { mutableStateOf("All") }
+
+    val filteredTemplates = remember(curatedTemplates, selectedCategory) {
+        when (selectedCategory) {
+            "Cinematic" -> curatedTemplates.filter { it.name.contains("Cinematic", ignoreCase = true) || it.aspectRatio == "21:9" }
+            "Reels & Shorts" -> curatedTemplates.filter { it.name.contains("Reel", ignoreCase = true) || it.aspectRatio == "9:16" }
+            "Beat Sync" -> curatedTemplates.filter { it.name.contains("Beat", ignoreCase = true) || it.name.contains("Velocity", ignoreCase = true) }
+            "Travel Vlog" -> curatedTemplates.filter { it.name.contains("Vlog", ignoreCase = true) || it.name.contains("Aesthetic", ignoreCase = true) }
+            "Gaming" -> curatedTemplates.filter { it.name.contains("Gaming", ignoreCase = true) }
+            else -> curatedTemplates
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .background(DarkBackground)
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 32.dp)
+    ) {
+        // Top Header
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Text(
+                "Creator Templates Hub",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 22.sp
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "One-tap professional edits with pre-tuned curves, transitions, and audio sync",
+                color = TextSecondary,
+                fontSize = 12.sp
+            )
+        }
+
+        // Category Pills
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(categories.size) { i ->
+                val cat = categories[i]
+                val selected = cat == selectedCategory
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(if (selected) AccentPrimary else Surface2)
+                        .clickable { selectedCategory = cat }
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        cat,
+                        color = if (selected) Color.Black else Color.White,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Templates Cards
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            filteredTemplates.forEachIndexed { idx, t ->
+                TemplateShowcaseCard(
+                    template = t,
+                    index = idx,
+                    onUse = { onOpenTemplate(t) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TemplateShowcaseCard(
+    template: com.clipcut.core.templates.Template,
+    index: Int,
+    onUse: () -> Unit
+) {
+    val accentColors = listOf(AccentPrimary, AccentSecondary, AccentGold, AccentViolet, AccentBlue)
+    val cardColor = accentColors[index % accentColors.size]
+    val durationSec = template.durationUs / 1_000_000L
+    val clipCount = template.clipSlots.size
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Surface2)
+            .border(1.dp, HairlineBorder, RoundedCornerShape(16.dp))
+            .padding(16.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(cardColor.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.AutoAwesome,
+                            contentDescription = null,
+                            tint = cardColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            template.name,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                        Text(
+                            "${durationSec}s • $clipCount clips • ${template.aspectRatio}",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(cardColor.copy(alpha = 0.15f))
+                        .border(1.dp, cardColor.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        template.aspectRatio,
+                        color = cardColor,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Badges / Tags row
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                template.effects.take(3).forEach { eff ->
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Surface3)
+                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            eff.replace("_", " ").uppercase(),
+                            color = TextSecondary,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+                template.transitions.take(2).forEach { trans ->
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Surface3)
+                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            trans.replace("_", " ").uppercase(),
+                            color = AccentSecondary,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            // 1-Tap Use Template Action Button
+            Button(
+                onClick = onUse,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = cardColor,
+                    contentColor = Color.Black
+                )
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = Color.Black
+                    )
+                    Text(
+                        "Use This Template",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = Color.Black
+                    )
+                }
+            }
+        }
+    }
+}
+

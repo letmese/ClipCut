@@ -112,8 +112,11 @@ class OverlayRenderer(private val context: Context) {
         val activeImageBlurs = blurTracks.filter {
             it.blurType == com.clipcut.core.model.BlurType.IMAGE && currentPtsUs in it.timelineStartUs..it.timelineEndUs
         }
+        val activePaintBlurs = blurTracks.filter {
+            it.paintStrokes.isNotEmpty() && currentPtsUs in it.timelineStartUs..it.timelineEndUs
+        }
 
-        if (activeOverlays.isEmpty() && activeImageBlurs.isEmpty()) {
+        if (activeOverlays.isEmpty() && activeImageBlurs.isEmpty() && activePaintBlurs.isEmpty()) {
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
             GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
             return
@@ -257,6 +260,43 @@ class OverlayRenderer(private val context: Context) {
                 }
             }
             canvas.restore()
+        }
+
+        // Draw finger-painted censor & blackout strokes
+        val strokePaint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            style = android.graphics.Paint.Style.STROKE
+            strokeCap = android.graphics.Paint.Cap.ROUND
+            strokeJoin = android.graphics.Paint.Join.ROUND
+        }
+        for (blurItem in activePaintBlurs) {
+            for (stroke in blurItem.paintStrokes) {
+                if (stroke.points.size < 2) continue
+                strokePaint.strokeWidth = (stroke.strokeWidthNorm * width).coerceAtLeast(4f)
+                if (stroke.isBlackout) {
+                    strokePaint.color = stroke.color.toInt()
+                    strokePaint.alpha = 255
+                    strokePaint.maskFilter = null
+                } else {
+                    strokePaint.color = 0xDDCCCCCC.toInt()
+                    try {
+                        strokePaint.maskFilter = android.graphics.BlurMaskFilter(
+                            (strokePaint.strokeWidth / 2f).coerceAtLeast(1f),
+                            android.graphics.BlurMaskFilter.Blur.NORMAL
+                        )
+                    } catch (_: Throwable) {
+                        strokePaint.maskFilter = null
+                    }
+                }
+                val path = android.graphics.Path()
+                val first = stroke.points.first()
+                path.moveTo(first.x * width, first.y * height)
+                for (i in 1 until stroke.points.size) {
+                    val pt = stroke.points[i]
+                    path.lineTo(pt.x * width, pt.y * height)
+                }
+                canvas.drawPath(path, strokePaint)
+            }
         }
 
         // Upload: GLUtils.texImage2D stores row 0 at texture V=0 (bottom).

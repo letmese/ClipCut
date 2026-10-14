@@ -42,7 +42,8 @@ private data class PlayerSegment(
     val sourceStartUs: Long,
     val sourceEndUs: Long,
     val speed: Float,
-    val volume: Float
+    val volume: Float,
+    val speedRamp: com.clipcut.core.model.SpeedRamp = com.clipcut.core.model.SpeedRamp()
 )
 
 /**
@@ -78,6 +79,10 @@ class PreviewPlayerManager(private val context: Context) {
     @Volatile private var backgroundMusicVolume: Float = 1.0f
     @Volatile private var audioDuckingEnabled: Boolean = false
     @Volatile private var audioDuckLevel: Float = 0.3f
+    @Volatile private var voicePitchMultiplier: Float = 1.0f
+    @Volatile private var currentVoicePreset: com.clipcut.core.audio.AudioDsp.VoicePreset = com.clipcut.core.audio.AudioDsp.VoicePreset.NATURAL
+    private var audioEqualizer: android.media.audiofx.Equalizer? = null
+    @Volatile private var cachedEqualizerGains: List<Float> = emptyList()
 
     private val audioTrackPlayers = mutableListOf<AudioTrackPlayerItem>()
     private var pipVideoPlayer: PipVideoPlayerItem? = null
@@ -101,8 +106,16 @@ class PreviewPlayerManager(private val context: Context) {
                             val segments = cachedSegments
                             if (segments.isNotEmpty() && idx in segments.indices) {
                                 val seg = segments[idx]
-                                val speed = seg.speed.coerceAtLeast(0.1f)
-                                val segOffsetUs = (p.currentPosition * 1000L / speed).toLong()
+                                val offsetInSegTimelineUs = (_positionUs.value - seg.timelineStartUs).coerceAtLeast(0L)
+                                val dynamicSpeed = if (seg.speedRamp.isActive) {
+                                    seg.speedRamp.speedAt(offsetInSegTimelineUs).coerceIn(0.1f, 10.0f)
+                                } else {
+                                    seg.speed.coerceAtLeast(0.1f)
+                                }
+                                if (Math.abs(p.playbackParameters.speed - dynamicSpeed) > 0.05f || Math.abs(p.playbackParameters.pitch - voicePitchMultiplier) > 0.02f) {
+                                    p.playbackParameters = androidx.media3.common.PlaybackParameters(dynamicSpeed, voicePitchMultiplier)
+                                }
+                                val segOffsetUs = (p.currentPosition * 1000L / dynamicSpeed).toLong()
                                 _positionUs.value = (seg.timelineStartUs + segOffsetUs).coerceIn(0L, totalUs.coerceAtLeast(0L))
                             } else {
                                 _positionUs.value = p.currentPosition * 1000L
@@ -210,6 +223,7 @@ class PreviewPlayerManager(private val context: Context) {
         var curSourceStart = clips[0].trimStartUs
         var curSourceEnd = if (clips[0].trimEndUs > clips[0].trimStartUs) clips[0].trimEndUs else (clips[0].trimStartUs + clips[0].effectiveDurationUs)
         var curSpeed = clips[0].speed
+        var curSpeedRamp = clips[0].speedRamp
         var curVolume = clips[0].volume
         var curTlDuration = clips[0].effectiveDurationUs
 
@@ -220,7 +234,7 @@ class PreviewPlayerManager(private val context: Context) {
             val isContiguous = (next.uri == curUri) &&
                     (Math.abs(next.speed - curSpeed) < 0.01f) &&
                     !next.speedRamp.isActive &&
-                    !clips[i - 1].speedRamp.isActive &&
+                    !curSpeedRamp.isActive &&
                     (Math.abs(nextSourceStart - curSourceEnd) <= 2000L)
 
             if (isContiguous) {
@@ -235,7 +249,8 @@ class PreviewPlayerManager(private val context: Context) {
                         sourceStartUs = curSourceStart,
                         sourceEndUs = curSourceEnd,
                         speed = curSpeed,
-                        volume = curVolume
+                        volume = curVolume,
+                        speedRamp = curSpeedRamp
                     )
                 )
                 curTlStart += curTlDuration
@@ -243,6 +258,7 @@ class PreviewPlayerManager(private val context: Context) {
                 curSourceStart = nextSourceStart
                 curSourceEnd = nextSourceEnd
                 curSpeed = next.speed
+                curSpeedRamp = next.speedRamp
                 curVolume = next.volume
                 curTlDuration = next.effectiveDurationUs
             }
@@ -255,7 +271,8 @@ class PreviewPlayerManager(private val context: Context) {
                 sourceStartUs = curSourceStart,
                 sourceEndUs = curSourceEnd,
                 speed = curSpeed,
-                volume = curVolume
+                volume = curVolume,
+                speedRamp = curSpeedRamp
             )
         )
         return segments
@@ -274,6 +291,7 @@ class PreviewPlayerManager(private val context: Context) {
                 _isBuffering.value = state == Player.STATE_BUFFERING
                 if (state == Player.STATE_READY) {
                     _totalDurationUs.value = if (totalUs > 0L) totalUs else (p.duration.coerceAtLeast(0L) * 1000L)
+                    applyEqualizerGains()
                 }
                 if (state == Player.STATE_ENDED) {
                     _isPlaying.value = false
@@ -290,8 +308,9 @@ class PreviewPlayerManager(private val context: Context) {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val idx = p.currentMediaItemIndex
                 val seg = cachedSegments.getOrNull(idx) ?: return
-                p.playbackParameters = androidx.media3.common.PlaybackParameters(seg.speed.coerceAtLeast(0.1f))
+                p.playbackParameters = androidx.media3.common.PlaybackParameters(seg.speed.coerceAtLeast(0.1f), voicePitchMultiplier)
                 p.volume = (projectVideoVolume * seg.volume).coerceIn(0f, 1f)
+                applyEqualizerGains()
             }
         })
         player = p
@@ -315,14 +334,15 @@ class PreviewPlayerManager(private val context: Context) {
 
         runOnMainThread {
             val p = player ?: return@runOnMainThread
-            val currentFingerprint = newSegments.joinToString(";") { 
-                "${it.uri}:${it.sourceStartUs}:${it.sourceEndUs}:${it.speed}" 
+            val currentFingerprint = newSegments.joinToString(";") { seg ->
+                val rampKey = if (seg.speedRamp.isActive) seg.speedRamp.keyframes.joinToString(",") { "${it.timeOffsetUs}_${it.speed}" } else "none"
+                "${seg.uri}:${seg.sourceStartUs}:${seg.sourceEndUs}:${seg.speed}:$rampKey"
             }
 
             val currentIdx = try { p.currentMediaItemIndex } catch (_: Throwable) { 0 }
             val current = newSegments.getOrNull(currentIdx) ?: newSegments.firstOrNull()
             if (current != null) {
-                p.playbackParameters = androidx.media3.common.PlaybackParameters(current.speed.coerceAtLeast(0.1f))
+                p.playbackParameters = androidx.media3.common.PlaybackParameters(current.speed.coerceAtLeast(0.1f), voicePitchMultiplier)
                 p.volume = (project.originalVideoVolume * current.volume).coerceIn(0f, 1f)
             }
 
@@ -599,8 +619,65 @@ class PreviewPlayerManager(private val context: Context) {
         seekToUs((_positionUs.value + deltaUs).coerceAtLeast(0L))
     }
 
+    fun setVoicePreset(preset: com.clipcut.core.audio.AudioDsp.VoicePreset) = runOnMainThread {
+        currentVoicePreset = preset
+        voicePitchMultiplier = when (preset) {
+            com.clipcut.core.audio.AudioDsp.VoicePreset.CHIPMUNK -> 1.6f
+            com.clipcut.core.audio.AudioDsp.VoicePreset.DEEP_BASS -> 0.65f
+            com.clipcut.core.audio.AudioDsp.VoicePreset.RADIO -> 1.15f
+            com.clipcut.core.audio.AudioDsp.VoicePreset.ROBOT -> 0.85f
+            com.clipcut.core.audio.AudioDsp.VoicePreset.ALIEN -> 1.35f
+            com.clipcut.core.audio.AudioDsp.VoicePreset.NATURAL -> 1.0f
+        }
+        val p = player ?: return@runOnMainThread
+        p.playbackParameters = androidx.media3.common.PlaybackParameters(p.playbackParameters.speed, voicePitchMultiplier)
+    }
+
+    fun setEqualizerGains(gains: List<Float>) = runOnMainThread {
+        cachedEqualizerGains = gains
+        applyEqualizerGains()
+    }
+
+    private fun applyEqualizerGains() {
+        val p = player ?: return
+        val sessionId = try { p.audioSessionId } catch (_: Throwable) { 0 }
+        if (sessionId == 0 || sessionId == androidx.media3.common.C.AUDIO_SESSION_ID_UNSET) return
+        try {
+            if (audioEqualizer == null) {
+                audioEqualizer = android.media.audiofx.Equalizer(0, sessionId).also {
+                    it.enabled = true
+                }
+            }
+            val eq = audioEqualizer ?: return
+            eq.enabled = true
+            val numBands = eq.numberOfBands.toInt()
+            val bandRange = eq.bandLevelRange
+            val minLevel = bandRange?.getOrNull(0) ?: -1200
+            val maxLevel = bandRange?.getOrNull(1) ?: 1200
+            for (b in 0 until numBands) {
+                val centerFreqHz = eq.getCenterFreq(b.toShort()) / 1000
+                var closestIdx = 0
+                var minDiff = Int.MAX_VALUE
+                for (i in com.clipcut.core.audio.InShotEq.FREQUENCIES_HZ.indices) {
+                    val diff = Math.abs(com.clipcut.core.audio.InShotEq.FREQUENCIES_HZ[i] - centerFreqHz)
+                    if (diff < minDiff) {
+                        minDiff = diff
+                        closestIdx = i
+                    }
+                }
+                val gainDb = cachedEqualizerGains.getOrNull(closestIdx) ?: 0f
+                val mB = (gainDb * 100f).toInt().coerceIn(minLevel.toInt(), maxLevel.toInt()).toShort()
+                eq.setBandLevel(b.toShort(), mB)
+            }
+        } catch (t: Throwable) {
+            AppLog.w(TAG, "applyEqualizerGains error: ${t.message}")
+        }
+    }
+
     fun release() = runOnMainThread {
         scope.cancel()
+        try { audioEqualizer?.release() } catch (_: Throwable) {}
+        audioEqualizer = null
         try { player?.release() } catch (t: Throwable) { AppLog.w(TAG, "player.release", t) }
         player = null
         for (item in audioTrackPlayers) {

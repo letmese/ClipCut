@@ -1022,6 +1022,7 @@ fun OverlaySheet(
 
 // ── BlurSubTab ────────────────────────────────────────────────────────
 enum class BlurSubTab(val title: String, val icon: String) {
+    PAINT("Finger Paint", "🖌️"),
     MANUAL("Manual Tracking", "🎬"),
     TRACKING("Auto Tracking", "🎯"),
     CENSOR("Censor Style", "🌫️"),
@@ -1057,11 +1058,23 @@ fun BlurSheet(
     onTogglePlayPause: (() -> Unit)? = null,
     onNudge: ((dx: Float, dy: Float) -> Unit)? = null,
     onNudgeSize: ((dw: Float, dh: Float) -> Unit)? = null,
+    isPainting: Boolean = false,
+    onTogglePainting: ((Boolean) -> Unit)? = null,
+    paintBrushWidth: Float = 0.06f,
+    onBrushWidthChange: ((Float) -> Unit)? = null,
+    paintIsBlackout: Boolean = true,
+    onPaintIsBlackoutChange: ((Boolean) -> Unit)? = null,
+    onUndoPaintStroke: (() -> Unit)? = null,
+    onClearPaintStrokes: (() -> Unit)? = null,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var selectedSubTab by remember { mutableStateOf(BlurSubTab.MANUAL) }
+    var selectedSubTab by remember { mutableStateOf(BlurSubTab.PAINT) }
     var selectedTrackingMode by remember { mutableStateOf(com.clipcut.core.feature.TrackingMode.INSHOT_SOT) }
+
+    LaunchedEffect(selectedSubTab) {
+        onTogglePainting?.invoke(selectedSubTab == BlurSubTab.PAINT)
+    }
 
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         SheetHeader("Censor, Blur & Tracking Studio", onDismiss)
@@ -1123,6 +1136,121 @@ fun BlurSheet(
         Spacer(Modifier.height(14.dp))
 
         when (selectedSubTab) {
+            BlurSubTab.PAINT -> {
+                // TAB: FINGER-PAINT CENSOR & BLACKOUT
+                Text("Finger-Paint Censor & Blackout", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Touch and drag directly over the video player above to paint censor strokes with your finger.",
+                    color = TextTertiary,
+                    fontSize = 11.sp
+                )
+                Spacer(Modifier.height(12.dp))
+
+                // Paint mode toggle: Solid Blackout vs Frosted Blur
+                Text("Censor Mode", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(6.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (paintIsBlackout) AccentPrimary else Surface3)
+                            .clickable { onPaintIsBlackoutChange?.invoke(true) }
+                            .padding(vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "⬛ Solid Blackout",
+                            color = if (paintIsBlackout) Color.Black else Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (!paintIsBlackout) AccentPrimary else Surface3)
+                            .clickable { onPaintIsBlackoutChange?.invoke(false) }
+                            .padding(vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "🌫️ Heavy Blur",
+                            color = if (!paintIsBlackout) Color.Black else Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+
+                // Brush Thickness
+                Text(
+                    "Brush Thickness: ${(paintBrushWidth * 100).toInt()}%",
+                    color = TextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Slider(
+                    value = paintBrushWidth,
+                    onValueChange = { onBrushWidthChange?.invoke(it) },
+                    valueRange = 0.02f..0.18f,
+                    colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary)
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Fine (8px)" to 0.03f, "Medium (16px)" to 0.06f, "Thick (28px)" to 0.10f, "Huge (48px)" to 0.16f).forEach { (lbl, sz) ->
+                        EditorFilterChip(lbl, Math.abs(paintBrushWidth - sz) < 0.015f) {
+                            onBrushWidthChange?.invoke(sz)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // Stroke count and actions
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "${blurItem.paintStrokes.size} strokes painted",
+                        color = if (blurItem.paintStrokes.isNotEmpty()) AccentPrimary else TextTertiary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SecondaryButton(
+                            text = "↩ Undo Stroke",
+                            onClick = { onUndoPaintStroke?.invoke() },
+                            enabled = blurItem.paintStrokes.isNotEmpty()
+                        )
+                        SecondaryButton(
+                            text = "Clear All",
+                            onClick = { onClearPaintStrokes?.invoke() },
+                            enabled = blurItem.paintStrokes.isNotEmpty()
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(AccentPrimary.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                        .border(1.dp, AccentPrimary.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                        .padding(10.dp)
+                ) {
+                    Text(
+                        "💡 Tip: Drag your finger across the video to censor faces, license plates, documents, or sensitive objects effortlessly.",
+                        color = Color.White,
+                        fontSize = 11.sp
+                    )
+                }
+            }
             BlurSubTab.MANUAL -> {
                 // TAB 0: MANUAL FRAME-BY-FRAME TRACKING & KEYFRAMING
                 Text("Frame-by-Frame Manual Tracking", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -2388,7 +2516,7 @@ fun StickerSheet(onPick: (String) -> Unit, onDismiss: () -> Unit) {
     Column {
         SheetHeader("Stickers & Overlays", onDismiss)
         Spacer(Modifier.height(10.dp))
-        val categories = listOf("Trending", "Vlog & Life", "Reels & Social", "Retro Y2K", "Aesthetic", "Arrows & Pointers", "Emoji", "Badges")
+        val categories = listOf("Trending", "Censor Stamps", "Reels & Social", "Arrows & Pointers", "Vlog & Life", "Retro Y2K", "Aesthetic", "Emoji", "Badges")
         var category by remember { mutableStateOf("Trending") }
 
         ScrollableTabRow(
@@ -2412,6 +2540,12 @@ fun StickerSheet(onPick: (String) -> Unit, onDismiss: () -> Unit) {
             "Trending" -> listOf(
                 "🔥", "✨", "⚡", "💥", "🎬", "🍿", "💯", "🚀", "👑", "🚨", "💎", "🎯",
                 "🎉", "🥂", "🏆", "🌟", "💫", "🦄", "💖", "🌸", "⭐", "🌈", "🦋", "🍄"
+            )
+            "Censor Stamps" -> listOf(
+                "⛔ CENSORED", "🔒 TOP SECRET", "⚠️ WARNING", "🔞 18+ ONLY",
+                "🛑 CONFIDENTIAL", "🚫 RESTRICTED", "🕵️ CLASSIFIED", "⬛ REDACTED",
+                "👀 EYES HERE", "❌ PRIVATE", "‼️ DO NOT ENTER", "⚡ DANGER",
+                "🔥 HOT CONTENT", "🚨 POLICE LINE", "🛡️ SECURED", "🤐 NO SPOILERS"
             )
             "Vlog & Life" -> listOf(
                 "☕", "🥐", "🥑", "🍕", "🍔", "🍣", "🍦", "🍩", "🍷", "🧃", "🎧", "📷",
@@ -3162,13 +3296,21 @@ fun TransitionsSheet(
         TransitionType.RIPPLE to Pair("Ripple", Icons.Filled.Waves),
         TransitionType.HEART to Pair("Heart", Icons.Filled.Favorite),
         TransitionType.STAR to Pair("Star", Icons.Filled.Star),
-        TransitionType.CURTAIN to Pair("Curtain", Icons.Filled.CompareArrows)
+        TransitionType.CURTAIN to Pair("Curtain", Icons.Filled.CompareArrows),
+        TransitionType.ZOOM_BLUR to Pair("Zoom Blur", Icons.Filled.BlurCircular),
+        TransitionType.ROTATE_ZOOM to Pair("Rot Zoom", Icons.Filled.RotateRight),
+        TransitionType.SHAKE to Pair("Shake", Icons.Filled.Shuffle),
+        TransitionType.FLOODLIGHT to Pair("Floodlight", Icons.Filled.FlashOn),
+        TransitionType.SPIN to Pair("Spin", Icons.Filled.Sync),
+        TransitionType.BLINK to Pair("Blink", Icons.Filled.FlashOff),
+        TransitionType.SPLIT_V to Pair("Split Vert", Icons.Filled.GridView),
+        TransitionType.SPLIT_H to Pair("Split Horiz", Icons.Filled.GridView)
     )
 
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         SheetHeader("Scene Transitions", onDismiss)
         Spacer(Modifier.height(10.dp))
-        Text("25 cinematic transitions with real-time shader rendering", color = TextSecondary, fontSize = 12.sp)
+        Text("33 cinematic transitions ported from VN Editor and CapCut", color = TextSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(10.dp))
 
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

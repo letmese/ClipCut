@@ -773,6 +773,7 @@ class RegionalBlurFilter : GlFilter(
             com.clipcut.core.model.BlurType.STACK_BLUR -> 0 // Render as accelerated blur
             com.clipcut.core.model.BlurType.MOTION_TRAIL -> 0 // Render as smooth trail
             com.clipcut.core.model.BlurType.IMAGE -> 3
+            com.clipcut.core.model.BlurType.PAINT -> 0
         }
         shape = when (shapeEnum) {
             com.clipcut.core.model.BlurShape.OVAL -> 0

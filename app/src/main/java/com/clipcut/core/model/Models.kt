@@ -29,7 +29,11 @@ enum class TransitionType(val displayName: String) {
     ZOOM_OUT("Zoom Out"), FLASH_WHITE("Flash White"), FLASH_BLACK("Flash Black"),
     GLITCH("Glitch"), PIXELATE("Pixelate"), BLUR("Blur"),
     ROTATE("Rotate"), RIPPLE("Ripple"), HEART("Heart"),
-    STAR("Star"), CURTAIN("Curtain")
+    STAR("Star"), CURTAIN("Curtain"),
+    ZOOM_BLUR("Zoom Blur"), ROTATE_ZOOM("Rotate Zoom"),
+    SHAKE("Camera Shake"), FLOODLIGHT("Floodlight"),
+    SPIN("Dynamic Spin"), BLINK("Strobe Blink"),
+    SPLIT_V("Vertical Split"), SPLIT_H("Horizontal Split")
 }
 
 enum class AspectRatio(val label: String, val wRatio: Float, val hRatio: Float, val description: String = "") {
@@ -313,10 +317,21 @@ enum class BlurType(val displayName: String) {
     GAUSSIAN("Heavy Blur"),
     MOSAIC("Pixelate Mosaic"),
     BLACKOUT("Solid Blackout"),
+    PAINT("Finger Paint"),
     STACK_BLUR("InShot StackBlur"),
     MOTION_TRAIL("PowerDirector Trail"),
     IMAGE("Picture / Sticker")
 }
+
+data class PaintPoint(val x: Float, val y: Float)
+
+data class PaintStroke(
+    val id: String = UUID.randomUUID().toString(),
+    val points: List<PaintPoint> = emptyList(),
+    val strokeWidthNorm: Float = 0.05f,
+    val isBlackout: Boolean = true,
+    val color: Long = 0xFF000000L
+)
 
 enum class BlurShape(val displayName: String) {
     OVAL("Oval / Circle"),
@@ -356,7 +371,8 @@ data class BlurTrackItem(
     val intensity: Float = 0.85f,
     val feather: Float = 0.15f,
     val customImageUri: String? = null,
-    val keyframes: List<BlurKeyframe> = emptyList()
+    val keyframes: List<BlurKeyframe> = emptyList(),
+    val paintStrokes: List<PaintStroke> = emptyList()
 ) {
     val durationUs: Long get() = (timelineEndUs - timelineStartUs).coerceAtLeast(0L)
 

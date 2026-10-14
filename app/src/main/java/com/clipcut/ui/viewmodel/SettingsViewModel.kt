@@ -43,6 +43,27 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _cacheLimitMb = MutableStateFlow(prefs.getInt(KEY_CACHE_MB, 1024))
     val cacheLimitMb: StateFlow<Int> = _cacheLimitMb.asStateFlow()
 
+    private val _followVideoFrame = MutableStateFlow(prefs.getBoolean(KEY_FOLLOW_FRAME, true))
+    val followVideoFrame: StateFlow<Boolean> = _followVideoFrame.asStateFlow()
+
+    private val _defaultPhotoDuration = MutableStateFlow(prefs.getFloat(KEY_PHOTO_DURATION, 3.0f))
+    val defaultPhotoDuration: StateFlow<Float> = _defaultPhotoDuration.asStateFlow()
+
+    private val _defaultTransitionDuration = MutableStateFlow(prefs.getFloat(KEY_TRANS_DURATION, 0.5f))
+    val defaultTransitionDuration: StateFlow<Float> = _defaultTransitionDuration.asStateFlow()
+
+    private val _mediaFillStyle = MutableStateFlow(prefs.getString(KEY_FILL_STYLE, "fit") ?: "fit")
+    val mediaFillStyle: StateFlow<String> = _mediaFillStyle.asStateFlow()
+
+    private val _audioRippleDelete = MutableStateFlow(prefs.getBoolean(KEY_AUDIO_RIPPLE, true))
+    val audioRippleDelete: StateFlow<Boolean> = _audioRippleDelete.asStateFlow()
+
+    private val _previewPerformanceMode = MutableStateFlow(prefs.getString(KEY_PREVIEW_MODE, "smooth_720p") ?: "smooth_720p")
+    val previewPerformanceMode: StateFlow<String> = _previewPerformanceMode.asStateFlow()
+
+    private val _highBitrateExport = MutableStateFlow(prefs.getBoolean(KEY_HIGH_BITRATE, true))
+    val highBitrateExport: StateFlow<Boolean> = _highBitrateExport.asStateFlow()
+
     fun setTheme(v: String) { _theme.value = v; prefs.edit().putString(KEY_THEME, v).apply() }
     fun setAccent(v: String) { _accent.value = v; prefs.edit().putString(KEY_ACCENT, v).apply() }
     fun setExportRes(v: String) { _exportRes.value = v; prefs.edit().putString(KEY_RES, v).apply() }
@@ -53,6 +74,24 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setGestures(v: Boolean) { _gestures.value = v; prefs.edit().putBoolean(KEY_GESTURES, v).apply() }
     fun setHaptic(v: Int) { _hapticLevel.value = v; prefs.edit().putInt(KEY_HAPTIC, v).apply() }
     fun setCacheLimit(v: Int) { _cacheLimitMb.value = v; prefs.edit().putInt(KEY_CACHE_MB, v).apply() }
+    fun setFollowVideoFrame(v: Boolean) { _followVideoFrame.value = v; prefs.edit().putBoolean(KEY_FOLLOW_FRAME, v).apply() }
+    fun setDefaultPhotoDuration(v: Float) { _defaultPhotoDuration.value = v; prefs.edit().putFloat(KEY_PHOTO_DURATION, v).apply() }
+    fun setDefaultTransitionDuration(v: Float) { _defaultTransitionDuration.value = v; prefs.edit().putFloat(KEY_TRANS_DURATION, v).apply() }
+    fun setMediaFillStyle(v: String) { _mediaFillStyle.value = v; prefs.edit().putString(KEY_FILL_STYLE, v).apply() }
+    fun setAudioRippleDelete(v: Boolean) { _audioRippleDelete.value = v; prefs.edit().putBoolean(KEY_AUDIO_RIPPLE, v).apply() }
+    fun setPreviewPerformanceMode(v: String) { _previewPerformanceMode.value = v; prefs.edit().putString(KEY_PREVIEW_MODE, v).apply() }
+    fun setHighBitrateExport(v: Boolean) { _highBitrateExport.value = v; prefs.edit().putBoolean(KEY_HIGH_BITRATE, v).apply() }
+
+    fun getCacheSizeMb(): Long {
+        val cacheDir = getApplication<Application>().cacheDir
+        fun dirSize(f: java.io.File): Long {
+            if (!f.exists()) return 0L
+            if (!f.isDirectory) return f.length()
+            return f.listFiles()?.sumOf { dirSize(it) } ?: 0L
+        }
+        val bytes = dirSize(cacheDir)
+        return (bytes / (1024 * 1024)).coerceAtLeast(1L)
+    }
 
     fun clearCache() {
         val cacheDir = getApplication<Application>().cacheDir
@@ -70,5 +109,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         private const val KEY_GESTURES = "gestures"
         private const val KEY_HAPTIC = "haptic_level"
         private const val KEY_CACHE_MB = "cache_mb"
+        private const val KEY_FOLLOW_FRAME = "follow_video_frame"
+        private const val KEY_PHOTO_DURATION = "default_photo_duration"
+        private const val KEY_TRANS_DURATION = "default_trans_duration"
+        private const val KEY_FILL_STYLE = "media_fill_style"
+        private const val KEY_AUDIO_RIPPLE = "audio_ripple_delete"
+        private const val KEY_PREVIEW_MODE = "preview_perf_mode"
+        private const val KEY_HIGH_BITRATE = "high_bitrate_export"
     }
 }
