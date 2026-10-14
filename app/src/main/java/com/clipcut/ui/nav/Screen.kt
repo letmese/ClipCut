@@ -15,4 +15,7 @@ sealed class Screen(val route: String) {
         fun createRoute(projectId: String): String = "editor/$projectId"
     }
     object LogViewer : Screen("logs")
+    object Collage : Screen("collage")
+    object PhotoEditor : Screen("photo_editor")
+    object Teleprompter : Screen("teleprompter")
 }

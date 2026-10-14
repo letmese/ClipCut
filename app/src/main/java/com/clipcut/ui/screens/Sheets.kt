@@ -744,7 +744,7 @@ fun FilterSheet(
     }
 }
 
-// ── SpeedRampDialog ─────────────────────────────────────────────────────
+// ── SpeedRampDialog (VN 2D Velocity Speed Ramping) ──────────────────────
 @Composable
 fun SpeedRampDialog(
     initialRamp: SpeedRamp,
@@ -753,26 +753,127 @@ fun SpeedRampDialog(
     onDismiss: () -> Unit
 ) {
     var ramp by remember { mutableStateOf(initialRamp) }
+    var selectedPreset by remember { mutableStateOf<String?>(null) }
+
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-        SheetHeader("Speed Ramp", onDismiss)
-        Spacer(Modifier.height(12.dp))
-        Text("Speed keyframes (${ramp.keyframes.size})", color = Color.White, fontSize = 14.sp)
+        SheetHeader("2D Velocity Speed Ramp (VN)", onDismiss)
         Spacer(Modifier.height(8.dp))
+        Text(
+            "Smooth velocity curve speed ramping with VN curve presets (Bullet Time, Hero, Montage).",
+            color = TextSecondary,
+            fontSize = 11.sp
+        )
+        Spacer(Modifier.height(10.dp))
+
+        // VN Curve Speed Preset Chips
+        Text("VN Curve Presets", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(com.clipcut.core.model.VnCurveSpeedPresets.presets.map { it.first }) { name ->
+                val isSel = selectedPreset == name
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSel) AccentPrimary else Surface2)
+                        .border(1.dp, if (isSel) AccentPrimary else HairlineBorder, RoundedCornerShape(8.dp))
+                        .clickable {
+                            selectedPreset = name
+                            com.clipcut.core.model.VnCurveSpeedPresets.buildRamp(name, clipDurationUs)?.let {
+                                ramp = it
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        name,
+                        color = if (isSel) DarkBackground else Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 2D Velocity Curve Canvas
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(110.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Surface2)
+                .border(1.dp, HairlineBorder, RoundedCornerShape(10.dp))
+                .padding(8.dp)
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                val midY = h / 2f
+
+                // Reference line (1.0x baseline)
+                drawLine(
+                    color = Color.White.copy(alpha = 0.2f),
+                    start = Offset(0f, midY),
+                    end = Offset(w, midY),
+                    strokeWidth = 1.dp.toPx()
+                )
+
+                val dur = clipDurationUs.coerceAtLeast(1_000_000L).toFloat()
+                val kfs = ramp.keyframes.sortedBy { it.timeOffsetUs }
+                if (kfs.size >= 2) {
+                    val path = Path()
+                    kfs.forEachIndexed { idx, kf ->
+                        val px = (kf.timeOffsetUs.toFloat() / dur).coerceIn(0f, 1f) * w
+                        // map speed 0.1x to 4.0x: 1.0x is at midY
+                        val py = (midY - (kf.speed - 1f) * (h / 3f)).coerceIn(8f, h - 8f)
+                        if (idx == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                    }
+                    drawPath(
+                        path = path,
+                        color = ElectricCyan,
+                        style = Stroke(width = 2.5.dp.toPx())
+                    )
+                    kfs.forEach { kf ->
+                        val px = (kf.timeOffsetUs.toFloat() / dur).coerceIn(0f, 1f) * w
+                        val py = (midY - (kf.speed - 1f) * (h / 3f)).coerceIn(8f, h - 8f)
+                        drawCircle(color = Color.White, radius = 4.dp.toPx(), center = Offset(px, py))
+                        drawCircle(color = ElectricCyan, radius = 2.dp.toPx(), center = Offset(px, py))
+                    }
+                }
+            }
+            Text("1.0x Normal", color = Color.White.copy(alpha = 0.4f), fontSize = 9.sp, modifier = Modifier.align(Alignment.CenterStart))
+            Text("Fast", color = ElectricCyan, fontSize = 9.sp, modifier = Modifier.align(Alignment.TopEnd))
+            Text("Slow", color = ProGold, fontSize = 9.sp, modifier = Modifier.align(Alignment.BottomEnd))
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text("Keyframe Points (${ramp.keyframes.size})", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
         ramp.keyframes.forEachIndexed { i, kf ->
-            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("#${i+1}  ${kf.timeOffsetUs/1000}ms  ×${String.format("%.2f", kf.speed)}", color = Color.White, fontSize = 12.sp, modifier = Modifier.weight(1f))
                 IconButton(onClick = { ramp = ramp.copy(keyframes = ramp.keyframes.filterNot { it.id == kf.id }) }) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = AccentPrimary)
+                    Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = Color(0xFFFF5252), modifier = Modifier.size(18.dp))
                 }
             }
         }
         Spacer(Modifier.height(8.dp))
-        PrimaryButton("Add keyframe at playhead", onClick = {
-            val newKf = SpeedKeyframe(timeOffsetUs = clipDurationUs / 2, speed = 1f)
-            ramp = ramp.copy(keyframes = (ramp.keyframes + newKf).sortedBy { it.timeOffsetUs })
-        }, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(12.dp))
-        PrimaryButton("Apply", onClick = { onApply(ramp) }, modifier = Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = {
+                    val newKf = SpeedKeyframe(timeOffsetUs = clipDurationUs / 2, speed = 1.5f)
+                    ramp = ramp.copy(keyframes = (ramp.keyframes + newKf).sortedBy { it.timeOffsetUs })
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("+ Keyframe", color = Color.White, fontSize = 12.sp)
+            }
+            PrimaryButton("Apply Speed Ramp", onClick = {
+                onApply(ramp)
+                onDismiss()
+            }, modifier = Modifier.weight(1f))
+        }
     }
 }
 
@@ -3169,5 +3270,245 @@ fun AudioDuckingSheet(enabled: Boolean, level: Float, onApply: (Boolean, Float) 
         SheetSlider("Music level under voice", lvl, 0f..1f) { lvl = it }
         Spacer(Modifier.height(12.dp))
         PrimaryButton("Apply", onClick = { onApply(en, lvl) }, modifier = Modifier.fillMaxWidth())
+    }
+}
+
+// ── InShot 10-Band Graphic Equalizer Sheet ─────────────────────────────
+@Composable
+fun EqualizerSheet(
+    gains: List<Float> = emptyList(),
+    onApply: (List<Float>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val current = remember(gains) {
+        mutableStateOf(
+            com.clipcut.core.audio.InShotEq.copy(
+                if (gains.size == com.clipcut.core.audio.InShotEq.BAND_COUNT) gains.toFloatArray() else null
+            )
+        )
+    }
+
+    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+        SheetHeader("Equalizer (10-Band InShot)", onDismiss)
+        Spacer(Modifier.height(8.dp))
+        Text("Presets", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(com.clipcut.core.audio.InShotEq.PRESETS) { p ->
+                val selected = current.value.contentEquals(p.gains)
+                Surface(
+                    onClick = {
+                        current.value = p.gains.copyOf()
+                        onApply(current.value.toList())
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (selected) AccentPrimary else Surface2,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) AccentPrimary else HairlineBorder)
+                ) {
+                    Text(
+                        p.name,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (selected) DarkBackground else Color.White
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+
+        // 10 Band Sliders
+        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            com.clipcut.core.audio.InShotEq.FREQUENCIES_HZ.forEachIndexed { i, freq ->
+                val gain = current.value[i]
+                val freqLabel = if (freq >= 1000) "${freq / 1000} kHz" else "$freq Hz"
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(freqLabel, color = TextSecondary, fontSize = 11.sp, modifier = Modifier.width(60.dp))
+                    Slider(
+                        value = gain,
+                        onValueChange = { newV ->
+                            current.value = current.value.copyOf().also { it[i] = newV }
+                        },
+                        valueRange = -12f..12f,
+                        colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary),
+                        modifier = Modifier.weight(1f).height(32.dp)
+                    )
+                    Text(
+                        "${if (gain > 0) "+" else ""}${gain.toInt()} dB",
+                        color = if (gain == 0f) TextSecondary else AccentPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.width(46.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = {
+                    current.value = com.clipcut.core.audio.InShotEq.DEFAULT_GAINS.copyOf()
+                    onApply(current.value.toList())
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Reset Flat", color = Color.White)
+            }
+            PrimaryButton(
+                text = "Apply EQ",
+                onClick = {
+                    onApply(current.value.toList())
+                    onDismiss()
+                },
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+// ── PowerDirector Voice Changer & Audio FX Sheet ───────────────────────
+@Composable
+fun VoiceRemixSheet(
+    currentPreset: com.clipcut.core.audio.AudioDsp.VoicePreset = com.clipcut.core.audio.AudioDsp.VoicePreset.NATURAL,
+    onApplyVoice: (com.clipcut.core.audio.AudioDsp.VoicePreset) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selected by remember { mutableStateOf(currentPreset) }
+
+    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+        SheetHeader("Voice Studio & Remix (PowerDirector)", onDismiss)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Real-time pitch shift, cyber-modulation, and character vocal filters rendered on-device.",
+            color = TextSecondary,
+            fontSize = 11.sp
+        )
+        Spacer(Modifier.height(14.dp))
+
+        com.clipcut.core.audio.AudioDsp.VoicePreset.values().forEach { preset ->
+            val isSel = selected == preset
+            Surface(
+                onClick = {
+                    selected = preset
+                    onApplyVoice(preset)
+                },
+                shape = RoundedCornerShape(10.dp),
+                color = if (isSel) AccentPrimary.copy(alpha = 0.2f) else Surface2,
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (isSel) AccentPrimary else HairlineBorder),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Filled.RecordVoiceOver,
+                        contentDescription = null,
+                        tint = if (isSel) AccentPrimary else TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(preset.displayName, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        val desc = when (preset) {
+                            com.clipcut.core.audio.AudioDsp.VoicePreset.NATURAL -> "Original unaltered audio"
+                            com.clipcut.core.audio.AudioDsp.VoicePreset.CHIPMUNK -> "+8 semitones high-pitched voice"
+                            com.clipcut.core.audio.AudioDsp.VoicePreset.DEEP_BASS -> "-7 semitones deep movie narrator"
+                            com.clipcut.core.audio.AudioDsp.VoicePreset.ROBOT -> "40 Hz ring-modulated cyber-vocal"
+                            com.clipcut.core.audio.AudioDsp.VoicePreset.RADIO -> "+2 semitones bandwidth limited AM radio"
+                            com.clipcut.core.audio.AudioDsp.VoicePreset.ALIEN -> "+5 semitones dual modulation"
+                        }
+                        Text(desc, color = TextSecondary, fontSize = 11.sp)
+                    }
+                    if (isSel) {
+                        Icon(Icons.Filled.Check, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        PrimaryButton("Done", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
+    }
+}
+
+// ── VN Brand Kit Sheet ─────────────────────────────────────────────────
+@Composable
+fun BrandKitSheet(
+    current: com.clipcut.core.model.BrandKitConfig?,
+    onApply: (com.clipcut.core.model.BrandKitConfig?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val base = current ?: com.clipcut.core.model.BrandKitConfig()
+    var watermarkText by remember { mutableStateOf(base.watermarkText) }
+    var selectedColor by remember { mutableStateOf(base.brandColor) }
+    var posIndex by remember { mutableIntStateOf(base.watermarkPosIndex) }
+
+    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+        SheetHeader("Brand Kit Studio (VN)", onDismiss)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "VN Brand Kit: automatically overlay your creator watermark, custom brand palette, and channel signature.",
+            color = TextSecondary,
+            fontSize = 11.sp
+        )
+        Spacer(Modifier.height(14.dp))
+
+        OutlinedTextField(
+            value = watermarkText,
+            onValueChange = { watermarkText = it },
+            label = { Text("Watermark / Channel Signature", color = TextSecondary, fontSize = 12.sp) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = Surface2,
+                unfocusedContainerColor = Surface2,
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                cursorColor = AccentPrimary
+            )
+        )
+
+        Spacer(Modifier.height(12.dp))
+        Text("Watermark Position", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            listOf("Bottom Center" to 0, "Top Left" to 1, "Top Right" to 2, "Bottom Right" to 4).forEach { (lbl, idx) ->
+                val isSel = posIndex == idx
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSel) AccentPrimary else Surface2)
+                        .border(1.dp, if (isSel) AccentPrimary else HairlineBorder, RoundedCornerShape(8.dp))
+                        .clickable { posIndex = idx }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(lbl, color = if (isSel) DarkBackground else Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        PrimaryButton(
+            text = "Save Brand Kit",
+            onClick = {
+                onApply(
+                    com.clipcut.core.model.BrandKitConfig(
+                        brandColor = selectedColor,
+                        watermarkText = watermarkText,
+                        watermarkPosIndex = posIndex
+                    )
+                )
+                onDismiss()
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }

@@ -12,13 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.School
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,34 +20,52 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.clipcut.BuildConfig
 import com.clipcut.core.model.AspectRatio
 import com.clipcut.core.model.Project
 import com.clipcut.ui.components.PrimaryButton
 import com.clipcut.ui.theme.*
 
 /**
- * ProjectListScreen — ClipCut Pro Home & Projects Library.
- * Designed with the Obsidian Precision Motion system (Stitch UI).
+ * ProjectListScreen — ClipCut Pro Mobile Home Hub (Google Stitch UI).
+ * Incorporates 6-tile creation grid, aspect ratio pills, recent drafts with 3-dot
+ * management menus (Open, Duplicate, Rename, Delete), and 4-tab docked bottom navigation.
  */
 @Composable
 fun ProjectListScreen(
     viewModel: com.clipcut.ui.viewmodel.ProjectListViewModel,
     onOpenProject: (String) -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenCollage: () -> Unit = {},
+    onOpenPhotoEditor: () -> Unit = {},
+    onOpenTeleprompter: () -> Unit = {}
 ) {
     val projects by viewModel.projects.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
     var projectToDelete by remember { mutableStateOf<Project?>(null) }
+    var projectToRename by remember { mutableStateOf<Project?>(null) }
+    var renameText by remember { mutableStateOf("") }
     var projectName by remember { mutableStateOf("") }
     var selectedRatio by remember { mutableStateOf(AspectRatio.R_9_16) }
-    var tab by remember { mutableStateOf(0) }
+    var selectedBottomTab by remember { mutableIntStateOf(0) }
 
     Scaffold(
         containerColor = DarkBackground,
-        bottomBar = { HomeBottomBar(tab = tab, onTabChange = { tab = it }) },
+        bottomBar = {
+            HomeBottomBar(
+                tab = selectedBottomTab,
+                onTabChange = { tabIdx ->
+                    selectedBottomTab = tabIdx
+                    if (tabIdx == 3) {
+                        onOpenSettings()
+                    }
+                }
+            )
+        },
         topBar = {
             Surface(
                 color = Surface1,
@@ -99,7 +111,7 @@ fun ProjectListScreen(
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                "v${com.clipcut.BuildConfig.VERSION_NAME}",
+                                "v${BuildConfig.VERSION_NAME}",
                                 color = TextSecondary,
                                 fontWeight = FontWeight.Medium,
                                 fontSize = 10.sp
@@ -135,10 +147,23 @@ fun ProjectListScreen(
 
             Spacer(Modifier.height(20.dp))
 
-            // Quick AI Tools Row
-            QuickAiToolsRow(
-                onToolClick = { toolName ->
-                    viewModel.createProject("Project - $toolName", selectedRatio) { id ->
+            // 6-Tile Quick Tools Grid (Stitch Home Hub)
+            QuickToolsGrid(
+                onOpenCollage = onOpenCollage,
+                onOpenPhotoEditor = onOpenPhotoEditor,
+                onOpenTeleprompter = onOpenTeleprompter,
+                onSpeedRamp = {
+                    viewModel.createProject("Speed Ramp Clip", selectedRatio) { id ->
+                        onOpenProject(id)
+                    }
+                },
+                onAudioExtractor = {
+                    viewModel.createProject("Audio Studio", selectedRatio) { id ->
+                        onOpenProject(id)
+                    }
+                },
+                onBrandKit = {
+                    viewModel.createProject("Branded Video", selectedRatio) { id ->
                         onOpenProject(id)
                     }
                 }
@@ -153,14 +178,19 @@ fun ProjectListScreen(
 
             Spacer(Modifier.height(24.dp))
 
-            // Recent Projects
+            // Recent Projects with 3-dot management menu
             RecentProjectsGrid(
                 projects = projects,
                 onOpen = onOpenProject,
+                onDuplicate = { viewModel.duplicateProject(it) },
+                onRename = {
+                    projectToRename = it
+                    renameText = it.name
+                },
                 onDelete = { projectToDelete = it }
             )
 
-            Spacer(Modifier.height(80.dp))
+            Spacer(Modifier.height(40.dp))
         }
     }
 
@@ -180,6 +210,40 @@ fun ProjectListScreen(
             },
             dismissButton = {
                 TextButton(onClick = { projectToDelete = null }) { Text("Cancel", color = TextSecondary) }
+            }
+        )
+    }
+
+    projectToRename?.let { proj ->
+        AlertDialog(
+            onDismissRequest = { projectToRename = null },
+            containerColor = Surface2,
+            title = { Text("Rename Project", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Surface3,
+                        unfocusedContainerColor = Surface3,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = AccentPrimary
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.renameProject(proj.id, renameText)
+                        projectToRename = null
+                    }
+                ) { Text("Rename", color = AccentPrimary, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { projectToRename = null }) { Text("Cancel", color = TextSecondary) }
             }
         )
     }
@@ -204,15 +268,16 @@ fun ProjectListScreen(
                             cursorColor = AccentPrimary
                         )
                     )
-                    Text("Canvas Ratio", color = TextSecondary, fontSize = 12.sp)
+                    Text("Canvas Aspect Ratio", color = TextSecondary, fontSize = 12.sp)
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         listOf(
-                            AspectRatio.R_9_16 to "9:16 (Shorts/Reels)",
-                            AspectRatio.R_16_9 to "16:9 (YouTube)",
-                            AspectRatio.R_1_1 to "1:1 (Square)"
+                            AspectRatio.R_9_16 to "9:16",
+                            AspectRatio.R_16_9 to "16:9",
+                            AspectRatio.R_1_1 to "1:1",
+                            AspectRatio.R_4_5 to "4:5"
                         ).forEach { (ratio, label) ->
                             val isSel = selectedRatio == ratio
                             Box(
@@ -230,7 +295,7 @@ fun ProjectListScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    ratio.label,
+                                    label,
                                     color = if (isSel) AccentPrimary else Color.White,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
@@ -333,47 +398,82 @@ private fun HeroNewProjectCard(
 }
 
 @Composable
-private fun QuickAiToolsRow(onToolClick: (String) -> Unit) {
-    Column {
+private fun QuickToolsGrid(
+    onOpenCollage: () -> Unit,
+    onOpenPhotoEditor: () -> Unit,
+    onOpenTeleprompter: () -> Unit,
+    onSpeedRamp: () -> Unit,
+    onAudioExtractor: () -> Unit,
+    onBrandKit: () -> Unit
+) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
         Text(
-            "Quick AI Tools",
+            "Quick Studios & Benchmark Tools",
             color = Color.White,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp,
-            modifier = Modifier.padding(horizontal = 16.dp)
+            fontSize = 14.sp
         )
-        Spacer(Modifier.height(10.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            listOf(
-                "⚡ 1-Tap Face Censor" to AccentPrimary,
-                "🎞️ Multi-Track" to ProGold,
-                "🎨 3D LUT Grade" to AccentViolet,
-                "🪄 Auto Motion Tracking" to AccentBlue,
-                "🔲 Mosaic & Blur" to AccentPrimary
-            ).forEach { (tool, color) ->
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Surface2)
-                        .border(1.dp, color.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
-                        .clickable { onToolClick(tool) }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        tool,
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+        Spacer(Modifier.height(12.dp))
+
+        val tools = listOf(
+            ToolTileData("Collage Maker", "Multi-clip layout", Icons.Filled.GridView, AccentPrimary, onOpenCollage),
+            ToolTileData("Photo Studio", "ColorMatrix FX", Icons.Filled.PhotoCamera, AccentViolet, onOpenPhotoEditor),
+            ToolTileData("Teleprompter", "Glass rig scroller", Icons.Filled.PlayArrow, ProGold, onOpenTeleprompter),
+            ToolTileData("Speed Ramp", "VN 2D curves", Icons.Filled.Speed, AccentBlue, onSpeedRamp),
+            ToolTileData("Audio Studio", "10-Band EQ & FX", Icons.Filled.GraphicEq, AccentGold, onAudioExtractor),
+            ToolTileData("Brand Kit", "VN watermark & logo", Icons.Filled.Verified, Color(0xFF00E676), onBrandKit)
+        )
+
+        for (row in 0 until 2) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                for (col in 0 until 3) {
+                    val item = tools[row * 3 + col]
+                    ToolTile(item = item, modifier = Modifier.weight(1f))
                 }
             }
+        }
+    }
+}
+
+private data class ToolTileData(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val tint: Color,
+    val onClick: () -> Unit
+)
+
+@Composable
+private fun ToolTile(item: ToolTileData, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = item.onClick,
+        modifier = modifier.height(86.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = Surface2,
+        border = androidx.compose.foundation.BorderStroke(1.dp, HairlineBorder)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.Start
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(item.tint.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(item.icon, contentDescription = item.title, tint = item.tint, modifier = Modifier.size(16.dp))
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(item.title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(item.subtitle, color = TextSecondary, fontSize = 9.sp, maxLines = 1)
         }
     }
 }
@@ -403,7 +503,7 @@ private fun TemplatesCarousel(onOpenTemplate: (com.clipcut.core.templates.Templa
                 val color = colors[idx % colors.size]
                 Box(
                     modifier = Modifier
-                        .size(width = 150.dp, height = 180.dp)
+                        .size(width = 150.dp, height = 160.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(Surface2)
                         .border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
@@ -427,24 +527,6 @@ private fun TemplatesCarousel(onOpenTemplate: (com.clipcut.core.templates.Templa
                     }
                 }
             }
-        } else {
-            items(templates.size) { idx ->
-                val t = templates[idx]
-                Box(
-                    modifier = Modifier
-                        .size(width = 150.dp, height = 180.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Surface2)
-                        .border(1.dp, t.color.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
-                        .padding(14.dp),
-                    contentAlignment = Alignment.BottomStart
-                ) {
-                    Column {
-                        Text(t.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text("${t.duration} • ${t.aspect}", color = TextSecondary, fontSize = 10.sp)
-                    }
-                }
-            }
         }
     }
 }
@@ -453,7 +535,9 @@ private fun TemplatesCarousel(onOpenTemplate: (com.clipcut.core.templates.Templa
 private fun RecentProjectsGrid(
     projects: List<Project>,
     onOpen: (String) -> Unit,
-    onDelete: (Project) -> Unit = {}
+    onDuplicate: (Project) -> Unit,
+    onRename: (Project) -> Unit,
+    onDelete: (Project) -> Unit
 ) {
     if (projects.isEmpty()) {
         com.clipcut.ui.components.EmptyState(
@@ -485,9 +569,12 @@ private fun RecentProjectsGrid(
     ) {
         for (i in projects.indices step 2) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                ProjectCard(projects[i], onOpen, onDelete, Modifier.weight(1f))
-                if (i + 1 < projects.size) ProjectCard(projects[i + 1], onOpen, onDelete, Modifier.weight(1f))
-                else Spacer(Modifier.weight(1f))
+                ProjectCard(projects[i], onOpen, onDuplicate, onRename, onDelete, Modifier.weight(1f))
+                if (i + 1 < projects.size) {
+                    ProjectCard(projects[i + 1], onOpen, onDuplicate, onRename, onDelete, Modifier.weight(1f))
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
             }
         }
     }
@@ -497,9 +584,13 @@ private fun RecentProjectsGrid(
 private fun ProjectCard(
     project: Project,
     onOpen: (String) -> Unit,
-    onDelete: (Project) -> Unit = {},
+    onDuplicate: (Project) -> Unit,
+    onRename: (Project) -> Unit,
+    onDelete: (Project) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
     Box(
         modifier = modifier
             .height(160.dp)
@@ -546,19 +637,59 @@ private fun ProjectCard(
                     )
                 }
 
-                IconButton(
-                    onClick = { onDelete(project) },
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .size(32.dp)
-                        .padding(2.dp)
-                ) {
-                    Icon(
-                        Icons.Filled.Delete,
-                        contentDescription = "Delete",
-                        tint = Color(0xFFFF6B6B),
-                        modifier = Modifier.size(18.dp)
-                    )
+                // 3-dot management button
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    IconButton(
+                        onClick = { menuExpanded = true },
+                        modifier = Modifier.size(32.dp).padding(2.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = "Project Options",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                        modifier = Modifier.background(Surface2)
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Open Project", color = Color.White) },
+                            leadingIcon = { Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = AccentPrimary) },
+                            onClick = {
+                                menuExpanded = false
+                                onOpen(project.id)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Duplicate", color = Color.White) },
+                            leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = AccentViolet) },
+                            onClick = {
+                                menuExpanded = false
+                                onDuplicate(project)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Rename", color = Color.White) },
+                            leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, tint = ProGold) },
+                            onClick = {
+                                menuExpanded = false
+                                onRename(project)
+                            }
+                        )
+                        HorizontalDivider(color = HairlineBorder)
+                        DropdownMenuItem(
+                            text = { Text("Delete", color = Color(0xFFFF5252)) },
+                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, tint = Color(0xFFFF5252)) },
+                            onClick = {
+                                menuExpanded = false
+                                onDelete(project)
+                            }
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -583,9 +714,10 @@ private fun ProjectCard(
 @Composable
 private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
     val tabs = listOf(
-        "Projects" to Icons.Filled.Movie,
+        "Create" to Icons.Filled.Movie,
         "Templates" to Icons.Filled.AutoAwesome,
-        "Tutorials" to Icons.Filled.School
+        "Store" to Icons.Filled.LocalGroceryStore,
+        "Settings" to Icons.Filled.Settings
     )
     Surface(
         color = DarkSurface,
@@ -610,7 +742,7 @@ private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
                         ) { onTabChange(i) }
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
@@ -627,12 +759,3 @@ private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
         }
     }
 }
-
-private data class TemplatePreview(val name: String, val duration: String, val aspect: String, val color: Color)
-private val templates = listOf(
-    TemplatePreview("Vlog Intro", "15s", "16:9", AccentPrimary),
-    TemplatePreview("Reel Drop", "30s", "9:16", AccentSecondary),
-    TemplatePreview("Cinematic", "60s", "21:9", AccentGold),
-    TemplatePreview("Lyrical", "45s", "1:1", AccentViolet),
-    TemplatePreview("Trailer", "90s", "16:9", AccentBlue)
-)

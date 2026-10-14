@@ -34,6 +34,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import java.io.File
 import java.util.UUID
 
@@ -77,6 +80,32 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _trackingState = MutableStateFlow<String?>(null)
     val trackingState: StateFlow<String?> = _trackingState.asStateFlow()
+
+    var equalizerGains by mutableStateOf<List<Float>>(emptyList())
+    var voicePreset by mutableStateOf(com.clipcut.core.audio.AudioDsp.VoicePreset.NATURAL)
+    var brandKitConfig by mutableStateOf<com.clipcut.core.model.BrandKitConfig?>(null)
+
+    fun applyBrandKit(config: com.clipcut.core.model.BrandKitConfig?) {
+        brandKitConfig = config
+        if (config != null && config.watermarkText.isNotBlank()) {
+            val (posNormX, posNormY) = config.watermarkPosition
+            val watermarkOverlay = OverlayItem(
+                id = "brand_kit_watermark",
+                text = config.watermarkText,
+                timelineStartUs = 0L,
+                timelineEndUs = (_project.value?.totalDurationUs ?: 30_000_000L).coerceAtLeast(30_000_000L),
+                normalizedX = posNormX,
+                normalizedY = posNormY,
+                scale = (config.watermarkScale * 10f).coerceIn(0.3f, 1.5f),
+                textSizeSp = 18f,
+                textColor = config.brandColor
+            )
+            mutate { p ->
+                val filtered = p.overlays.filterNot { it.id == "brand_kit_watermark" }
+                p.copy(overlays = filtered + watermarkOverlay)
+            }
+        }
+    }
 
     private val undoStack = ArrayDeque<Project>()
     private val redoStack = ArrayDeque<Project>()

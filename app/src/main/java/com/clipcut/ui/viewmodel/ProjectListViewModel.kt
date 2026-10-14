@@ -61,6 +61,30 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    fun duplicateProject(project: Project) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val copy = project.copy(
+                id = java.util.UUID.randomUUID().toString(),
+                name = "${project.name} (Copy)",
+                lastModifiedTime = System.currentTimeMillis()
+            )
+            dao.insertProject(ProjectEntity.fromDomain(copy))
+            refresh()
+        }
+    }
+
+    fun renameProject(id: String, newName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val entity = dao.getProjectById(id) ?: return@launch
+            val updated = entity.copy(
+                name = newName.ifBlank { entity.name },
+                lastModifiedTime = System.currentTimeMillis()
+            )
+            dao.updateProject(updated)
+            refresh()
+        }
+    }
+
     fun deleteProject(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
             dao.deleteProjectById(id)

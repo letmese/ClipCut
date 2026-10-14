@@ -85,6 +85,10 @@ import com.clipcut.ui.screens.BlendModeDialog
 import com.clipcut.ui.screens.TrimSheet
 import com.clipcut.ui.screens.TextSheet
 import com.clipcut.ui.screens.AudioDuckingSheet
+import com.clipcut.ui.screens.SpeedRampDialog
+import com.clipcut.ui.screens.EqualizerSheet
+import com.clipcut.ui.screens.VoiceRemixSheet
+import com.clipcut.ui.screens.BrandKitSheet
 import com.clipcut.ui.theme.AccentPrimary
 import com.clipcut.ui.theme.DarkBackground
 import com.clipcut.ui.theme.Surface1
@@ -1689,9 +1693,42 @@ fun EditorScreen(
                 onApply = { sp -> sid?.let { viewModel.setClipSpeed(it, sp) } },
                 onDismiss = { selectedTool = null }
             )
+            EditorTool.SPEED_RAMP -> SpeedRampDialog(
+                initialRamp = clip?.speedRamp ?: com.clipcut.core.model.SpeedRamp(),
+                clipDurationUs = clip?.sourceDurationUs ?: (project?.totalDurationUs ?: 5_000_000L),
+                onApply = { ramp ->
+                    sid?.let { viewModel.setClipSpeedRamp(it, ramp) }
+                    selectedTool = null
+                },
+                onDismiss = { selectedTool = null }
+            )
             EditorTool.VOLUME -> VolumeSheet(
                 current = clip?.volume ?: 1f,
                 onApply = { v -> sid?.let { viewModel.setClipVolume(it, v) } },
+                onDismiss = { selectedTool = null }
+            )
+            EditorTool.EQUALIZER -> EqualizerSheet(
+                gains = viewModel.equalizerGains,
+                onApply = { gains ->
+                    viewModel.equalizerGains = gains
+                    android.widget.Toast.makeText(ctx, "10-Band EQ applied", android.widget.Toast.LENGTH_SHORT).show()
+                },
+                onDismiss = { selectedTool = null }
+            )
+            EditorTool.VOICE -> VoiceRemixSheet(
+                currentPreset = viewModel.voicePreset,
+                onApplyVoice = { preset ->
+                    viewModel.voicePreset = preset
+                    android.widget.Toast.makeText(ctx, "Voice effect: ${preset.displayName}", android.widget.Toast.LENGTH_SHORT).show()
+                },
+                onDismiss = { selectedTool = null }
+            )
+            EditorTool.BRAND_KIT -> BrandKitSheet(
+                current = viewModel.brandKitConfig,
+                onApply = { config ->
+                    viewModel.applyBrandKit(config)
+                    android.widget.Toast.makeText(ctx, "Brand kit applied to project", android.widget.Toast.LENGTH_SHORT).show()
+                },
                 onDismiss = { selectedTool = null }
             )
             EditorTool.ROTATE -> RotateSheet(

@@ -14,11 +14,14 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.clipcut.core.log.AppLog
 import com.clipcut.ui.nav.Screen
+import com.clipcut.ui.screens.CollageScreen
 import com.clipcut.ui.screens.EditorScreen
 import com.clipcut.ui.screens.LogViewerScreen
 import com.clipcut.ui.screens.OnboardingScreen
+import com.clipcut.ui.screens.PhotoEditorScreen
 import com.clipcut.ui.screens.ProjectListScreen
 import com.clipcut.ui.screens.SettingsScreen
+import com.clipcut.ui.screens.TeleprompterScreen
 import com.clipcut.ui.theme.ClipCutTheme
 import com.clipcut.ui.viewmodel.EditorViewModel
 import com.clipcut.ui.viewmodel.ProjectListViewModel
@@ -49,7 +52,10 @@ class MainActivity : ComponentActivity() {
                             onOpenProject = { id ->
                                 navController.navigate(Screen.Editor.createRoute(id))
                             },
-                            onOpenSettings = { navController.navigate(Screen.Settings.route) }
+                            onOpenSettings = { navController.navigate(Screen.Settings.route) },
+                            onOpenCollage = { navController.navigate(Screen.Collage.route) },
+                            onOpenPhotoEditor = { navController.navigate(Screen.PhotoEditor.route) },
+                            onOpenTeleprompter = { navController.navigate(Screen.Teleprompter.route) }
                         )
                     }
                     composable(Screen.Settings.route) {
@@ -57,6 +63,15 @@ class MainActivity : ComponentActivity() {
                             onNavigateBack = { navController.popBackStack() },
                             onOpenLogs = { navController.navigate(Screen.LogViewer.route) }
                         )
+                    }
+                    composable(Screen.Collage.route) {
+                        CollageScreen(onNavigateBack = { navController.popBackStack() })
+                    }
+                    composable(Screen.PhotoEditor.route) {
+                        PhotoEditorScreen(onNavigateBack = { navController.popBackStack() })
+                    }
+                    composable(Screen.Teleprompter.route) {
+                        TeleprompterScreen(onNavigateBack = { navController.popBackStack() })
                     }
                     composable(Screen.Editor.route) { backStackEntry ->
                         val projectId = backStackEntry.arguments?.getString("projectId") ?: ""
