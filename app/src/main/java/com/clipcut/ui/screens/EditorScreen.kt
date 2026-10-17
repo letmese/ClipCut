@@ -1218,6 +1218,7 @@ fun EditorScreen(
                         // ── Render Interactive Blur / Censor Tracks ──
                         val activeBlurs = project?.blurTracks?.filter {
                             it.blurType != com.clipcut.core.model.BlurType.PAINT &&
+                            it.blurType != com.clipcut.core.model.BlurType.CHROMA_PAINT &&
                             positionUs in it.timelineStartUs..it.timelineEndUs
                         } ?: emptyList()
 
@@ -2050,6 +2051,8 @@ fun EditorScreen(
                                                                 blurType = com.clipcut.core.model.BlurType.CHROMA_PAINT,
                                                                 customImageUri = chromaPaintStudioUri,
                                                                 intensity = if (chromaPaintInverted) -1f else if (chromaPaintViewMode == "STUDIO") 1f else 0f,
+                                                                width = 0f,
+                                                                height = 0f,
                                                                 paintStrokes = listOf(newStroke)
                                                             )
                                                             viewModel.addBlurTrack(newTrack)
@@ -2249,6 +2252,8 @@ fun EditorScreen(
                                                                     blurType = com.clipcut.core.model.BlurType.CHROMA_PAINT,
                                                                     customImageUri = chromaPaintStudioUri,
                                                                     intensity = if (chromaPaintInverted) -1f else if (chromaPaintViewMode == "STUDIO") 1f else 0f,
+                                                                    width = 0f,
+                                                                    height = 0f,
                                                                     paintStrokes = listOf(newStroke)
                                                                 )
                                                                 viewModel.addBlurTrack(newTrack)
@@ -2610,7 +2615,7 @@ fun EditorScreen(
 
                     // ── Floating Quick Controls Bar for Selected Blur ──
                     val activeBlur = project?.blurTracks?.find { it.id == selectedBlurId }
-                    if (activeBlur != null) {
+                    if (activeBlur != null && activeBlur.blurType != com.clipcut.core.model.BlurType.PAINT && activeBlur.blurType != com.clipcut.core.model.BlurType.CHROMA_PAINT) {
                         Surface(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
@@ -3029,6 +3034,9 @@ fun EditorScreen(
                 },
                 onOpenFingerPaint = {
                     selectedTool = null
+                    selectedBlurId = null
+                    selectedOverlayId = null
+                    selectedPipId = null
                     isChromaPaintActive = true
                 },
                 onDismiss = { selectedTool = null }
@@ -3164,6 +3172,9 @@ fun EditorScreen(
                 },
                 onOpenFingerPaintStudio = { studioUri ->
                     selectedTool = null
+                    selectedBlurId = null
+                    selectedOverlayId = null
+                    selectedPipId = null
                     chromaPaintStudioUri = studioUri
                     isChromaPaintActive = true
                 },
@@ -3184,7 +3195,10 @@ fun EditorScreen(
             )
             EditorTool.BLUR -> {
                 val totalDur = project?.totalDurationUs ?: 5_000_000L
-                val blurTracks = project?.blurTracks ?: emptyList()
+                val blurTracks = project?.blurTracks?.filter {
+                    it.blurType != com.clipcut.core.model.BlurType.PAINT &&
+                    it.blurType != com.clipcut.core.model.BlurType.CHROMA_PAINT
+                } ?: emptyList()
                 val currentBlur = blurTracks.firstOrNull { it.id == selectedBlurId }
                     ?: blurTracks.firstOrNull { positionUs in it.timelineStartUs..it.timelineEndUs }
                     ?: blurTracks.firstOrNull()

@@ -184,6 +184,9 @@ class PipelineRenderer(private val context: Context) {
             chroma?.threshold = chromaKeyThreshold
             chroma?.smoothness = chromaKeySmoothness
             target?.bind()
+            GLES20.glViewport(0, 0, width, height)
+            GLES20.glClearColor(0f, 0f, 0f, 0f)
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
             chroma?.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
             target?.unbind()
             currentTex = target?.textureId ?: currentTex
@@ -228,6 +231,11 @@ class PipelineRenderer(private val context: Context) {
             val blurF = regionalBlurFilter
             if (blurF != null) {
                 for (blurItem in activeBlurs) {
+                    if (blurItem.blurType == com.clipcut.core.model.BlurType.PAINT ||
+                        blurItem.blurType == com.clipcut.core.model.BlurType.CHROMA_PAINT ||
+                        blurItem.blurType == com.clipcut.core.model.BlurType.IMAGE) {
+                        continue
+                    }
                     if (timelinePtsUs in blurItem.timelineStartUs..blurItem.timelineEndUs) {
                         val isEditing = (blurItem.id == editingBlurId && editingBlurX != null)
                         val tf = blurItem.getTransformAt(timelinePtsUs)
@@ -268,7 +276,10 @@ class PipelineRenderer(private val context: Context) {
             blend?.updateMode(blendMode)
             blend?.drawBlend(baseLayerTexId, currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
         } else {
-            passthrough.draw(currentTex, GlUtil.IDENTITY_MATRIX, GlUtil.IDENTITY_MATRIX, width, height)
+            GLES20.glEnable(GLES20.GL_BLEND)
+            GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+            passthrough.draw(currentTex, GlUtil.IDENTITY_MATRIX, mvpMatrix, width, height)
+            GLES20.glDisable(GLES20.GL_BLEND)
         }
     }
 

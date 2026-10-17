@@ -515,12 +515,24 @@ fun TimelineView(
                                     modifier = Modifier
                                         .offset { IntOffset(with(density) { startDp.roundToPx() }, with(density) { 2.dp.roundToPx() }) }
                                 ) {
+                                    val blockLabel = when (b.blurType) {
+                                        com.clipcut.core.model.BlurType.CHROMA_PAINT -> "Studio Paint"
+                                        com.clipcut.core.model.BlurType.PAINT -> "Finger Paint"
+                                        com.clipcut.core.model.BlurType.IMAGE -> "Sticker"
+                                        else -> if (b.keyframes.isNotEmpty()) "⚡ Blur (${b.shape.displayName})" else "Blur (${b.shape.displayName})"
+                                    }
+                                    val blockColor = when (b.blurType) {
+                                        com.clipcut.core.model.BlurType.CHROMA_PAINT -> Color(0xFF10B981).copy(alpha = 0.50f)
+                                        com.clipcut.core.model.BlurType.PAINT -> Color(0xFFE53935).copy(alpha = 0.40f)
+                                        com.clipcut.core.model.BlurType.IMAGE -> Color(0xFFFFB300).copy(alpha = 0.40f)
+                                        else -> Color(0xFF00E5FF).copy(alpha = 0.40f)
+                                    }
                                     ClipBlock(
-                                        label = if (b.keyframes.isNotEmpty()) "⚡ Blur (${b.shape.displayName})" else "Blur (${b.shape.displayName})",
+                                        label = blockLabel,
                                         durationText = "${durSec}s",
                                         widthDp = widthDp,
                                         selected = isSelected,
-                                        color = Color(0xFF00E5FF).copy(alpha = 0.40f),
+                                        color = blockColor,
                                         onClick = {
                                             internalSelectedBlurId = if (isSelected) null else b.id
                                             onSelectBlur?.invoke(b)
