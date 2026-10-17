@@ -97,23 +97,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun applyBrandKit(config: com.clipcut.core.model.BrandKitConfig?) {
         brandKitConfig = config
-        if (config != null && config.watermarkText.isNotBlank()) {
-            val (posNormX, posNormY) = config.watermarkPosition
-            val watermarkOverlay = OverlayItem(
-                id = "brand_kit_watermark",
-                text = config.watermarkText,
-                timelineStartUs = 0L,
-                timelineEndUs = (_project.value?.totalDurationUs ?: 30_000_000L).coerceAtLeast(30_000_000L),
-                normalizedX = posNormX,
-                normalizedY = posNormY,
-                scale = (config.watermarkScale * 10f).coerceIn(0.3f, 1.5f),
-                textSizeSp = 18f,
-                textColor = config.brandColor
-            )
-            mutate { p ->
-                val filtered = p.overlays.filterNot { it.id == "brand_kit_watermark" }
-                p.copy(overlays = filtered + watermarkOverlay)
-            }
+        previewRenderer.brandKitConfig = config
+        previewRenderer.isDirty = true
+        mutate { p ->
+            val filtered = p.overlays.filterNot { it.id == "brand_kit_watermark" }
+            p.copy(overlays = filtered, brandKitConfig = config)
         }
     }
 
@@ -135,6 +123,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     _project.value = p
                     playerManager.syncWithProject(p)
                     previewRenderer.setProject(p)
+                    brandKitConfig = p.brandKitConfig
+                    previewRenderer.brandKitConfig = p.brandKitConfig
                 }
                 AppLog.i(TAG, "loadProject $projectId clips=${p.videoClips.size}")
             } catch (t: Throwable) {
@@ -293,6 +283,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 scale = scale.coerceIn(0.2f, 5.0f),
                 rotation = ((rotation % 360f) + 360f) % 360f
             ) else it
+        })
+    }
+    fun setOverlayCrop(id: String, crop: CropRect?) = mutate { p ->
+        p.copy(overlays = p.overlays.map {
+            if (it.id == id) it.copy(cropRect = crop) else it
         })
     }
     fun duplicateOverlay(id: String) = mutate { p ->
@@ -594,6 +589,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             com.clipcut.core.model.BlurType.MOTION_TRAIL -> "PowerDirector Trail"
             com.clipcut.core.model.BlurType.IMAGE -> "Stickers"
             com.clipcut.core.model.BlurType.PAINT -> "Finger Paint"
+            com.clipcut.core.model.BlurType.CHROMA_PAINT -> "Green Screen Studio Brush"
         }
 
         _trackingState.value = "Scanning frame for all faces ($styleDesc)..."
@@ -679,6 +675,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             com.clipcut.core.model.BlurType.MOTION_TRAIL -> "PowerDirector Trail"
             com.clipcut.core.model.BlurType.IMAGE -> "Stickers"
             com.clipcut.core.model.BlurType.PAINT -> "Finger Paint"
+            com.clipcut.core.model.BlurType.CHROMA_PAINT -> "Green Screen Studio Brush"
         }
 
         _trackingState.value = "Scanning frame for all people ($styleDesc)..."
@@ -939,6 +936,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = redoStack.isNotEmpty()
         _project.value?.let {
+            brandKitConfig = it.brandKitConfig
             playerManager.syncWithProject(it)
             previewRenderer.setProject(it)
         }

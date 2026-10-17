@@ -110,14 +110,15 @@ class ColorAdjustFilter : GlFilter(
         uniform float uVignette;
         uniform float uTint;
         uniform float uEffectMode; // 0 none, 1 grayscale, 2 sepia
-        uniform vec2 uCropOrigin;  // (left, top) in UV
+        uniform vec2 uCropOrigin;  // (left, bottom) in UV
         uniform vec2 uCropSize;    // (width, height)
         uniform bool uFlipH; uniform bool uFlipV;
         void main() {
             vec2 uv = vTexCoord;
-            uv = uCropOrigin + uv * uCropSize;
             if (uFlipH) uv.x = 1.0 - uv.x;
             if (uFlipV) uv.y = 1.0 - uv.y;
+            uv = uCropOrigin + uv * uCropSize;
+            uv = clamp(uv, vec2(0.0), vec2(1.0));
             vec4 c = texture2D(sTexture, uv);
             c.rgb += uBrightness;
             c.rgb = (c.rgb - 0.5) * uContrast + 0.5;
@@ -211,8 +212,12 @@ class ColorAdjustFilter : GlFilter(
             else -> 0f
         }
         GLES20.glUniform1f(uEffectMode, mode)
-        GLES20.glUniform2f(uCropOrigin, cropLeft, cropTop)
-        GLES20.glUniform2f(uCropSize, cropRight - cropLeft, cropBottom - cropTop)
+        val cropW = (cropRight - cropLeft).coerceIn(0.001f, 1.0f)
+        val cropH = (cropBottom - cropTop).coerceIn(0.001f, 1.0f)
+        val originX = cropLeft.coerceIn(0.0f, 1.0f - cropW)
+        val originY = (1.0f - cropBottom).coerceIn(0.0f, 1.0f - cropH)
+        GLES20.glUniform2f(uCropOrigin, originX, originY)
+        GLES20.glUniform2f(uCropSize, cropW, cropH)
         GLES20.glUniform1i(uFlipH, if (flipHorizontal) 1 else 0)
         GLES20.glUniform1i(uFlipV, if (flipVertical) 1 else 0)
     }
@@ -234,8 +239,8 @@ class ColorAdjustFilter : GlFilter(
 
 class ChromaKeyFilter(
     var keyColor: FloatArray = floatArrayOf(0f, 1f, 0f),
-    var threshold: Float = 0.15f,
-    var smoothness: Float = 0.05f
+    var threshold: Float = 0.08f,
+    var smoothness: Float = 0.08f
 ) : GlFilter(
     fragmentShaderSource = """
         precision mediump float;
@@ -244,11 +249,29 @@ class ChromaKeyFilter(
         uniform vec3 uKeyColor;
         uniform float uThreshold;
         uniform float uSmoothness;
+
         void main() {
             vec4 c = texture2D(sTexture, vTexCoord);
-            float d = distance(c.rgb, uKeyColor);
-            float a = smoothstep(uThreshold, uThreshold + uSmoothness, d);
-            gl_FragColor = vec4(c.rgb, a);
+            float mask = 1.0;
+            
+            // If key color is green (uKeyColor.g is dominant), use green dominance difference
+            if (uKeyColor.g > uKeyColor.r && uKeyColor.g > uKeyColor.b) {
+                float maxRB = max(c.r, c.b);
+                float greenDiff = c.g - maxRB;
+                float effThresh = max(uThreshold * 0.5, 0.025);
+                mask = 1.0 - smoothstep(effThresh, effThresh + uSmoothness, greenDiff);
+                // Spill suppression: desaturate residual green reflection on hair and contours
+                if (greenDiff > 0.0) {
+                    c.g = min(c.g, maxRB * 1.05);
+                }
+            } else {
+                // Generalized RGB distance for blue screen or custom color keying
+                float d = distance(c.rgb, uKeyColor);
+                mask = smoothstep(uThreshold, uThreshold + uSmoothness, d);
+            }
+            
+            // Output premultiplied color for GL_ONE / GL_ONE_MINUS_SRC_ALPHA blending
+            gl_FragColor = vec4(c.rgb * mask, mask);
         }
     """
 ) {
@@ -779,6 +802,7 @@ class RegionalBlurFilter : GlFilter(
             com.clipcut.core.model.BlurType.MOTION_TRAIL -> 0 // Render as smooth trail
             com.clipcut.core.model.BlurType.IMAGE -> 3
             com.clipcut.core.model.BlurType.PAINT -> 0
+            com.clipcut.core.model.BlurType.CHROMA_PAINT -> 0
         }
         shape = when (shapeEnum) {
             com.clipcut.core.model.BlurShape.OVAL -> 0

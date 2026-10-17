@@ -197,7 +197,8 @@ data class OverlayItem(
     val timelineEndUs: Long = 5_000_000L,
     val keyframes: List<OverlayKeyframe> = emptyList(),
     val animation: TextAnimation = TextAnimation.NONE,
-    val animationDurationMs: Int = 500
+    val animationDurationMs: Int = 500,
+    val cropRect: CropRect? = null
 )
 
 data class PiPTrackItem(
@@ -341,7 +342,8 @@ enum class BlurType(val displayName: String) {
     PAINT("Finger Paint"),
     STACK_BLUR("InShot StackBlur"),
     MOTION_TRAIL("PowerDirector Trail"),
-    IMAGE("Picture / Sticker")
+    IMAGE("Picture / Sticker"),
+    CHROMA_PAINT("Green Screen Studio Brush")
 }
 
 data class PaintPoint(val x: Float, val y: Float)
@@ -351,7 +353,8 @@ data class PaintStroke(
     val points: List<PaintPoint> = emptyList(),
     val strokeWidthNorm: Float = 0.05f,
     val isBlackout: Boolean = true,
-    val color: Long = 0xFF000000L
+    val color: Long = 0xFF000000L,
+    val style: String = if (isBlackout) "BLACKOUT" else "BLUR"
 )
 
 enum class BlurShape(val displayName: String) {
@@ -443,7 +446,8 @@ data class Project(
     val originalVideoVolume: Float = 1.0f,
     val backgroundMusicVolume: Float = 1.0f,
     val audioDuckingEnabled: Boolean = false,
-    val audioDuckLevel: Float = 0.3f
+    val audioDuckLevel: Float = 0.3f,
+    val brandKitConfig: BrandKitConfig? = null
 ) {
     val totalDurationUs: Long
         get() {

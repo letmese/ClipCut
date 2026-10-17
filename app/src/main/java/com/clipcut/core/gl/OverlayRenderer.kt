@@ -12,6 +12,9 @@ import android.opengl.GLUtils
 import com.clipcut.core.model.FontFamilyOption
 import com.clipcut.core.model.OverlayItem
 import com.clipcut.core.model.TextAnimation
+import com.clipcut.core.model.BrandKitConfig
+import com.clipcut.core.model.BrandLogoStyle
+import com.clipcut.core.model.BrandIconType
 
 /**
  * OverlayRenderer — paints overlays (text + styling) into a reusable
@@ -43,23 +46,57 @@ class OverlayRenderer(private val context: Context) {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
     }
 
+    private var bgTextureId: Int = -1
+    private var currentBgUri: String? = null
+
+    fun isBackgroundOverlay(overlay: OverlayItem): Boolean {
+        val uri = overlay.imageUri ?: overlay.text
+        return uri.contains("overlays/backgrounds/") || uri.contains("human_seg")
+    }
+
+    fun isSkyOverlay(overlay: OverlayItem): Boolean {
+        val uri = overlay.imageUri ?: overlay.text
+        return !isBackgroundOverlay(overlay) && (uri.contains("overlays/sky/") || uri.contains("PRESET_SYK"))
+    }
+
+    fun isFrameOverlay(overlay: OverlayItem): Boolean {
+        val uri = overlay.imageUri ?: overlay.text
+        return !isBackgroundOverlay(overlay) && (
+            uri.contains("overlays/frames/") ||
+            uri.contains("Camera") || uri.contains("Phone") ||
+            uri.contains("Photo") || uri.contains("Heart") ||
+            uri.contains("Circular") || uri.contains("Water") ||
+            uri.contains("Square") || uri.contains("Rectangle")
+        )
+    }
+
+    fun getBackgroundTexture(activeBg: OverlayItem?): Int {
+        if (activeBg == null) return -1
+        val uri = activeBg.imageUri ?: activeBg.text
+        val bmp = getOrLoadBitmap(uri) ?: return -1
+        if (bgTextureId == -1) {
+            val textures = IntArray(1)
+            GLES20.glGenTextures(1, textures, 0)
+            bgTextureId = textures[0]
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, bgTextureId)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        }
+        if (currentBgUri != uri) {
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, bgTextureId)
+            android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
+            currentBgUri = uri
+        }
+        return bgTextureId
+    }
+
     private val imageCache = mutableMapOf<String, Bitmap>()
     private val typefaceCache = mutableMapOf<String, Typeface>()
 
     private fun getTypefaceFor(option: FontFamilyOption): Typeface {
-        val asset = option.assetPath ?: return when (option) {
-            FontFamilyOption.SERIF -> Typeface.SERIF
-            FontFamilyOption.MONOSPACE -> Typeface.MONOSPACE
-            FontFamilyOption.SANS_SERIF_CONDENSED -> Typeface.create("sans-serif-condensed", Typeface.NORMAL)
-            else -> Typeface.DEFAULT
-        }
-        return typefaceCache.getOrPut(asset) {
-            try {
-                Typeface.createFromAsset(context.assets, asset)
-            } catch (_: Throwable) {
-                Typeface.DEFAULT
-            }
-        }
+        return com.clipcut.ui.util.FontHelper.getTypeface(context, option)
     }
 
     private val stickerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -112,7 +149,13 @@ class OverlayRenderer(private val context: Context) {
         editingBlurY: Float? = null,
         editingBlurW: Float? = null,
         editingBlurH: Float? = null,
-        editingBlurRot: Float? = null
+        editingBlurRot: Float? = null,
+        editingOverlayId: String? = null,
+        editingOverlayX: Float? = null,
+        editingOverlayY: Float? = null,
+        editingOverlayScale: Float? = null,
+        editingOverlayRot: Float? = null,
+        brandKitConfig: com.clipcut.core.model.BrandKitConfig? = null
     ) {
         if (overlayTexId == -1) return
 
@@ -131,7 +174,7 @@ class OverlayRenderer(private val context: Context) {
 
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
-        val activeOverlays = overlays.filter { currentPtsUs in it.timelineStartUs..it.timelineEndUs }
+        val activeOverlays = overlays.filter { !isBackgroundOverlay(it) && it.id != "brand_kit_watermark" && currentPtsUs in it.timelineStartUs..it.timelineEndUs }
         val activeImageBlurs = blurTracks.filter {
             it.blurType == com.clipcut.core.model.BlurType.IMAGE && currentPtsUs in it.timelineStartUs..it.timelineEndUs
         }
@@ -139,14 +182,20 @@ class OverlayRenderer(private val context: Context) {
             it.paintStrokes.isNotEmpty() && currentPtsUs in it.timelineStartUs..it.timelineEndUs
         }
 
-        if (activeOverlays.isEmpty() && activeImageBlurs.isEmpty() && activePaintBlurs.isEmpty()) {
+        val hasBrandKit = brandKitConfig != null && (brandKitConfig.watermarkText.isNotBlank() || brandKitConfig.logoUri != null)
+        if (activeOverlays.isEmpty() && activeImageBlurs.isEmpty() && activePaintBlurs.isEmpty() && !hasBrandKit) {
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
             GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
             return
         }
 
-        overlays.filter { currentPtsUs in it.timelineStartUs..it.timelineEndUs }.forEach { o ->
-            val (x, y, scale, rot) = interpolatedTransform(o, currentPtsUs)
+        activeOverlays.forEach { o ->
+            val isEditingThis = (o.id == editingOverlayId && editingOverlayX != null)
+            val (baseX, baseY, baseScale, baseRot) = interpolatedTransform(o, currentPtsUs)
+            val x = if (isEditingThis) editingOverlayX!! else baseX
+            val y = if (isEditingThis) (editingOverlayY ?: baseY) else baseY
+            val scale = if (isEditingThis) (editingOverlayScale ?: baseScale) else baseScale
+            val rot = if (isEditingThis) (editingOverlayRot ?: baseRot) else baseRot
             val cx = (x * width).toInt()
             val cy = (y * height).toInt()
 
@@ -191,17 +240,81 @@ class OverlayRenderer(private val context: Context) {
             }
 
             val text = applyAnimation(o, currentPtsUs)
-            if (text.startsWith("asset://") || (!text.contains(" ") && (text.endsWith(".png") || text.endsWith(".webp")))) {
-                val bmp = getOrLoadBitmap(text)
+            val assetPath = when {
+                text.startsWith("asset://") || (!text.contains(" ") && (text.endsWith(".png") || text.endsWith(".webp"))) -> text
+                o.imageUri != null && (o.imageUri.startsWith("asset://") || o.imageUri.endsWith(".png") || o.imageUri.endsWith(".webp")) -> o.imageUri
+                else -> null
+            }
+            if (assetPath != null) {
+                val bmp = getOrLoadBitmap(assetPath)
                 if (bmp != null) {
+                    val isSky = isSkyOverlay(o)
+                    val isFrame = isFrameOverlay(o)
+
+                    val crop = o.cropRect
+                    val srcRect: android.graphics.Rect? = if (crop != null && crop.isValid && bmp.width > 0 && bmp.height > 0) {
+                        val sLeft = (crop.left * bmp.width).toInt().coerceIn(0, bmp.width - 1)
+                        val sTop = (crop.top * bmp.height).toInt().coerceIn(0, bmp.height - 1)
+                        val sRight = (crop.right * bmp.width).toInt().coerceIn(sLeft + 1, bmp.width)
+                        val sBottom = (crop.bottom * bmp.height).toInt().coerceIn(sTop + 1, bmp.height)
+                        android.graphics.Rect(sLeft, sTop, sRight, sBottom)
+                    } else null
+
+                    val effectiveBmpW = (srcRect?.width() ?: bmp.width).toFloat().coerceAtLeast(1f)
+                    val effectiveBmpH = (srcRect?.height() ?: bmp.height).toFloat().coerceAtLeast(1f)
+                    val bmpAspect = effectiveBmpW / effectiveBmpH
+
                     canvas.save()
                     canvas.translate(cx.toFloat() + animOffsetX, cy.toFloat() + animOffsetY)
                     canvas.rotate(rot)
-                    val iconW = 140f * scale * animScaleMul * (width / 1080f)
-                    val iconH = 140f * scale * animScaleMul * (height / 1920f)
-                    val rect = android.graphics.RectF(-iconW / 2f, -iconH / 2f, iconW / 2f, iconH / 2f)
-                    stickerPaint.alpha = (255 * animAlpha.coerceIn(0f, 1f)).toInt()
-                    canvas.drawBitmap(bmp, null, rect, stickerPaint)
+
+                    val rect: android.graphics.RectF
+                    if (isSky) {
+                        // Sky Replacement: Responsive bounding box that can be freely repositioned, scaled, and cropped
+                        val skyW = width.toFloat() * scale * animScaleMul
+                        val skyH = skyW / bmpAspect
+                        rect = android.graphics.RectF(-skyW / 2f, -skyH / 2f, skyW / 2f, skyH / 2f)
+
+                        val targetAlpha = (255 * animAlpha.coerceIn(0f, 1f)).toInt()
+                        val saveLayerCount = canvas.saveLayer(rect, null)
+                        stickerPaint.alpha = targetAlpha
+                        stickerPaint.xfermode = null
+                        canvas.drawBitmap(bmp, srcRect, rect, stickerPaint)
+
+                        val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)
+                            shader = android.graphics.LinearGradient(
+                                0f, rect.top + rect.height() * 0.45f, 0f, rect.bottom,
+                                android.graphics.Color.WHITE, android.graphics.Color.TRANSPARENT,
+                                android.graphics.Shader.TileMode.CLAMP
+                            )
+                        }
+                        canvas.drawRect(rect, maskPaint)
+                        canvas.restoreToCount(saveLayerCount)
+                    } else {
+                        if (isFrame) {
+                            val canvasAspect = width.toFloat() / height.toFloat()
+                            val fw: Float
+                            val fh: Float
+                            if (canvasAspect > bmpAspect) {
+                                fh = height.toFloat() * scale * animScaleMul
+                                fw = fh * bmpAspect
+                            } else {
+                                fw = width.toFloat() * scale * animScaleMul
+                                fh = fw / bmpAspect
+                            }
+                            rect = android.graphics.RectF(-fw / 2f, -fh / 2f, fw / 2f, fh / 2f)
+                        } else {
+                            val baseSz = 260f * (width / 1080f)
+                            val iconW = if (bmpAspect >= 1f) baseSz * scale * animScaleMul else (baseSz * bmpAspect) * scale * animScaleMul
+                            val iconH = if (bmpAspect >= 1f) (baseSz / bmpAspect) * scale * animScaleMul else baseSz * scale * animScaleMul
+                            rect = android.graphics.RectF(-iconW / 2f, -iconH / 2f, iconW / 2f, iconH / 2f)
+                        }
+                        val targetAlpha = (255 * animAlpha.coerceIn(0f, 1f)).toInt()
+                        stickerPaint.alpha = targetAlpha
+                        stickerPaint.xfermode = null
+                        canvas.drawBitmap(bmp, srcRect, rect, stickerPaint)
+                    }
                     canvas.restore()
                 }
             } else if (text.isNotEmpty()) {
@@ -293,7 +406,7 @@ class OverlayRenderer(private val context: Context) {
             canvas.restore()
         }
 
-        // Draw finger-painted censor & blackout strokes
+        // Draw finger-painted censor & blackout strokes with full style support
         val strokePaint = android.graphics.Paint().apply {
             isAntiAlias = true
             style = android.graphics.Paint.Style.STROKE
@@ -301,24 +414,59 @@ class OverlayRenderer(private val context: Context) {
             strokeJoin = android.graphics.Paint.Join.ROUND
         }
         for (blurItem in activePaintBlurs) {
+            val isChroma = blurItem.blurType == com.clipcut.core.model.BlurType.CHROMA_PAINT ||
+                blurItem.paintStrokes.any { it.style.startsWith("CHROMA") || it.style.startsWith("STUDIO") }
+            val studioUri = blurItem.customImageUri
+            val studioBmp = if (!studioUri.isNullOrBlank()) getOrLoadBitmap(studioUri) else null
+            val studioShader: android.graphics.BitmapShader? = if (studioBmp != null) {
+                android.graphics.BitmapShader(studioBmp, android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP).apply {
+                    val matrix = android.graphics.Matrix()
+                    val sx = width.toFloat() / studioBmp.width.toFloat()
+                    val sy = height.toFloat() / studioBmp.height.toFloat()
+                    val s = maxOf(sx, sy)
+                    matrix.setScale(s, s)
+                    val dx = (width - studioBmp.width * s) / 2f
+                    val dy = (height - studioBmp.height * s) / 2f
+                    matrix.postTranslate(dx, dy)
+                    setLocalMatrix(matrix)
+                }
+            } else null
+
+            val isInverted = blurItem.intensity < 0f
+            if (isChroma && isInverted && studioShader != null) {
+                val fullPaint = android.graphics.Paint().apply {
+                    shader = studioShader
+                    isAntiAlias = true
+                }
+                canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fullPaint)
+                val cutPaint = android.graphics.Paint().apply {
+                    isAntiAlias = true
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeCap = android.graphics.Paint.Cap.ROUND
+                    strokeJoin = android.graphics.Paint.Join.ROUND
+                    xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+                }
+                for (stroke in blurItem.paintStrokes) {
+                    if (stroke.points.isEmpty()) continue
+                    val strokePx = (stroke.strokeWidthNorm * width).coerceAtLeast(6f)
+                    cutPaint.strokeWidth = strokePx
+                    val path = android.graphics.Path()
+                    path.moveTo(stroke.points.first().x * width, stroke.points.first().y * height)
+                    for (i in 1 until stroke.points.size) {
+                        path.lineTo(stroke.points[i].x * width, stroke.points[i].y * height)
+                    }
+                    canvas.drawPath(path, cutPaint)
+                }
+                continue
+            }
+
             for (stroke in blurItem.paintStrokes) {
                 if (stroke.points.isEmpty()) continue
-                strokePaint.strokeWidth = (stroke.strokeWidthNorm * width).coerceAtLeast(6f)
-                if (stroke.isBlackout) {
-                    strokePaint.color = 0xFF000000.toInt()
-                    strokePaint.alpha = 255
-                    strokePaint.maskFilter = null
-                } else {
-                    strokePaint.color = 0xEE1E1E1E.toInt()
-                    try {
-                        strokePaint.maskFilter = android.graphics.BlurMaskFilter(
-                            (strokePaint.strokeWidth / 2f).coerceAtLeast(2f),
-                            android.graphics.BlurMaskFilter.Blur.NORMAL
-                        )
-                    } catch (_: Throwable) {
-                        strokePaint.maskFilter = null
-                    }
-                }
+                val strokePx = (stroke.strokeWidthNorm * width).coerceAtLeast(6f)
+                strokePaint.strokeWidth = strokePx
+                strokePaint.shader = null
+                strokePaint.xfermode = null
+
                 val path = android.graphics.Path()
                 val first = stroke.points.first()
                 path.moveTo(first.x * width, first.y * height)
@@ -330,8 +478,156 @@ class OverlayRenderer(private val context: Context) {
                         path.lineTo(pt.x * width, pt.y * height)
                     }
                 }
-                canvas.drawPath(path, strokePaint)
+
+                when (stroke.style.uppercase()) {
+                    "BLACKOUT" -> {
+                        strokePaint.color = 0xFF000000.toInt()
+                        strokePaint.alpha = 255
+                        strokePaint.maskFilter = null
+                        strokePaint.pathEffect = null
+                        strokePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                        canvas.drawPath(path, strokePaint)
+                    }
+                    "MOSAIC" -> {
+                        val blockSize = strokePx * 0.85f
+                        val mosaicPaint = android.graphics.Paint().apply {
+                            color = 0xEE202020.toInt()
+                            style = android.graphics.Paint.Style.FILL
+                        }
+                        val gridPaint = android.graphics.Paint().apply {
+                            color = 0x44666666.toInt()
+                            style = android.graphics.Paint.Style.STROKE
+                            strokeWidth = 1.5f
+                        }
+                        for (pt in stroke.points) {
+                            val qx = (kotlin.math.floor((pt.x * width) / blockSize) * blockSize)
+                            val qy = (kotlin.math.floor((pt.y * height) / blockSize) * blockSize)
+                            val rect = android.graphics.RectF(qx, qy, qx + blockSize, qy + blockSize)
+                            canvas.drawRect(rect, mosaicPaint)
+                            canvas.drawRect(rect, gridPaint)
+                        }
+                    }
+                    "FROSTED" -> {
+                        strokePaint.color = 0xF0181818.toInt()
+                        strokePaint.alpha = 240
+                        strokePaint.pathEffect = null
+                        strokePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                        try {
+                            strokePaint.maskFilter = android.graphics.BlurMaskFilter((strokePx / 3f).coerceAtLeast(2f), android.graphics.BlurMaskFilter.Blur.NORMAL)
+                        } catch (_: Throwable) { strokePaint.maskFilter = null }
+                        canvas.drawPath(path, strokePaint)
+
+                        val hlPaint = android.graphics.Paint(strokePaint).apply {
+                            color = 0x66FFFFFF.toInt()
+                            strokeWidth = strokePx * 0.35f
+                            maskFilter = null
+                        }
+                        canvas.drawPath(path, hlPaint)
+                    }
+                    "BLUR" -> {
+                        strokePaint.color = 0xCC2C2C2C.toInt()
+                        strokePaint.pathEffect = null
+                        strokePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                        try {
+                            strokePaint.maskFilter = android.graphics.BlurMaskFilter((strokePx / 2f).coerceAtLeast(2f), android.graphics.BlurMaskFilter.Blur.NORMAL)
+                        } catch (_: Throwable) { strokePaint.maskFilter = null }
+                        canvas.drawPath(path, strokePaint)
+                    }
+                    "REDACTED" -> {
+                        strokePaint.color = 0xFF050505.toInt()
+                        strokePaint.alpha = 255
+                        strokePaint.maskFilter = null
+                        strokePaint.strokeCap = android.graphics.Paint.Cap.SQUARE
+                        strokePaint.pathEffect = null
+                        canvas.drawPath(path, strokePaint)
+
+                        val redLine = android.graphics.Paint().apply {
+                            color = 0xFFD32F2F.toInt()
+                            style = android.graphics.Paint.Style.STROKE
+                            strokeWidth = 3f * (width / 1080f)
+                            pathEffect = android.graphics.DashPathEffect(floatArrayOf(15f, 10f), 0f)
+                        }
+                        canvas.drawPath(path, redLine)
+                    }
+                    "CAUTION" -> {
+                        strokePaint.color = 0xFFFFD600.toInt()
+                        strokePaint.alpha = 255
+                        strokePaint.maskFilter = null
+                        strokePaint.strokeCap = android.graphics.Paint.Cap.SQUARE
+                        strokePaint.pathEffect = null
+                        canvas.drawPath(path, strokePaint)
+
+                        val stripePaint = android.graphics.Paint(strokePaint).apply {
+                            color = 0xFF000000.toInt()
+                            pathEffect = android.graphics.DashPathEffect(floatArrayOf(strokePx, strokePx), 0f)
+                        }
+                        canvas.drawPath(path, stripePaint)
+                    }
+                    "WHITEOUT" -> {
+                        strokePaint.color = 0xFFFFFFFF.toInt()
+                        strokePaint.alpha = 255
+                        strokePaint.maskFilter = null
+                        strokePaint.pathEffect = null
+                        strokePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                        canvas.drawPath(path, strokePaint)
+                    }
+                    "CHROMA_GREEN", "GREEN_SCREEN" -> {
+                        strokePaint.color = 0xFF00E676.toInt()
+                        strokePaint.alpha = 255
+                        strokePaint.maskFilter = null
+                        strokePaint.pathEffect = null
+                        strokePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                        canvas.drawPath(path, strokePaint)
+                    }
+                    "STUDIO_OVERLAY", "STUDIO_BG" -> {
+                        if (studioShader != null) {
+                            strokePaint.shader = studioShader
+                            strokePaint.alpha = 255
+                            strokePaint.maskFilter = null
+                            strokePaint.pathEffect = null
+                            strokePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                            canvas.drawPath(path, strokePaint)
+                            strokePaint.shader = null
+                        } else {
+                            strokePaint.color = 0xFF00E676.toInt()
+                            strokePaint.alpha = 255
+                            strokePaint.maskFilter = null
+                            strokePaint.pathEffect = null
+                            strokePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                            canvas.drawPath(path, strokePaint)
+                        }
+                    }
+                    "ERASER" -> {
+                        val eraserPaint = android.graphics.Paint().apply {
+                            isAntiAlias = true
+                            style = android.graphics.Paint.Style.STROKE
+                            strokeCap = android.graphics.Paint.Cap.ROUND
+                            strokeJoin = android.graphics.Paint.Join.ROUND
+                            strokeWidth = strokePx
+                            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+                        }
+                        canvas.drawPath(path, eraserPaint)
+                    }
+                    else -> {
+                        if (stroke.isBlackout) {
+                            strokePaint.color = 0xFF000000.toInt()
+                            strokePaint.maskFilter = null
+                            strokePaint.pathEffect = null
+                        } else {
+                            strokePaint.color = 0xEE1E1E1E.toInt()
+                            try {
+                                strokePaint.maskFilter = android.graphics.BlurMaskFilter((strokePx / 2f).coerceAtLeast(2f), android.graphics.BlurMaskFilter.Blur.NORMAL)
+                            } catch (_: Throwable) { strokePaint.maskFilter = null }
+                        }
+                        canvas.drawPath(path, strokePaint)
+                    }
+                }
             }
+        }
+
+        // Render VN Creator Brand Kit Signature Watermark
+        if (brandKitConfig != null && (brandKitConfig.watermarkText.isNotBlank() || brandKitConfig.logoUri != null)) {
+            renderBrandKitWatermark(canvas, brandKitConfig, width, height)
         }
 
         // Upload: GLUtils.texImage2D stores row 0 at texture V=0 (bottom).
@@ -391,6 +687,193 @@ class OverlayRenderer(private val context: Context) {
         }
     }
 
+    private fun renderBrandKitWatermark(
+        canvas: Canvas,
+        config: BrandKitConfig,
+        w: Int,
+        h: Int
+    ) {
+        val brandText = config.watermarkText.ifEmpty { "ClipCut Creator" }
+        val tagline = config.tagline.trim()
+        val hasTagline = tagline.isNotEmpty()
+
+        val baseScale = (w / 1080f) * config.watermarkScale.coerceIn(0.5f, 2.5f)
+        val opacityAlpha = (config.opacity.coerceIn(0.15f, 1.0f) * 255).toInt()
+        val brandColorInt = ((config.brandColor and 0x00FFFFFFL) or ((opacityAlpha.toLong()) shl 24)).toInt()
+
+        val primaryTf = getTypefaceFor(config.fontFamily)
+
+        val primaryTextSize = 28f * baseScale
+        val primaryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(opacityAlpha, 255, 255, 255)
+            textSize = primaryTextSize
+            typeface = primaryTf
+        }
+        val textWidth = primaryPaint.measureText(brandText)
+
+        val tagTextSize = 16f * baseScale
+        val tagPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb((opacityAlpha * 0.75f).toInt(), 220, 225, 235)
+            textSize = tagTextSize
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        val tagWidth = if (hasTagline) tagPaint.measureText(tagline) else 0f
+
+        var iconBmp: Bitmap? = null
+        if (!config.logoUri.isNullOrBlank()) {
+            iconBmp = getOrLoadBitmap(config.logoUri)
+        }
+        val hasIcon = config.iconType != BrandIconType.NONE || iconBmp != null
+        val iconSize = (if (hasTagline) 34f else 28f) * baseScale
+
+        val padH = 18f * baseScale
+        val padV = 10f * baseScale
+        val iconSpacing = if (hasIcon) (10f * baseScale + iconSize) else 0f
+        val contentW = maxOf(textWidth, tagWidth) + iconSpacing
+        val totalW = contentW + padH * 2f
+        val totalH = if (hasTagline) (primaryTextSize + tagTextSize + 16f * baseScale + padV * 2f) else (primaryTextSize + 18f * baseScale + padV * 2f)
+
+        val (normX, normY) = config.watermarkPosition
+        val posX = normX * w
+        val posY = normY * h
+
+        val left = when (config.watermarkPosIndex) {
+            1, 3 -> posX
+            2, 4 -> posX - totalW
+            else -> posX - totalW / 2f
+        }.coerceIn(12f * baseScale, w - totalW - 12f * baseScale)
+
+        val top = when (config.watermarkPosIndex) {
+            1, 2, 5 -> posY
+            else -> posY - totalH
+        }.coerceIn(12f * baseScale, h - totalH - 12f * baseScale)
+
+        val badgeRect = android.graphics.RectF(left, top, left + totalW, top + totalH)
+
+        when (config.logoStyle) {
+            BrandLogoStyle.NEON_PILL -> {
+                val corner = totalH / 2f
+                val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb((opacityAlpha * 0.85f).toInt(), 13, 17, 23)
+                    style = Paint.Style.FILL
+                }
+                canvas.drawRoundRect(badgeRect, corner, corner, bgPaint)
+
+                val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = brandColorInt
+                    style = Paint.Style.STROKE
+                    strokeWidth = 2.5f * baseScale
+                }
+                canvas.drawRoundRect(badgeRect, corner, corner, glowPaint)
+            }
+            BrandLogoStyle.GLASS_CARD -> {
+                val corner = 14f * baseScale
+                val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb((opacityAlpha * 0.70f).toInt(), 26, 32, 44)
+                    style = Paint.Style.FILL
+                }
+                canvas.drawRoundRect(badgeRect, corner, corner, bgPaint)
+                val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb((opacityAlpha * 0.35f).toInt(), 255, 255, 255)
+                    style = Paint.Style.STROKE
+                    strokeWidth = 1.5f * baseScale
+                }
+                canvas.drawRoundRect(badgeRect, corner, corner, borderPaint)
+            }
+            BrandLogoStyle.MINIMAL_WATERMARK -> {
+                primaryPaint.setShadowLayer(4f * baseScale, 0f, 2f * baseScale, Color.argb(opacityAlpha, 0, 0, 0))
+                tagPaint.setShadowLayer(3f * baseScale, 0f, 1.5f * baseScale, Color.argb(opacityAlpha, 0, 0, 0))
+            }
+            BrandLogoStyle.CINEMA_STAMP -> {
+                val corner = 4f * baseScale
+                val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb((opacityAlpha * 0.90f).toInt(), 8, 8, 12)
+                    style = Paint.Style.FILL
+                }
+                canvas.drawRoundRect(badgeRect, corner, corner, bgPaint)
+                val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = brandColorInt
+                    style = Paint.Style.STROKE
+                    strokeWidth = 1.8f * baseScale
+                }
+                canvas.drawRoundRect(badgeRect, corner, corner, borderPaint)
+            }
+            BrandLogoStyle.BADGE_CREST -> {
+                val corner = 12f * baseScale
+                val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb((opacityAlpha * 0.88f).toInt(), 18, 20, 28)
+                    style = Paint.Style.FILL
+                }
+                canvas.drawRoundRect(badgeRect, corner, corner, bgPaint)
+                val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = brandColorInt
+                    style = Paint.Style.FILL
+                }
+                canvas.drawRoundRect(android.graphics.RectF(badgeRect.left, badgeRect.top, badgeRect.left + 5f * baseScale, badgeRect.bottom), 2f, 2f, accentPaint)
+            }
+            BrandLogoStyle.OUTRO_SIGNATURE -> {
+                primaryPaint.setShadowLayer(3f * baseScale, 0f, 2f * baseScale, Color.argb(opacityAlpha, 0, 0, 0))
+                val lineY = badgeRect.bottom - padV
+                val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = brandColorInt
+                    strokeWidth = 2.5f * baseScale
+                }
+                canvas.drawLine(badgeRect.left + padH, lineY, badgeRect.right - padH, lineY, linePaint)
+            }
+        }
+
+        val iconCenterY = badgeRect.centerY()
+        val iconLeft = badgeRect.left + padH
+        if (hasIcon) {
+            if (iconBmp != null && !iconBmp.isRecycled) {
+                val destRect = android.graphics.RectF(
+                    iconLeft,
+                    iconCenterY - iconSize / 2f,
+                    iconLeft + iconSize,
+                    iconCenterY + iconSize / 2f
+                )
+                val bmpPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    alpha = opacityAlpha
+                }
+                canvas.drawBitmap(iconBmp, null, destRect, bmpPaint)
+            } else {
+                val circleRadius = iconSize / 2f
+                val circleCenter = iconLeft + circleRadius
+                val iconBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = brandColorInt
+                    style = Paint.Style.FILL
+                }
+                canvas.drawCircle(circleCenter, iconCenterY, circleRadius, iconBgPaint)
+
+                val glyph = config.iconType.glyph
+                if (glyph.isNotEmpty()) {
+                    val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.argb(opacityAlpha, 15, 18, 24)
+                        textSize = circleRadius * 1.35f
+                        typeface = Typeface.DEFAULT_BOLD
+                        textAlign = Paint.Align.CENTER
+                    }
+                    val fm = glyphPaint.fontMetrics
+                    val glyphY = iconCenterY - (fm.descent + fm.ascent) / 2f
+                    canvas.drawText(glyph, circleCenter, glyphY, glyphPaint)
+                }
+            }
+        }
+
+        val textStartX = if (hasIcon) (iconLeft + iconSize + 10f * baseScale) else (badgeRect.left + padH)
+
+        if (hasTagline) {
+            val textTopY = badgeRect.top + padV + primaryTextSize * 0.85f
+            canvas.drawText(brandText, textStartX, textTopY, primaryPaint)
+            val tagY = textTopY + tagTextSize * 1.25f
+            canvas.drawText(tagline, textStartX, tagY, tagPaint)
+        } else {
+            val fm = primaryPaint.fontMetrics
+            val textY = badgeRect.centerY() - (fm.descent + fm.ascent) / 2f
+            canvas.drawText(brandText, textStartX, textY, primaryPaint)
+        }
+    }
+
     fun release() {
         reusableBitmap?.recycle()
         reusableBitmap = null
@@ -403,6 +886,11 @@ class OverlayRenderer(private val context: Context) {
         if (overlayTexId != -1) {
             GLES20.glDeleteTextures(1, intArrayOf(overlayTexId), 0)
             overlayTexId = -1
+        }
+        if (bgTextureId != -1) {
+            GLES20.glDeleteTextures(1, intArrayOf(bgTextureId), 0)
+            bgTextureId = -1
+            currentBgUri = null
         }
     }
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -29,6 +30,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.Offset
@@ -36,10 +39,19 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.atan2
+import kotlin.math.sqrt
+import java.util.UUID
 import com.clipcut.core.model.*
 import com.clipcut.ui.components.EditorFilterChip
 import com.clipcut.ui.components.PrimaryButton
 import com.clipcut.ui.components.SecondaryButton
+import com.clipcut.ui.util.AssetImageHelper
 import com.clipcut.ui.theme.*
 
 /**
@@ -103,6 +115,7 @@ fun AudioSheet(
     onTrimTrack: (String, Long, Long) -> Unit = { _, _, _ -> },
     onVoiceoverClick: () -> Unit = {},
     onAddAssetAudio: (String, String) -> Unit = { _, _ -> },
+    onExtractAudioClick: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -175,6 +188,23 @@ fun AudioSheet(
                 icon = Icons.Filled.Mic,
                 modifier = Modifier.weight(1f)
             )
+        }
+
+        Spacer(Modifier.height(8.dp))
+        androidx.compose.material3.OutlinedButton(
+            onClick = onExtractAudioClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp),
+            shape = RoundedCornerShape(10.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, AccentPrimary.copy(alpha = 0.8f)),
+            colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                containerColor = AccentPrimary.copy(alpha = 0.12f)
+            )
+        ) {
+            Icon(Icons.Filled.Audiotrack, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Extract Audio from Video (MP3)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
         }
 
         Spacer(Modifier.height(16.dp))
@@ -555,6 +585,7 @@ fun ChromaKeyDialog(
     initialThreshold: Float,
     initialSmoothness: Float,
     onApply: (FloatArray, Float, Float) -> Unit,
+    onOpenFingerPaint: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     var threshold by remember { mutableStateOf(initialThreshold) }
@@ -563,6 +594,31 @@ fun ChromaKeyDialog(
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         SheetHeader("Chroma Key", onDismiss)
         Spacer(Modifier.height(12.dp))
+
+        // Finger Paint Green Screen Quick Launcher
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF10B981).copy(alpha = 0.15f),
+            border = BorderStroke(1.dp, Color(0xFF10B981)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenFingerPaint() }
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(Icons.Filled.Brush, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(24.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("🖌️ Paint Green Screen with Finger", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("No green cloth? Swipe your finger across your room to paint green screen & apply studios", color = TextSecondary, fontSize = 11.sp)
+                }
+                Icon(Icons.Filled.ArrowForward, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(18.dp))
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
         Text("Key Color Backdrop (Remove Background)", color = TextSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
@@ -732,7 +788,12 @@ fun LutPickerDialog(
             Triple("Amber Glow", "cube/Spring_Amber Highlight_heavy.cube", Pair(Color(0xFFFFB703), Color(0xFFFB8500))),
             Triple("Vintage Kick", "cube/Spring_Vintage Kick_heavy.cube", Pair(Color(0xFFCB997E), Color(0xFFDDB892))),
             Triple("Fresh Burst", "cube/Spring_Fresh Burst_heavy.cube", Pair(Color(0xFF2A9D8F), Color(0xFFE9C46A))),
-            Triple("Luminescent", "cube/Spring_Luminescent_heavy.cube", Pair(Color(0xFFF72585), Color(0xFF7209B7)))
+            Triple("Luminescent", "cube/Spring_Luminescent_heavy.cube", Pair(Color(0xFFF72585), Color(0xFF7209B7))),
+            Triple("Epic Cinema", "Epic_Cinematic.cube", Pair(Color(0xFFE63946), Color(0xFF1D3557))),
+            Triple("Hot Sun", "Hot_Sun.cube", Pair(Color(0xFFFF9E00), Color(0xFFFF0054))),
+            Triple("Nature Skin", "Nature_Skin.cube", Pair(Color(0xFF588157), Color(0xFFE9C46A))),
+            Triple("Summer View", "Summer_View.cube", Pair(Color(0xFF0077B6), Color(0xFF00F5D4))),
+            Triple("B&W Film 3D", "B&W_Film.CUBE", Pair(Color(0xFF2B2D42), Color(0xFF8D99AE)))
         )
 
         val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -804,7 +865,169 @@ fun LutPickerDialog(
     }
 }
 
-// ── FilterSheet with Picture/Visual Previews ─────────────────────────────
+// ── FilterSheet with 3-Way Wheels & Film LUTs Studio (Stitch Screen 4) ───
+@Composable
+private fun StudioColorWheel(
+    title: String,
+    subtitle: String,
+    accentColor: Color,
+    puckX: Float,
+    puckY: Float,
+    sliderValue: Float,
+    sliderRange: ClosedFloatingPointRange<Float>,
+    sliderLabel: String,
+    onPuckChange: (Float, Float) -> Unit,
+    onSliderChange: (Float) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(132.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(ObsidianSurface)
+            .border(1.dp, ObsidianBorder, RoundedCornerShape(12.dp))
+            .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text(subtitle, color = TextSecondary, fontSize = 9.sp, maxLines = 1)
+        Spacer(Modifier.height(8.dp))
+        Box(
+            modifier = Modifier
+                .size(86.dp)
+                .clip(CircleShape)
+                .background(ObsidianSurfaceLowest)
+                .border(1.5.dp, ObsidianBorderVariant, CircleShape)
+                .pointerInput(Unit) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        val radius = 43.dp.toPx()
+                        val nx = ((puckX * radius) + dragAmount.x).coerceIn(-radius, radius) / radius
+                        val ny = ((puckY * radius) + dragAmount.y).coerceIn(-radius, radius) / radius
+                        onPuckChange(nx, ny)
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val r = size.minDimension / 2f
+                val center = Offset(size.width / 2f, size.height / 2f)
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        listOf(
+                            Color.White.copy(alpha = 0.18f),
+                            accentColor.copy(alpha = 0.28f),
+                            Color.Transparent
+                        )
+                    ),
+                    radius = r,
+                    center = center
+                )
+                drawLine(Color.White.copy(alpha = 0.15f), Offset(center.x, center.y - r), Offset(center.x, center.y + r), 1f)
+                drawLine(Color.White.copy(alpha = 0.15f), Offset(center.x - r, center.y), Offset(center.x + r, center.y), 1f)
+                val px = center.x + puckX * (r - 7.dp.toPx())
+                val py = center.y + puckY * (r - 7.dp.toPx())
+                drawCircle(accentColor.copy(alpha = 0.35f), radius = 9.dp.toPx(), center = Offset(px, py))
+                drawCircle(accentColor, radius = 5.dp.toPx(), center = Offset(px, py))
+                drawCircle(Color.White, radius = 2.dp.toPx(), center = Offset(px, py))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "$sliderLabel: ${String.format(java.util.Locale.US, "%.2f", sliderValue)}",
+            color = TextSecondary,
+            fontSize = 10.sp
+        )
+        Slider(
+            value = sliderValue,
+            onValueChange = onSliderChange,
+            valueRange = sliderRange,
+            modifier = Modifier.fillMaxWidth().height(24.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = accentColor,
+                activeTrackColor = accentColor,
+                inactiveTrackColor = ObsidianBorder
+            )
+        )
+    }
+}
+
+@Composable
+private fun RgbParadeWaveform(cfg: FilterConfig) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(68.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(ObsidianSurfaceLowest)
+            .border(1.dp, ObsidianBorder, RoundedCornerShape(10.dp))
+            .padding(6.dp)
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+            val channelW = w / 3f
+
+            val ire100 = h * 0.15f
+            val ire50 = h * 0.50f
+            val ire0 = h * 0.85f
+            drawLine(Color.White.copy(alpha = 0.08f), Offset(0f, ire100), Offset(w, ire100), 1f)
+            drawLine(Color.White.copy(alpha = 0.12f), Offset(0f, ire50), Offset(w, ire50), 1f)
+            drawLine(Color.White.copy(alpha = 0.08f), Offset(0f, ire0), Offset(w, ire0), 1f)
+
+            // Red channel
+            val redLift = (cfg.brightness * 18f + cfg.temperature * 16f)
+            val redPath = Path().apply {
+                moveTo(4f, ire50 - redLift)
+                var x = 4f
+                while (x < channelW - 4f) {
+                    val progress = (x - 4f) / (channelW - 8f)
+                    val amp = (sin(progress * 12.0) * 14.0 * cfg.contrast).toFloat()
+                    lineTo(x, (ire50 - redLift + amp).coerceIn(4f, h - 4f))
+                    x += 4f
+                }
+            }
+            drawPath(redPath, Color(0xFFFF4D4D).copy(alpha = 0.85f), style = Stroke(1.5f))
+
+            // Green channel
+            val greenLift = (cfg.brightness * 18f + cfg.tint * 16f)
+            val greenPath = Path().apply {
+                moveTo(channelW + 4f, ire50 - greenLift)
+                var x = channelW + 4f
+                while (x < channelW * 2f - 4f) {
+                    val progress = (x - (channelW + 4f)) / (channelW - 8f)
+                    val amp = (cos(progress * 14.0) * 12.0 * cfg.contrast).toFloat()
+                    lineTo(x, (ire50 - greenLift + amp).coerceIn(4f, h - 4f))
+                    x += 4f
+                }
+            }
+            drawPath(greenPath, Color(0xFF10B981).copy(alpha = 0.85f), style = Stroke(1.5f))
+
+            // Blue channel
+            val blueLift = (cfg.brightness * 18f - cfg.temperature * 16f)
+            val bluePath = Path().apply {
+                moveTo(channelW * 2f + 4f, ire50 - blueLift)
+                var x = channelW * 2f + 4f
+                while (x < w - 4f) {
+                    val progress = (x - (channelW * 2f + 4f)) / (channelW - 8f)
+                    val amp = (sin(progress * 10.0 + 1.0) * 15.0 * cfg.contrast).toFloat()
+                    lineTo(x, (ire50 - blueLift + amp).coerceIn(4f, h - 4f))
+                    x += 4f
+                }
+            }
+            drawPath(bluePath, Color(0xFF00F2FE).copy(alpha = 0.85f), style = Stroke(1.5f))
+
+            drawLine(Color.White.copy(alpha = 0.1f), Offset(channelW, 0f), Offset(channelW, h), 1f)
+            drawLine(Color.White.copy(alpha = 0.1f), Offset(channelW * 2f, 0f), Offset(channelW * 2f, h), 1f)
+        }
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("RED", color = Color(0xFFFF6B6B), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            Text("GREEN", color = Color(0xFF34D399), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            Text("BLUE", color = Color(0xFF38BDF8), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("RGB PARADE", color = Color.White.copy(alpha = 0.35f), fontSize = 8.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp))
+    }
+}
+
 @Composable
 fun FilterSheet(
     initialConfig: FilterConfig,
@@ -812,122 +1035,233 @@ fun FilterSheet(
     onDismiss: () -> Unit
 ) {
     var cfg by remember { mutableStateOf(initialConfig) }
+    var activeStudioTab by remember { mutableStateOf(0) } // 0: 3-Way Wheels, 1: Film LUTs, 2: Adjustments
 
-    // Color swatches for each filter type to show visual look of the filter
-    val filterVisuals = mapOf(
-        FilterType.NONE to Triple("Original", Color(0xFF3A86FF), Color(0xFF8338EC)),
-        FilterType.BRIGHTNESS to Triple("Bright", Color(0xFFFFE49F), Color(0xFFFF9E00)),
-        FilterType.CONTRAST to Triple("Contrast", Color(0xFF212529), Color(0xFFE9ECEF)),
-        FilterType.SATURATION to Triple("Vibrant", Color(0xFFFF007F), Color(0xFF00F5D4)),
-        FilterType.TEMPERATURE to Triple("Warm Gold", Color(0xFFFB5607), Color(0xFFFFBE0B)),
-        FilterType.VIGNETTE to Triple("Vignette", Color(0xFF14213D), Color(0xFF000000)),
-        FilterType.GRAYSCALE to Triple("B&W Film", Color(0xFFF8F9FA), Color(0xFF212529)),
-        FilterType.SEPIA to Triple("Sepia Retro", Color(0xFFDDA15E), Color(0xFF606C38))
+    // Lift / Gamma / Gain puck states
+    var liftX by remember { mutableStateOf((cfg.tint / 0.5f).coerceIn(-1f, 1f)) }
+    var liftY by remember { mutableStateOf((-cfg.temperature / 0.5f).coerceIn(-1f, 1f)) }
+    var gammaX by remember { mutableStateOf(0f) }
+    var gammaY by remember { mutableStateOf(0f) }
+    var gainX by remember { mutableStateOf((cfg.temperature / 0.5f).coerceIn(-1f, 1f)) }
+    var gainY by remember { mutableStateOf((cfg.brightness / 0.5f).coerceIn(-1f, 1f)) }
+
+    val filmLuts = listOf(
+        Triple("Rec.709 Standard", "Clean Studio Baseline", FilterConfig(brightness = 0f, contrast = 1.0f, saturation = 1.0f, temperature = 0f, vignette = 0f, tint = 0f)),
+        Triple("Teal & Orange", "Hollywood Blockbuster", FilterConfig(brightness = 0f, contrast = 1.35f, saturation = 1.30f, temperature = -0.18f, vignette = 0.28f, tint = 0.08f)),
+        Triple("Kodak Portra 400", "Warm Skin & Gold Tones", FilterConfig(brightness = 0.05f, contrast = 1.05f, saturation = 0.95f, temperature = 0.22f, vignette = 0.30f, tint = 0.06f)),
+        Triple("Tokyo Cyberpunk", "Neon Violet & Cyan", FilterConfig(brightness = 0.02f, contrast = 1.40f, saturation = 1.50f, temperature = -0.30f, vignette = 0.40f, tint = 0.25f)),
+        Triple("Vintage 35mm", "Analog Cinema Faded", FilterConfig(brightness = 0.08f, contrast = 0.90f, saturation = 0.80f, temperature = 0.15f, vignette = 0.45f, tint = -0.05f)),
+        Triple("Warm Sunset", "Golden Hour Radiance", FilterConfig(brightness = 0.05f, contrast = 1.15f, saturation = 1.25f, temperature = 0.40f, vignette = 0.20f, tint = -0.08f)),
+        Triple("Noir Drama", "Tri-X High Contrast B&W", FilterConfig(filterType = FilterType.GRAYSCALE, brightness = 0f, contrast = 1.55f, saturation = 0f, temperature = 0f, vignette = 0.60f)),
+        Triple("Emerald Matrix", "Sci-Fi Cool Shadows", FilterConfig(brightness = -0.02f, contrast = 1.25f, saturation = 1.10f, temperature = -0.12f, vignette = 0.35f, tint = -0.22f))
     )
 
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-        SheetHeader("Filter", onDismiss)
-        Spacer(Modifier.height(10.dp))
-        Text("Color Profiles & Moods", color = TextSecondary, fontSize = 12.sp)
+        SheetHeader("Color Grading Studio", onDismiss)
+        Spacer(Modifier.height(8.dp))
+
+        // Live RGB Parade Waveform scope
+        RgbParadeWaveform(cfg)
         Spacer(Modifier.height(10.dp))
 
-        // Visual picture preview tiles for every filter
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(FilterType.values().toList()) { ft ->
-                val isSelected = cfg.filterType == ft
-                val visual = filterVisuals[ft] ?: Triple(ft.displayName, Color(0xFF4361EE), Color(0xFF3F37C9))
-
-                Column(
+        // Studio Navigation Tabs
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(ObsidianSurfaceLowest)
+                .border(1.dp, ObsidianBorder, RoundedCornerShape(10.dp))
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            listOf("3-Way Wheels", "Film LUTs", "Adjustments").forEachIndexed { index, label ->
+                val isSelected = activeStudioTab == index
+                Box(
                     modifier = Modifier
-                        .width(76.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(if (isSelected) AccentPrimary.copy(alpha = 0.18f) else Surface2)
-                        .border(1.5.dp, if (isSelected) AccentPrimary else HairlineBorder, RoundedCornerShape(12.dp))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            cfg = cfg.copy(filterType = ft)
-                        }
-                        .padding(6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSelected) ObsidianSurfaceHighest else Color.Transparent)
+                        .clickable { activeStudioTab = index }
+                        .padding(vertical = 7.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    // Visual picture thumbnail simulating footage under this filter
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                androidx.compose.ui.graphics.Brush.linearGradient(
-                                    colors = listOf(visual.second, visual.third)
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        // Film overlay vignette / symbol inside preview
-                        Icon(
-                            imageVector = when (ft) {
-                                FilterType.NONE -> Icons.Filled.Image
-                                FilterType.BRIGHTNESS -> Icons.Filled.WbSunny
-                                FilterType.CONTRAST -> Icons.Filled.Contrast
-                                FilterType.SATURATION -> Icons.Filled.Palette
-                                FilterType.TEMPERATURE -> Icons.Filled.Thermostat
-                                FilterType.VIGNETTE -> Icons.Filled.Lens
-                                FilterType.GRAYSCALE -> Icons.Filled.FilterBAndW
-                                FilterType.SEPIA -> Icons.Filled.CameraRoll
-                            },
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                    Spacer(Modifier.height(6.dp))
                     Text(
-                        text = ft.displayName,
-                        color = if (isSelected) AccentPrimary else Color.White,
+                        label,
+                        color = if (isSelected) ElectricCyan else TextSecondary,
                         fontSize = 11.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        maxLines = 1
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                     )
                 }
             }
         }
 
-        Spacer(Modifier.height(16.dp))
-        Text("3D LUT Cinematic Presets", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(8.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val presets = listOf(
-                "Cinematic" to FilterConfig(brightness = 0f, contrast = 1.25f, saturation = 1.2f, temperature = -0.15f, vignette = 0.35f, tint = 0.05f),
-                "Vintage Film" to FilterConfig(brightness = 0.05f, contrast = 0.95f, saturation = 0.85f, temperature = 0.25f, vignette = 0.45f, tint = 0.1f),
-                "Teal & Orange" to FilterConfig(brightness = 0f, contrast = 1.35f, saturation = 1.3f, temperature = -0.2f, vignette = 0.25f, tint = 0.08f),
-                "Warm Sunset" to FilterConfig(brightness = 0.05f, contrast = 1.1f, saturation = 1.25f, temperature = 0.4f, vignette = 0.2f, tint = -0.05f),
-                "Noir Drama" to FilterConfig(filterType = FilterType.GRAYSCALE, brightness = 0f, contrast = 1.45f, saturation = 0f, temperature = 0f, vignette = 0.55f),
-                "Clean Pop" to FilterConfig(brightness = 0.08f, contrast = 1.15f, saturation = 1.2f, temperature = 0f, vignette = 0f, tint = 0f)
-            )
-            items(presets) { (pName, pCfg) ->
-                EditorFilterChip(pName, cfg.contrast == pCfg.contrast && cfg.vignette == pCfg.vignette && cfg.temperature == pCfg.temperature) {
-                    cfg = pCfg
+        Spacer(Modifier.height(12.dp))
+
+        when (activeStudioTab) {
+            0 -> {
+                // 3-Way Wheels: Lift, Gamma, Gain
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    StudioColorWheel(
+                        title = "LIFT",
+                        subtitle = "Shadows & Pedestal",
+                        accentColor = ElectricCyan,
+                        puckX = liftX,
+                        puckY = liftY,
+                        sliderValue = cfg.brightness,
+                        sliderRange = -0.5f..0.5f,
+                        sliderLabel = "Pedestal",
+                        onPuckChange = { nx, ny ->
+                            liftX = nx
+                            liftY = ny
+                            cfg = cfg.copy(tint = nx * 0.4f, temperature = -ny * 0.4f)
+                        },
+                        onSliderChange = { cfg = cfg.copy(brightness = it) }
+                    )
+
+                    StudioColorWheel(
+                        title = "GAMMA",
+                        subtitle = "Midtones & Balance",
+                        accentColor = VibrantViolet,
+                        puckX = gammaX,
+                        puckY = gammaY,
+                        sliderValue = cfg.contrast,
+                        sliderRange = 0.5f..2.0f,
+                        sliderLabel = "Contrast",
+                        onPuckChange = { nx, ny ->
+                            gammaX = nx
+                            gammaY = ny
+                            cfg = cfg.copy(saturation = (1f + nx * 0.6f).coerceIn(0f, 2f))
+                        },
+                        onSliderChange = { cfg = cfg.copy(contrast = it) }
+                    )
+
+                    StudioColorWheel(
+                        title = "GAIN",
+                        subtitle = "Highlights & Whites",
+                        accentColor = LuminescentAmber,
+                        puckX = gainX,
+                        puckY = gainY,
+                        sliderValue = cfg.temperature,
+                        sliderRange = -0.5f..0.5f,
+                        sliderLabel = "Warmth",
+                        onPuckChange = { nx, ny ->
+                            gainX = nx
+                            gainY = ny
+                            cfg = cfg.copy(temperature = nx * 0.4f, brightness = (ny * 0.3f).coerceIn(-0.5f, 0.5f))
+                        },
+                        onSliderChange = { cfg = cfg.copy(temperature = it) }
+                    )
                 }
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = {
+                        liftX = 0f; liftY = 0f
+                        gammaX = 0f; gammaY = 0f
+                        gainX = 0f; gainY = 0f
+                        cfg = FilterConfig()
+                    }) {
+                        Text("Reset Wheels", color = TextTertiary, fontSize = 11.sp)
+                    }
+                }
+            }
+
+            1 -> {
+                // Film LUTs Presets
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(filmLuts) { (lutTitle, lutDesc, lutCfg) ->
+                        val isSel = cfg.contrast == lutCfg.contrast && cfg.vignette == lutCfg.vignette && cfg.temperature == lutCfg.temperature
+                        Column(
+                            modifier = Modifier
+                                .width(108.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isSel) ObsidianSurfaceHighest else ObsidianSurface)
+                                .border(1.5.dp, if (isSel) ElectricCyan else ObsidianBorder, RoundedCornerShape(12.dp))
+                                .clickable { cfg = lutCfg }
+                                .padding(8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(58.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            when (lutTitle) {
+                                                "Teal & Orange" -> listOf(Color(0xFF005C8A), Color(0xFFFF7E47))
+                                                "Kodak Portra 400" -> listOf(Color(0xFFD4A373), Color(0xFFFAEDCD))
+                                                "Tokyo Cyberpunk" -> listOf(Color(0xFF7C3AED), Color(0xFF00F2FE))
+                                                "Vintage 35mm" -> listOf(Color(0xFF6B705C), Color(0xFFDDA15E))
+                                                "Warm Sunset" -> listOf(Color(0xFFFF5400), Color(0xFFFFBD00))
+                                                "Noir Drama" -> listOf(Color(0xFF212529), Color(0xFFE9ECEF))
+                                                "Emerald Matrix" -> listOf(Color(0xFF064E3B), Color(0xFF10B981))
+                                                else -> listOf(Color(0xFF3A86FF), Color(0xFF8338EC))
+                                            }
+                                        )
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.MovieCreation,
+                                    contentDescription = null,
+                                    tint = Color.White.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                lutTitle,
+                                color = if (isSel) ElectricCyan else Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1
+                            )
+                            Text(
+                                lutDesc,
+                                color = TextSecondary,
+                                fontSize = 9.sp,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+
+            2 -> {
+                // Fine Adjustments
+                SheetSlider("Brightness", cfg.brightness, -0.5f..0.5f) { cfg = cfg.copy(brightness = it) }
+                SheetSlider("Contrast", cfg.contrast, 0.5f..2f) { cfg = cfg.copy(contrast = it) }
+                SheetSlider("Saturation", cfg.saturation, 0f..2f) { cfg = cfg.copy(saturation = it) }
+                SheetSlider("Temperature", cfg.temperature, -0.5f..0.5f) { cfg = cfg.copy(temperature = it) }
+                SheetSlider("Vignette", cfg.vignette, 0f..1f) { cfg = cfg.copy(vignette = it) }
+                SheetSlider("Tint", cfg.tint, -0.5f..0.5f) { cfg = cfg.copy(tint = it) }
             }
         }
 
-        Spacer(Modifier.height(16.dp))
-        Text("Fine Adjustments", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(4.dp))
-        SheetSlider("Brightness", cfg.brightness, -0.5f..0.5f) { cfg = cfg.copy(brightness = it) }
-        SheetSlider("Contrast", cfg.contrast, 0.5f..2f) { cfg = cfg.copy(contrast = it) }
-        SheetSlider("Saturation", cfg.saturation, 0f..2f) { cfg = cfg.copy(saturation = it) }
-        SheetSlider("Temperature", cfg.temperature, -0.5f..0.5f) { cfg = cfg.copy(temperature = it) }
-        SheetSlider("Vignette", cfg.vignette, 0f..1f) { cfg = cfg.copy(vignette = it) }
-        SheetSlider("Tint", cfg.tint, -0.5f..0.5f) { cfg = cfg.copy(tint = it) }
-        Spacer(Modifier.height(12.dp))
-        PrimaryButton("Apply", onClick = { onApplyFilter(cfg) }, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(14.dp))
+        Button(
+            onClick = { onApplyFilter(cfg) },
+            modifier = Modifier.fillMaxWidth().height(46.dp),
+            shape = RoundedCornerShape(10.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+            contentPadding = PaddingValues()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Brush.horizontalGradient(listOf(ElectricCyan, VibrantViolet))),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Apply Color Grade", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+        }
     }
 }
 
-// ── SpeedRampDialog (VN 2D Velocity Speed Ramping) ──────────────────────
+// ── SpeedRampDialog (Stitch Screen 3: Cubic Bezier Speed Ramp Graph) ─────
 @Composable
 fun SpeedRampDialog(
     initialRamp: SpeedRamp,
@@ -935,127 +1269,445 @@ fun SpeedRampDialog(
     onApply: (SpeedRamp) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var ramp by remember { mutableStateOf(initialRamp) }
-    var selectedPreset by remember { mutableStateOf<String?>(null) }
+    var ramp by remember {
+        mutableStateOf(
+            if (initialRamp.keyframes.size >= 2) initialRamp
+            else SpeedRamp(
+                keyframes = listOf(
+                    SpeedKeyframe(timeOffsetUs = 0L, speed = 1.0f),
+                    SpeedKeyframe(timeOffsetUs = (clipDurationUs * 0.35f).toLong(), speed = 2.0f),
+                    SpeedKeyframe(timeOffsetUs = (clipDurationUs * 0.65f).toLong(), speed = 0.5f),
+                    SpeedKeyframe(timeOffsetUs = clipDurationUs, speed = 1.0f)
+                )
+            )
+        )
+    }
+    var selectedPreset by remember { mutableStateOf<String?>("Montage") }
+    var selectedNodeIndex by remember { mutableStateOf<Int?>(null) }
+    var opticalFlowEnabled by remember { mutableStateOf(true) }
+    var pitchPreserveEnabled by remember { mutableStateOf(true) }
+
+    val presets = listOf(
+        "Custom" to emptyList(),
+        "Montage" to listOf(0.0f to 1.0f, 0.4f to 2.5f, 0.6f to 0.4f, 0.8f to 1.8f, 1.0f to 1.0f),
+        "Hero Ramp" to listOf(0.0f to 1.0f, 0.3f to 3.0f, 0.5f to 0.3f, 0.7f to 2.5f, 1.0f to 1.0f),
+        "Bullet Time" to listOf(0.0f to 2.5f, 0.35f to 2.5f, 0.5f to 0.2f, 0.65f to 2.5f, 1.0f to 2.5f),
+        "Flash In" to listOf(0.0f to 4.0f, 0.25f to 3.5f, 0.55f to 1.0f, 1.0f to 1.0f),
+        "Jump Cut" to listOf(0.0f to 0.5f, 0.4f to 0.5f, 0.55f to 3.5f, 0.7f to 0.5f, 1.0f to 0.5f)
+    )
 
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-        SheetHeader("2D Velocity Speed Ramp (VN)", onDismiss)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Smooth velocity curve speed ramping with VN curve presets (Bullet Time, Hero, Montage).",
-            color = TextSecondary,
-            fontSize = 11.sp
-        )
-        Spacer(Modifier.height(10.dp))
-
-        // VN Curve Speed Preset Chips
-        Text("VN Curve Presets", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        SheetHeader("Speed Ramping & Velocity Curve", onDismiss)
         Spacer(Modifier.height(6.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(com.clipcut.core.model.VnCurveSpeedPresets.presets.map { it.first }) { name ->
-                val isSel = selectedPreset == name
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (isSel) AccentPrimary else Surface2)
-                        .border(1.dp, if (isSel) AccentPrimary else HairlineBorder, RoundedCornerShape(8.dp))
-                        .clickable {
-                            selectedPreset = name
-                            com.clipcut.core.model.VnCurveSpeedPresets.buildRamp(name, clipDurationUs)?.let {
-                                ramp = it
-                            }
-                        }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        name,
-                        color = if (isSel) DarkBackground else Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+
+        // Active node coordinate readout badge
+        val activeKf = selectedNodeIndex?.let { idx -> ramp.keyframes.getOrNull(idx) } ?: ramp.keyframes.firstOrNull()
+        val timeSec = (activeKf?.timeOffsetUs ?: 0L).toFloat() / 1_000_000f
+        val activeSpeed = activeKf?.speed ?: 1.0f
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(ObsidianSurfaceLowest)
+                .border(1.dp, ObsidianBorder, RoundedCornerShape(8.dp))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(ElectricCyan))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "At ${String.format(java.util.Locale.US, "%.2f", timeSec)}s · ${String.format(java.util.Locale.US, "%.2f", activeSpeed)}x Velocity",
+                    color = ElectricCyan,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
+            Text(
+                "${ramp.keyframes.size} Control Nodes",
+                color = TextSecondary,
+                fontSize = 10.sp
+            )
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
 
-        // 2D Velocity Curve Canvas
+        // High-Resolution Cubic Bezier Curve Canvas
+        val durationFloat = clipDurationUs.coerceAtLeast(1_000_000L).toFloat()
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(110.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(Surface2)
-                .border(1.dp, HairlineBorder, RoundedCornerShape(10.dp))
+                .height(145.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(ObsidianSurfaceLowest)
+                .border(1.dp, ObsidianBorderVariant, RoundedCornerShape(12.dp))
                 .padding(8.dp)
         ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(ramp.keyframes) {
+                        detectTapGestures { tapOffset ->
+                            val w = size.width.toFloat()
+                            val h = size.height.toFloat()
+                            val hitRadius = 24.dp.toPx()
+                            val hitIndex = ramp.keyframes.indexOfFirst { kf ->
+                                val kfX = (kf.timeOffsetUs.toFloat() / durationFloat).coerceIn(0f, 1f) * w
+                                val kfY = (h * 0.88f - ((kf.speed - 0.1f) / 4.9f) * (h * 0.76f)).coerceIn(12f, h - 12f)
+                                sqrt((tapOffset.x - kfX) * (tapOffset.x - kfX) + (tapOffset.y - kfY) * (tapOffset.y - kfY)) <= hitRadius
+                            }
+                            if (hitIndex >= 0) {
+                                selectedNodeIndex = hitIndex
+                            } else {
+                                val tapTime = ((tapOffset.x / w).coerceIn(0f, 1f) * durationFloat).toLong()
+                                val tapSpeed = (0.1f + ((h * 0.88f - tapOffset.y) / (h * 0.76f)) * 4.9f).coerceIn(0.1f, 5.0f)
+                                val newKf = SpeedKeyframe(timeOffsetUs = tapTime, speed = tapSpeed)
+                                val updated = (ramp.keyframes + newKf).sortedBy { it.timeOffsetUs }
+                                ramp = ramp.copy(keyframes = updated)
+                                selectedNodeIndex = updated.indexOf(newKf)
+                                selectedPreset = "Custom"
+                            }
+                        }
+                    }
+                    .pointerInput(ramp.keyframes, selectedNodeIndex) {
+                        detectDragGestures(
+                            onDragStart = { startOffset ->
+                                val w = size.width.toFloat()
+                                val h = size.height.toFloat()
+                                val hitRadius = 28.dp.toPx()
+                                val hitIndex = ramp.keyframes.indexOfFirst { kf ->
+                                    val kfX = (kf.timeOffsetUs.toFloat() / durationFloat).coerceIn(0f, 1f) * w
+                                    val kfY = (h * 0.88f - ((kf.speed - 0.1f) / 4.9f) * (h * 0.76f)).coerceIn(12f, h - 12f)
+                                    sqrt((startOffset.x - kfX) * (startOffset.x - kfX) + (startOffset.y - kfY) * (startOffset.y - kfY)) <= hitRadius
+                                }
+                                if (hitIndex >= 0) {
+                                    selectedNodeIndex = hitIndex
+                                }
+                            },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                val curIdx = selectedNodeIndex ?: return@detectDragGestures
+                                val kfs = ramp.keyframes.toMutableList()
+                                if (curIdx in kfs.indices) {
+                                    val kf = kfs[curIdx]
+                                    val w = size.width.toFloat()
+                                    val h = size.height.toFloat()
+                                    val curX = (kf.timeOffsetUs.toFloat() / durationFloat).coerceIn(0f, 1f) * w
+                                    val curY = (h * 0.88f - ((kf.speed - 0.1f) / 4.9f) * (h * 0.76f)).coerceIn(12f, h - 12f)
+
+                                    val newX = (curX + dragAmount.x).coerceIn(0f, w)
+                                    val newY = (curY + dragAmount.y).coerceIn(12f, h - 12f)
+
+                                    val newTime = if (curIdx == 0) 0L else if (curIdx == kfs.lastIndex) clipDurationUs else ((newX / w) * durationFloat).toLong()
+                                    val newSpeed = (0.1f + ((h * 0.88f - newY) / (h * 0.76f)) * 4.9f).coerceIn(0.1f, 5.0f)
+
+                                    kfs[curIdx] = kf.copy(timeOffsetUs = newTime, speed = newSpeed)
+                                    ramp = ramp.copy(keyframes = kfs.sortedBy { it.timeOffsetUs })
+                                    selectedPreset = "Custom"
+                                }
+                            }
+                        )
+                    }
+            ) {
                 val w = size.width
                 val h = size.height
-                val midY = h / 2f
 
-                // Reference line (1.0x baseline)
+                val baselineY = (h * 0.88f - ((1.0f - 0.1f) / 4.9f) * (h * 0.76f))
                 drawLine(
-                    color = Color.White.copy(alpha = 0.2f),
-                    start = Offset(0f, midY),
-                    end = Offset(w, midY),
+                    color = LuminescentAmber.copy(alpha = 0.35f),
+                    start = Offset(0f, baselineY),
+                    end = Offset(w, baselineY),
                     strokeWidth = 1.dp.toPx()
                 )
 
-                val dur = clipDurationUs.coerceAtLeast(1_000_000L).toFloat()
-                val kfs = ramp.keyframes.sortedBy { it.timeOffsetUs }
-                if (kfs.size >= 2) {
-                    val path = Path()
-                    kfs.forEachIndexed { idx, kf ->
-                        val px = (kf.timeOffsetUs.toFloat() / dur).coerceIn(0f, 1f) * w
-                        // map speed 0.1x to 4.0x: 1.0x is at midY
-                        val py = (midY - (kf.speed - 1f) * (h / 3f)).coerceIn(8f, h - 8f)
-                        if (idx == 0) path.moveTo(px, py) else path.lineTo(px, py)
-                    }
-                    drawPath(
-                        path = path,
-                        color = ElectricCyan,
-                        style = Stroke(width = 2.5.dp.toPx())
+                listOf(0.5f, 2.0f, 4.0f).forEach { spd ->
+                    val gy = (h * 0.88f - ((spd - 0.1f) / 4.9f) * (h * 0.76f))
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.08f),
+                        start = Offset(0f, gy),
+                        end = Offset(w, gy),
+                        strokeWidth = 0.8.dp.toPx()
                     )
-                    kfs.forEach { kf ->
-                        val px = (kf.timeOffsetUs.toFloat() / dur).coerceIn(0f, 1f) * w
-                        val py = (midY - (kf.speed - 1f) * (h / 3f)).coerceIn(8f, h - 8f)
-                        drawCircle(color = Color.White, radius = 4.dp.toPx(), center = Offset(px, py))
-                        drawCircle(color = ElectricCyan, radius = 2.dp.toPx(), center = Offset(px, py))
+                }
+
+                val sorted = ramp.keyframes.sortedBy { it.timeOffsetUs }
+                if (sorted.size >= 2) {
+                    val curvePath = Path()
+                    val fillPath = Path()
+
+                    val points = sorted.map { kf ->
+                        val px = (kf.timeOffsetUs.toFloat() / durationFloat).coerceIn(0f, 1f) * w
+                        val py = (h * 0.88f - ((kf.speed - 0.1f) / 4.9f) * (h * 0.76f)).coerceIn(12f, h - 12f)
+                        Offset(px, py)
+                    }
+
+                    curvePath.moveTo(points[0].x, points[0].y)
+                    fillPath.moveTo(points[0].x, h)
+                    fillPath.lineTo(points[0].x, points[0].y)
+
+                    for (i in 0 until points.size - 1) {
+                        val p0 = points[i]
+                        val p1 = points[i + 1]
+                        val cx1 = p0.x + (p1.x - p0.x) * 0.5f
+                        val cy1 = p0.y
+                        val cx2 = p0.x + (p1.x - p0.x) * 0.5f
+                        val cy2 = p1.y
+                        curvePath.cubicTo(cx1, cy1, cx2, cy2, p1.x, p1.y)
+                        fillPath.cubicTo(cx1, cy1, cx2, cy2, p1.x, p1.y)
+                    }
+
+                    fillPath.lineTo(points.last().x, h)
+                    fillPath.close()
+
+                    drawPath(
+                        path = fillPath,
+                        brush = Brush.verticalGradient(
+                            listOf(
+                                ElectricCyan.copy(alpha = 0.28f),
+                                VibrantViolet.copy(alpha = 0.08f),
+                                Color.Transparent
+                            )
+                        )
+                    )
+
+                    drawPath(
+                        path = curvePath,
+                        brush = Brush.horizontalGradient(listOf(ElectricCyan, VibrantViolet)),
+                        style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+                    )
+
+                    points.forEachIndexed { idx, pt ->
+                        val isSel = (idx == selectedNodeIndex)
+                        if (isSel) {
+                            drawCircle(ElectricCyan.copy(alpha = 0.45f), radius = 10.dp.toPx(), center = pt)
+                        }
+                        drawCircle(if (isSel) ElectricCyan else Color.White, radius = 5.dp.toPx(), center = pt)
+                        drawCircle(ObsidianBackground, radius = 2.dp.toPx(), center = pt)
                     }
                 }
             }
-            Text("1.0x Normal", color = Color.White.copy(alpha = 0.4f), fontSize = 9.sp, modifier = Modifier.align(Alignment.CenterStart))
-            Text("Fast", color = ElectricCyan, fontSize = 9.sp, modifier = Modifier.align(Alignment.TopEnd))
-            Text("Slow", color = ProGold, fontSize = 9.sp, modifier = Modifier.align(Alignment.BottomEnd))
+
+            Text("1.0x Normal", color = LuminescentAmber.copy(alpha = 0.8f), fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.CenterStart).padding(start = 2.dp))
+            Text("4.0x Fast", color = ElectricCyan, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopEnd).padding(2.dp))
+            Text("0.2x Slow", color = VibrantViolet, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.BottomEnd).padding(2.dp))
         }
 
         Spacer(Modifier.height(12.dp))
-        Text("Keyframe Points (${ramp.keyframes.size})", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+
+        // Preset Curves Row with illustrated mini curves
+        Text("Velocity Curve Presets", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
-        ramp.keyframes.forEachIndexed { i, kf ->
-            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("#${i+1}  ${kf.timeOffsetUs/1000}ms  ×${String.format("%.2f", kf.speed)}", color = Color.White, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                IconButton(onClick = { ramp = ramp.copy(keyframes = ramp.keyframes.filterNot { it.id == kf.id }) }) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = Color(0xFFFF5252), modifier = Modifier.size(18.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(presets) { (pName, pPts) ->
+                val isSel = (selectedPreset == pName)
+                Column(
+                    modifier = Modifier
+                        .width(78.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (isSel) ObsidianSurfaceHighest else ObsidianSurface)
+                        .border(1.5.dp, if (isSel) ElectricCyan else ObsidianBorder, RoundedCornerShape(10.dp))
+                        .clickable {
+                            selectedPreset = pName
+                            if (pPts.isNotEmpty()) {
+                                val dur = clipDurationUs.coerceAtLeast(1_000_000L)
+                                val newKfs = pPts.map { (rx, sp) ->
+                                    SpeedKeyframe(
+                                        timeOffsetUs = (rx * dur).toLong().coerceIn(0L, dur),
+                                        speed = sp
+                                    )
+                                }
+                                ramp = SpeedRamp(keyframes = newKfs.sortedBy { it.timeOffsetUs })
+                                selectedNodeIndex = 0
+                            }
+                        }
+                        .padding(6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(ObsidianSurfaceLowest),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Canvas(modifier = Modifier.fillMaxSize().padding(4.dp)) {
+                            val pw = size.width
+                            val ph = size.height
+                            val miniPath = Path()
+                            when (pName) {
+                                "Hero Ramp" -> {
+                                    miniPath.moveTo(0f, ph * 0.7f)
+                                    miniPath.cubicTo(pw * 0.3f, ph * 0.1f, pw * 0.5f, ph * 0.9f, pw, ph * 0.5f)
+                                }
+                                "Bullet Time" -> {
+                                    miniPath.moveTo(0f, ph * 0.2f)
+                                    miniPath.lineTo(pw * 0.3f, ph * 0.2f)
+                                    miniPath.cubicTo(pw * 0.4f, ph * 0.9f, pw * 0.6f, ph * 0.9f, pw * 0.7f, ph * 0.2f)
+                                    miniPath.lineTo(pw, ph * 0.2f)
+                                }
+                                "Flash In" -> {
+                                    miniPath.moveTo(0f, ph * 0.1f)
+                                    miniPath.cubicTo(pw * 0.3f, ph * 0.2f, pw * 0.6f, ph * 0.8f, pw, ph * 0.8f)
+                                }
+                                "Jump Cut" -> {
+                                    miniPath.moveTo(0f, ph * 0.8f)
+                                    miniPath.lineTo(pw * 0.4f, ph * 0.8f)
+                                    miniPath.lineTo(pw * 0.5f, ph * 0.1f)
+                                    miniPath.lineTo(pw * 0.6f, ph * 0.8f)
+                                    miniPath.lineTo(pw, ph * 0.8f)
+                                }
+                                else -> {
+                                    miniPath.moveTo(0f, ph * 0.5f)
+                                    miniPath.cubicTo(pw * 0.4f, ph * 0.1f, pw * 0.6f, ph * 0.9f, pw, ph * 0.5f)
+                                }
+                            }
+                            drawPath(miniPath, if (isSel) ElectricCyan else Color.White.copy(alpha = 0.6f), style = Stroke(width = 2.dp.toPx()))
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        pName,
+                        color = if (isSel) ElectricCyan else Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                        maxLines = 1
+                    )
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
+
+        Spacer(Modifier.height(12.dp))
+
+        // AI & Audio Switches
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(ObsidianSurface)
+                .border(1.dp, ObsidianBorder, RoundedCornerShape(10.dp))
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Optical Flow Slow-Mo (AI Smooth)", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text("Synthesizes high frame rate interpolation", color = TextSecondary, fontSize = 10.sp)
+            }
+            Switch(
+                checked = opticalFlowEnabled,
+                onCheckedChange = { opticalFlowEnabled = it },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = ElectricCyan)
+            )
+        }
+
+        Spacer(Modifier.height(6.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(ObsidianSurface)
+                .border(1.dp, ObsidianBorder, RoundedCornerShape(10.dp))
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Preserve Audio Pitch", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text("Keeps pitch natural across velocity changes", color = TextSecondary, fontSize = 10.sp)
+            }
+            Switch(
+                checked = pitchPreserveEnabled,
+                onCheckedChange = { pitchPreserveEnabled = it },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = VibrantViolet)
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        // Keyframe Points Management
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedButton(
                 onClick = {
-                    val newKf = SpeedKeyframe(timeOffsetUs = clipDurationUs / 2, speed = 1.5f)
-                    ramp = ramp.copy(keyframes = (ramp.keyframes + newKf).sortedBy { it.timeOffsetUs })
+                    val dur = clipDurationUs.coerceAtLeast(1_000_000L)
+                    val midTime = dur / 2L
+                    val newKf = SpeedKeyframe(timeOffsetUs = midTime, speed = 1.8f)
+                    val updated = (ramp.keyframes + newKf).sortedBy { it.timeOffsetUs }
+                    ramp = ramp.copy(keyframes = updated)
+                    selectedNodeIndex = updated.indexOf(newKf)
+                    selectedPreset = "Custom"
                 },
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                border = BorderStroke(1.dp, ObsidianBorder)
             ) {
-                Text("+ Keyframe", color = Color.White, fontSize = 12.sp)
+                Icon(Icons.Filled.Add, contentDescription = null, tint = ElectricCyan, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Add Node", fontSize = 11.sp)
             }
-            PrimaryButton("Apply Speed Ramp", onClick = {
+
+            OutlinedButton(
+                onClick = {
+                    val idx = selectedNodeIndex
+                    if (idx != null && ramp.keyframes.size > 2 && idx in ramp.keyframes.indices) {
+                        val updated = ramp.keyframes.toMutableList().also { it.removeAt(idx) }
+                        ramp = ramp.copy(keyframes = updated)
+                        selectedNodeIndex = null
+                    }
+                },
+                enabled = (selectedNodeIndex != null && ramp.keyframes.size > 2),
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                border = BorderStroke(1.dp, ObsidianBorder)
+            ) {
+                Icon(Icons.Filled.Delete, contentDescription = null, tint = Color(0xFFFF5252), modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Delete Node", fontSize = 11.sp)
+            }
+
+            OutlinedButton(
+                onClick = {
+                    val dur = clipDurationUs.coerceAtLeast(1_000_000L)
+                    ramp = SpeedRamp(
+                        keyframes = listOf(
+                            SpeedKeyframe(timeOffsetUs = 0L, speed = 1.0f),
+                            SpeedKeyframe(timeOffsetUs = dur, speed = 1.0f)
+                        )
+                    )
+                    selectedPreset = "Custom"
+                    selectedNodeIndex = null
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                border = BorderStroke(1.dp, ObsidianBorder)
+            ) {
+                Text("Reset 1.0x", fontSize = 11.sp)
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        Button(
+            onClick = {
                 onApply(ramp)
                 onDismiss()
-            }, modifier = Modifier.weight(1f))
+            },
+            modifier = Modifier.fillMaxWidth().height(46.dp),
+            shape = RoundedCornerShape(10.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+            contentPadding = PaddingValues()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Brush.horizontalGradient(listOf(ElectricCyan, VibrantViolet))),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Apply Velocity Curve", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
         }
     }
 }
@@ -1066,6 +1718,168 @@ fun TextAnimationPicker(selected: TextAnimation, onSelect: (TextAnimation) -> Un
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(TextAnimation.values().toList()) { a ->
             EditorFilterChip(a.displayName, selected == a) { onSelect(a) }
+        }
+    }
+}
+
+// ── Overlay Types & Cards for Real Asset Previews ────────────────────
+enum class OverlayPresetType {
+    FRAME, SKY, STUDIO_BG, TITLE
+}
+
+data class OverlayPresetItem(
+    val title: String,
+    val subtitle: String,
+    val assetPath: String,
+    val type: OverlayPresetType
+)
+
+@Composable
+fun OverlayPresetCard(
+    item: OverlayPresetItem,
+    isSelected: Boolean,
+    onSelect: () -> Unit,
+    onApply: () -> Unit
+) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val thumbBmp = remember(item.assetPath) {
+        com.clipcut.ui.util.AssetImageHelper.loadThumbnail(ctx, item.assetPath, 260, 160)
+    }
+
+    Column(
+        modifier = Modifier
+            .width(132.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isSelected) AccentPrimary.copy(alpha = 0.22f) else Surface2)
+            .border(
+                width = if (isSelected) 2.dp else 1.dp,
+                color = if (isSelected) AccentPrimary else HairlineBorder,
+                shape = RoundedCornerShape(12.dp)
+            )
+            .clickable(onClick = onSelect)
+            .padding(6.dp)
+    ) {
+        Box(
+            modifier = if (item.type == OverlayPresetType.FRAME) {
+                Modifier
+                    .fillMaxWidth()
+                    .height(76.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(Color(0xFF2C3E50), Color(0xFF0F172A))
+                        )
+                    )
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .height(76.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF0F131A))
+            },
+            contentAlignment = Alignment.Center
+        ) {
+            if (item.type == OverlayPresetType.FRAME) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 6.dp, vertical = 5.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(Color(0xFF1E3A8A), Color(0xFF065F46))
+                            ),
+                            RoundedCornerShape(4.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "VIDEO",
+                        color = Color.White.copy(alpha = 0.35f),
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            if (thumbBmp != null) {
+                androidx.compose.foundation.Image(
+                    bitmap = thumbBmp,
+                    contentDescription = item.title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = if (item.type == OverlayPresetType.FRAME || item.type == OverlayPresetType.TITLE) {
+                        androidx.compose.ui.layout.ContentScale.Fit
+                    } else {
+                        androidx.compose.ui.layout.ContentScale.Crop
+                    }
+                )
+            } else {
+                Text(
+                    text = when (item.type) {
+                        OverlayPresetType.FRAME -> "🎞️"
+                        OverlayPresetType.SKY -> "🌤️"
+                        OverlayPresetType.STUDIO_BG -> "🎙️"
+                        OverlayPresetType.TITLE -> "🎬"
+                    },
+                    fontSize = 22.sp
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .background(Color(0xCC000000), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = when (item.type) {
+                        OverlayPresetType.FRAME -> "FRAME"
+                        OverlayPresetType.SKY -> "SKY"
+                        OverlayPresetType.STUDIO_BG -> "STUDIO"
+                        OverlayPresetType.TITLE -> "TITLE"
+                    },
+                    color = AccentPrimary,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Black
+                )
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+
+        Text(
+            text = item.title,
+            color = Color.White,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 2.dp)
+        )
+        Text(
+            text = item.subtitle,
+            color = TextSecondary,
+            fontSize = 9.sp,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 2.dp)
+        )
+
+        Spacer(Modifier.height(4.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(if (isSelected) AccentPrimary else Surface3)
+                .clickable(onClick = onApply)
+                .padding(vertical = 4.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = if (isSelected) "Selected ✓" else "+ Apply",
+                color = if (isSelected) DarkBackground else Color.White,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }
@@ -1085,6 +1899,7 @@ fun OverlaySheet(
     onSetPipVolume: (String, Float) -> Unit = { _, _ -> },
     onSeekPreview: (Long) -> Unit = {},
     onOpenPiP: () -> Unit = {},
+    onOpenFingerPaintStudio: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
@@ -1194,7 +2009,7 @@ fun OverlaySheet(
         Spacer(Modifier.height(8.dp))
         PrimaryButton("Add Text Overlay", onClick = {
             if (text.isNotBlank()) {
-                onAddOverlay(OverlayItem(text = text, timelineStartUs = initialPlayheadUs, timelineEndUs = initialPlayheadUs + 3_000_000L))
+                onAddOverlay(OverlayItem(text = text, timelineStartUs = initialPlayheadUs, timelineEndUs = initialPlayheadUs + 5_000_000L))
                 text = ""
             }
         }, modifier = Modifier.fillMaxWidth())
@@ -1202,48 +2017,355 @@ fun OverlaySheet(
         SecondaryButton("Add PiP Video/Image", onClick = onOpenPiP, modifier = Modifier.fillMaxWidth())
 
         Spacer(Modifier.height(16.dp))
-        Text("Cinematic Frames & Camera Masks", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-        Text("Authentic camera viewfinders, phones, polaroids & masks from VN", color = TextSecondary, fontSize = 11.sp)
-        Spacer(Modifier.height(8.dp))
 
-        val framePresets = listOf(
-            Triple("Camera REC", "Camera.png", "📷"),
-            Triple("Smartphone", "Phone.png", "📱"),
-            Triple("Polaroid", "Photo.png", "📸"),
-            Triple("Heart Mask", "Heart.png", "💖"),
-            Triple("Circular Lens", "Circular.png", "🔘"),
-            Triple("Water Ripple", "Water.png", "🌊"),
-            Triple("Film Box", "Square.png", "🎞️")
-        )
+        // ── Real Overlay Presets Data ──
+        val framePresets = remember {
+            listOf(
+                OverlayPresetItem("Camera REC 4K", "HUD Viewfinder", "overlays/frames/Camera.png", OverlayPresetType.FRAME),
+                OverlayPresetItem("Smartphone Bezel", "Phone Frame", "overlays/frames/Phone.png", OverlayPresetType.FRAME),
+                OverlayPresetItem("Polaroid Instant", "Vintage Film Border", "overlays/frames/Photo.png", OverlayPresetType.FRAME),
+                OverlayPresetItem("Romantic Heart", "Heart Mask Vignette", "overlays/frames/Heart.png", OverlayPresetType.FRAME),
+                OverlayPresetItem("Circular Lens", "Iris Vignette Mask", "overlays/frames/Circular.png", OverlayPresetType.FRAME),
+                OverlayPresetItem("Water Ripple", "Organic Caustics", "overlays/frames/Water.png", OverlayPresetType.FRAME),
+                OverlayPresetItem("Film Box 1:1", "Square Film Sprocket", "overlays/frames/Square.png", OverlayPresetType.FRAME),
+                OverlayPresetItem("Cinemascope 2.39", "Letterbox Movie Bars", "overlays/frames/Rectangle.png", OverlayPresetType.FRAME)
+            )
+        }
 
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(framePresets) { (label, file, emoji) ->
-                Column(
-                    modifier = Modifier
-                        .width(100.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Surface2)
-                        .border(1.dp, HairlineBorder, RoundedCornerShape(8.dp))
-                        .clickable {
-                            val assetUri = "asset://overlays/frames/$file"
-                            onAddOverlay(
-                                OverlayItem(
-                                    text = assetUri,
-                                    imageUri = assetUri,
-                                    timelineStartUs = initialPlayheadUs,
-                                    timelineEndUs = if (totalDurationUs > 0L) totalDurationUs else initialPlayheadUs + 5_000_000L,
-                                    scale = 1.0f
+        val skyPresets = remember {
+            listOf(
+                OverlayPresetItem("Clear Azure Sky", "Sunny Day Blue", "overlays/sky/PRESET_SYK_1.png", OverlayPresetType.SKY),
+                OverlayPresetItem("Sunset Warm Glow", "Golden Dusk Clouds", "overlays/sky/PRESET_SYK_2.png", OverlayPresetType.SKY),
+                OverlayPresetItem("Golden Dusk", "Warm Evening Sun", "overlays/sky/PRESET_SYK_3.png", OverlayPresetType.SKY),
+                OverlayPresetItem("Purple Twilight", "Violet Sunset", "overlays/sky/PRESET_SYK_4.png", OverlayPresetType.SKY),
+                OverlayPresetItem("Night Sky Stars", "Starlit Midnight", "overlays/sky/PRESET_SYK_5.png", OverlayPresetType.SKY),
+                OverlayPresetItem("Storm Drama", "Moody Storm Clouds", "overlays/sky/PRESET_SYK_6.png", OverlayPresetType.SKY),
+                OverlayPresetItem("Milky Way Galaxy", "Deep Cosmos", "overlays/sky/PRESET_SYK_7.png", OverlayPresetType.SKY),
+                OverlayPresetItem("Deep Crimson", "Fiery Red Sunset", "overlays/sky/PRESET_SYK_8.png", OverlayPresetType.SKY),
+                OverlayPresetItem("Aurora Borealis", "Polar Green Glow", "overlays/sky/PRESET_SYK_9.png", OverlayPresetType.SKY),
+                OverlayPresetItem("Cosmic Horizon", "Alien Atmosphere", "overlays/sky/PRESET_SYK_10.png", OverlayPresetType.SKY)
+            )
+        }
+
+        val bgPresets = remember {
+            listOf(
+                OverlayPresetItem("Neon Cyberpunk", "Futuristic Street", "overlays/backgrounds/human_seg_1.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Podcast Studio", "Acoustic Creator Room", "overlays/backgrounds/human_seg_2.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Minimal Loft", "Modern Apartment", "overlays/backgrounds/human_seg_3.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Modern Office", "High-Rise Executive", "overlays/backgrounds/human_seg_4.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Tropical Beach", "Sunny Ocean Coast", "overlays/backgrounds/human_seg_5.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Sci-Fi Chamber", "Starship Corridor", "overlays/backgrounds/human_seg_6.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Art Gallery", "Exhibition Hall", "overlays/backgrounds/human_seg_7.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Cozy Cafe", "Warm Coffee House", "overlays/backgrounds/human_seg_8.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Sunset Rooftop", "City Skyline Lounge", "overlays/backgrounds/human_seg_9.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Nightclub VIP", "Neon Dance Club", "overlays/backgrounds/human_seg_10.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Tokyo Street", "Lantern Alleyway", "overlays/backgrounds/human_seg_11.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Abstract Studio", "Pastel Minimal Stage", "overlays/backgrounds/human_seg_12.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Industrial Space", "Concrete Studio", "overlays/backgrounds/human_seg_13.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Alpine Mountain", "Snowy Peak Vista", "overlays/backgrounds/human_seg_14.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Cinema Stage", "Theater Spotlight", "overlays/backgrounds/human_seg_15.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Golden Balcony", "Sunset Terrace", "overlays/backgrounds/human_seg_16.webp", OverlayPresetType.STUDIO_BG),
+                OverlayPresetItem("Newsroom Desk", "Broadcast TV Studio", "overlays/backgrounds/human_seg_17.webp", OverlayPresetType.STUDIO_BG)
+            )
+        }
+
+        val titlePresets = remember {
+            listOf(
+                OverlayPresetItem("Minimal Accent", "Clean Headline", "overlays/titles/Big_Title_Pack_Title_04.png", OverlayPresetType.TITLE),
+                OverlayPresetItem("Lower Third", "Broadcast Tag", "overlays/titles/Big_Title_Pack_Title_14.png", OverlayPresetType.TITLE),
+                OverlayPresetItem("Impact Title", "Bold Heavy Stamp", "overlays/titles/Big_Title_Pack_Title_18.png", OverlayPresetType.TITLE),
+                OverlayPresetItem("Channel Stamp", "Creator Watermark", "overlays/titles/Social_Media_Watermark_Pack_Title_01.png", OverlayPresetType.TITLE),
+                OverlayPresetItem("Vlog Lifestyle", "Aesthetic Title", "overlays/titles/Vlog_Title_Pack_Title_08.png", OverlayPresetType.TITLE),
+                OverlayPresetItem("Cinematic Intro", "Film Opener", "overlays/titles/Vlog_Title_Pack_Title_15.png", OverlayPresetType.TITLE)
+            )
+        }
+
+        var inspectedPreset by remember { mutableStateOf<OverlayPresetItem?>(framePresets.first()) }
+
+        val applyPresetOverlay = { preset: OverlayPresetItem ->
+            val assetUri = "asset://${preset.assetPath}"
+            val isSky = preset.type == OverlayPresetType.SKY
+            onAddOverlay(
+                OverlayItem(
+                    text = assetUri,
+                    imageUri = assetUri,
+                    timelineStartUs = 0L,
+                    timelineEndUs = if (totalDurationUs > 0L) totalDurationUs else 60_000_000L,
+                    normalizedX = 0.5f,
+                    normalizedY = if (isSky) 0.26f else 0.5f,
+                    scale = 1.0f
+                )
+            )
+        }
+
+        // ── 1. Interactive Live Overlay Preview Monitor ──
+        if (inspectedPreset != null) {
+            val preset = inspectedPreset!!
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            val previewBmp = remember(preset.assetPath) {
+                com.clipcut.ui.util.AssetImageHelper.loadThumbnail(ctx, preset.assetPath, 520, 320)
+            }
+
+            Text("Live Overlay Preview Monitor", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(145.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFF0C1017))
+                    .border(1.dp, AccentPrimary.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
+            ) {
+                if (preset.type == OverlayPresetType.FRAME) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color(0xFF1E3A8A), Color(0xFF0F172A))
                                 )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "▶ SAMPLE FOOTAGE CANVAS",
+                            color = Color.White.copy(alpha = 0.45f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                } else if (preset.type == OverlayPresetType.SKY) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0.0f to Color(0xFF1E293B),
+                                    0.55f to Color(0xFF0F172A),
+                                    1.0f to Color(0xFF020617)
+                                )
+                            ),
+                        contentAlignment = Alignment.BottomCenter
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .background(Color(0xFF090D16))
+                        )
+                    }
+                }
+
+                if (previewBmp != null) {
+                    if (preset.type == OverlayPresetType.SKY) {
+                        androidx.compose.foundation.Image(
+                            bitmap = previewBmp,
+                            contentDescription = preset.title,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillMaxHeight(0.68f)
+                                .align(Alignment.TopCenter),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                    } else if (preset.type == OverlayPresetType.STUDIO_BG) {
+                        androidx.compose.foundation.Image(
+                            bitmap = previewBmp,
+                            contentDescription = preset.title,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .background(Color(0xCC101319), RoundedCornerShape(10.dp))
+                                .border(1.dp, Color(0xFF00E676), RoundedCornerShape(10.dp))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                "👤 Green Screen Studio Backdrop",
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
-                        .padding(8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(emoji, fontSize = 24.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text(label, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                    Text("+ Add Frame", color = AccentPrimary, fontSize = 9.sp)
+                    } else {
+                        androidx.compose.foundation.Image(
+                            bitmap = previewBmp,
+                            contentDescription = preset.title,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                        )
+                    }
                 }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .background(Color(0xDD000000), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = when (preset.type) {
+                                OverlayPresetType.FRAME -> "CINEMATIC CAMERA FRAME"
+                                OverlayPresetType.SKY -> "ATMOSPHERIC SKY REPLACEMENT"
+                                OverlayPresetType.STUDIO_BG -> "VIRTUAL STUDIO (CHROMA KEY)"
+                                OverlayPresetType.TITLE -> "MOTION TITLE OVERLAY"
+                            },
+                            color = AccentPrimary,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color(0xF2090D14))
+                            )
+                        )
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = preset.title,
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = preset.subtitle,
+                            color = TextSecondary,
+                            fontSize = 9.sp
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(AccentPrimary)
+                            .clickable { applyPresetOverlay(preset) }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "+ Apply to Project",
+                            color = DarkBackground,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+        }
+
+        // ── 2. Cinematic Frames & Camera Masks ──
+        Text("Cinematic Frames & Camera Masks (${framePresets.size} Presets)", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text("Real camera viewfinders, phones, polaroids & cinema letterbox masks", color = TextSecondary, fontSize = 11.sp)
+        Spacer(Modifier.height(8.dp))
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(framePresets) { item ->
+                OverlayPresetCard(
+                    item = item,
+                    isSelected = inspectedPreset == item,
+                    onSelect = { inspectedPreset = item },
+                    onApply = { applyPresetOverlay(item) }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // ── 3. Sky Replacement Overlays ──
+        Text("Atmospheric Sky Replacement (${skyPresets.size} Presets)", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text("Photorealistic sunsets, night stars, auroras, galaxy & clear skies", color = TextSecondary, fontSize = 11.sp)
+        Spacer(Modifier.height(8.dp))
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(skyPresets) { item ->
+                OverlayPresetCard(
+                    item = item,
+                    isSelected = inspectedPreset == item,
+                    onSelect = { inspectedPreset = item },
+                    onApply = { applyPresetOverlay(item) }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // ── 4. AI Studio Cutout Backgrounds ──
+        Text("AI Virtual Studios & Backdrops (${bgPresets.size} Scenes)", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text("Virtual green-screen studios, neon Cyberpunk, lofts, cafes & stages", color = TextSecondary, fontSize = 11.sp)
+        Spacer(Modifier.height(8.dp))
+
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = Color(0xFF10B981).copy(alpha = 0.15f),
+            border = BorderStroke(1.dp, Color(0xFF10B981)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    val uri = inspectedPreset?.takeIf { it.type == OverlayPresetType.STUDIO_BG }?.assetPath
+                        ?: "overlays/backgrounds/human_seg_2.webp"
+                    onOpenFingerPaintStudio(uri)
+                }
+        ) {
+            Row(
+                modifier = Modifier.padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Filled.Brush, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(20.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Paint Virtual Studio with Finger", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text("No green screen? Swipe your finger across your room to apply the studio directly", color = TextSecondary, fontSize = 10.sp)
+                }
+                Icon(Icons.Filled.ArrowForward, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(16.dp))
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(bgPresets) { item ->
+                OverlayPresetCard(
+                    item = item,
+                    isSelected = inspectedPreset == item,
+                    onSelect = { inspectedPreset = item },
+                    onApply = { applyPresetOverlay(item) }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // ── 5. Cinematic Motion Titles & Lower Thirds ──
+        Text("Cinematic Motion Titles & Lower Thirds (${titlePresets.size} Presets)", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text("Professional video lower thirds, lifestyle headers & channel stamps", color = TextSecondary, fontSize = 11.sp)
+        Spacer(Modifier.height(8.dp))
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(titlePresets) { item ->
+                OverlayPresetCard(
+                    item = item,
+                    isSelected = inspectedPreset == item,
+                    onSelect = { inspectedPreset = item },
+                    onApply = { applyPresetOverlay(item) }
+                )
             }
         }
     }
@@ -1293,6 +2415,8 @@ fun BlurSheet(
     onBrushWidthChange: ((Float) -> Unit)? = null,
     paintIsBlackout: Boolean = true,
     onPaintIsBlackoutChange: ((Boolean) -> Unit)? = null,
+    paintCensorStyle: String = "BLACKOUT",
+    onPaintCensorStyleChange: ((String) -> Unit)? = null,
     onUndoPaintStroke: (() -> Unit)? = null,
     onClearPaintStrokes: (() -> Unit)? = null,
     onDelete: () -> Unit,
@@ -1380,41 +2504,44 @@ fun BlurSheet(
                 )
                 Spacer(Modifier.height(12.dp))
 
-                // Paint mode toggle: Solid Blackout vs Frosted Blur
-                Text("Censor Mode", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                // Paint mode toggle: All 7 Censor Styles
+                Text("Censor Style", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(6.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (paintIsBlackout) AccentPrimary else Surface3)
-                            .clickable { onPaintIsBlackoutChange?.invoke(true) }
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "⬛ Solid Blackout",
-                            color = if (paintIsBlackout) Color.Black else Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (!paintIsBlackout) AccentPrimary else Surface3)
-                            .clickable { onPaintIsBlackoutChange?.invoke(false) }
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "🌫️ Heavy Blur",
-                            color = if (!paintIsBlackout) Color.Black else Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val censorStyles = listOf(
+                        "BLACKOUT" to "⬛ Solid Blackout",
+                        "MOSAIC" to "▦ Pixel Mosaic",
+                        "FROSTED" to "🌫️ Frosted Blur",
+                        "BLUR" to "💧 Soft Blur",
+                        "REDACTED" to "🪧 Top Secret Redacted",
+                        "CAUTION" to "🚧 Hazard Caution",
+                        "WHITEOUT" to "⚪ Solid Whiteout"
+                    )
+                    censorStyles.forEach { (styleKey, styleLabel) ->
+                        val isSel = paintCensorStyle.equals(styleKey, ignoreCase = true)
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSel) AccentPrimary else Surface3)
+                                .clickable {
+                                    onPaintCensorStyleChange?.invoke(styleKey)
+                                    onPaintIsBlackoutChange?.invoke(styleKey == "BLACKOUT" || styleKey == "REDACTED" || styleKey == "CAUTION")
+                                }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                styleLabel,
+                                color = if (isSel) Color.Black else Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            )
+                        }
                     }
                 }
 
@@ -2193,7 +3320,7 @@ fun BlurSheet(
     }
 }
 
-// ── ExportDialog ───────────────────────────────────────────────────────
+// ── ExportDialog (Stitch Screen 5: 4K Master Render Hub) ─────────────────
 @Composable
 fun ExportDialog(
     projectAspectRatio: AspectRatio,
@@ -2201,105 +3328,342 @@ fun ExportDialog(
     onStartExport: (ExportConfig) -> Unit,
     onCancelExport: () -> Unit,
     onDismiss: () -> Unit,
-    onViewLogsClick: () -> Unit
+    onViewLogsClick: () -> Unit,
+    projectTitle: String = "Master Video",
+    projectDurationUs: Long = 10_000_000L
 ) {
     var resolution by remember { mutableStateOf(ExportResolution.RES_1080P) }
     var codec by remember { mutableStateOf(ExportCodec.H264) }
     var fps by remember { mutableStateOf(30) }
     var currentAspect by remember { mutableStateOf(projectAspectRatio) }
-    var bitrateMbps by remember { mutableStateOf(12) }
+    var bitrateMbps by remember { mutableStateOf(16) }
     var activeSocialPreset by remember { mutableStateOf<String?>("TikTok") }
+    var gpuAcceleration by remember { mutableStateOf(true) }
+    var hdr10Enabled by remember { mutableStateOf(false) }
+    var watermarkEnabled by remember { mutableStateOf(false) }
+
+    val durSec = (projectDurationUs.toFloat() / 1_000_000f).coerceAtLeast(1f)
+    val estimatedMb = (durSec * (bitrateMbps * 1_000_000f + 192_000f) / 8f / (1024f * 1024f)).coerceAtLeast(0.5f)
 
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = Surface2,
-            border = BorderStroke(1.dp, HairlineBorder),
+            shape = RoundedCornerShape(18.dp),
+            color = ObsidianSurface,
+            border = BorderStroke(1.2.dp, ObsidianBorderVariant),
             modifier = Modifier
-                .fillMaxWidth(0.95f)
+                .fillMaxWidth(0.96f)
                 .wrapContentHeight()
         ) {
             Column(
                 modifier = Modifier
-                    .padding(20.dp)
+                    .padding(18.dp)
                     .verticalScroll(rememberScrollState())
             ) {
-                SheetHeader("Export Video", onDismiss)
+                SheetHeader("Master Export Studio", onDismiss)
+                Spacer(Modifier.height(10.dp))
+
+                // Video Master Summary Card (Stitch Screen 5)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(ObsidianSurfaceLowest)
+                        .border(1.dp, Brush.horizontalGradient(listOf(ElectricCyan.copy(alpha = 0.5f), VibrantViolet.copy(alpha = 0.5f))), RoundedCornerShape(14.dp))
+                        .padding(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 16:9 Thumbnail Box
+                        Box(
+                            modifier = Modifier
+                                .size(width = 80.dp, height = 50.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Brush.linearGradient(listOf(VibrantViolet.copy(alpha = 0.4f), ElectricCyan.copy(alpha = 0.3f))))
+                                .border(1.dp, ObsidianBorder, RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+                        }
+
+                        Spacer(Modifier.width(12.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                projectTitle,
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                            Spacer(Modifier.height(3.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "${resolution.label} · ${fps}fps",
+                                    color = ElectricCyan,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Box(modifier = Modifier.size(3.dp).clip(CircleShape).background(TextSecondary))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "~${String.format(java.util.Locale.US, "%.1f", estimatedMb)} MB",
+                                    color = LuminescentAmber,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(14.dp))
 
-                Text("One-Tap Social Presets", color = TextSecondary, fontSize = 12.sp)
+                Text("One-Tap Social Targets", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val presets = listOf(
-                        Triple("TikTok", "📱 TikTok / Reels / Shorts (9:16)", Pair(AspectRatio.R_9_16, 60)),
-                        Triple("YouTube", "📺 YouTube (16:9 60fps)", Pair(AspectRatio.R_16_9, 60)),
-                        Triple("IG Square", "📸 Instagram Post (1:1)", Pair(AspectRatio.R_1_1, 30)),
-                        Triple("IG Story", "🖼️ Instagram Portrait (4:5)", Pair(AspectRatio.R_4_5, 30))
+                        Triple("TikTok", "📱 TikTok / Reels (9:16 60fps)", Pair(AspectRatio.R_9_16, 60)),
+                        Triple("YouTube", "📺 YouTube 4K (16:9 60fps)", Pair(AspectRatio.R_16_9, 60)),
+                        Triple("IG Square", "📸 Instagram Post (1:1 30fps)", Pair(AspectRatio.R_1_1, 30)),
+                        Triple("WhatsApp", "💬 WhatsApp Quick (720p)", Pair(AspectRatio.R_9_16, 30))
                     )
                     items(presets) { (pKey, pLabel, pConfig) ->
-                        EditorFilterChip(pLabel, activeSocialPreset == pKey) {
-                            activeSocialPreset = pKey
-                            currentAspect = pConfig.first
-                            fps = pConfig.second
-                            resolution = ExportResolution.RES_1080P
-                            bitrateMbps = 15
+                        val isSel = (activeSocialPreset == pKey)
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSel) ObsidianSurfaceHighest else ObsidianSurfaceLow)
+                                .border(1.5.dp, if (isSel) ElectricCyan else ObsidianBorder, RoundedCornerShape(10.dp))
+                                .clickable {
+                                    activeSocialPreset = pKey
+                                    currentAspect = pConfig.first
+                                    fps = pConfig.second
+                                    when (pKey) {
+                                        "YouTube" -> {
+                                            resolution = ExportResolution.RES_4K
+                                            bitrateMbps = 35
+                                        }
+                                        "WhatsApp" -> {
+                                            resolution = ExportResolution.RES_720P
+                                            bitrateMbps = 6
+                                        }
+                                        else -> {
+                                            resolution = ExportResolution.RES_1080P
+                                            bitrateMbps = 18
+                                        }
+                                    }
+                                }
+                                .padding(horizontal = 10.dp, vertical = 7.dp)
+                        ) {
+                            Text(
+                                pLabel,
+                                color = if (isSel) ElectricCyan else Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                            )
                         }
                     }
                 }
 
                 Spacer(Modifier.height(12.dp))
-                Text("Resolution", color = TextSecondary, fontSize = 12.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+
+                Text("Resolution & Canvas", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     ExportResolution.values().forEach { r ->
-                        EditorFilterChip(r.label, resolution == r) {
-                            resolution = r
-                            activeSocialPreset = null
+                        val isSel = (resolution == r)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSel) ObsidianSurfaceHighest else ObsidianSurfaceLow)
+                                .border(1.5.dp, if (isSel) ElectricCyan else ObsidianBorder, RoundedCornerShape(10.dp))
+                                .clickable {
+                                    resolution = r
+                                    activeSocialPreset = null
+                                }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    r.label,
+                                    color = if (isSel) ElectricCyan else Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "${r.width}×${r.height}",
+                                    color = TextSecondary,
+                                    fontSize = 9.sp
+                                )
+                            }
                         }
                     }
                 }
 
-                Text("Bitrate Quality", color = TextSecondary, fontSize = 12.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                Spacer(Modifier.height(12.dp))
+
+                Text("Frame Rate", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     listOf(
-                        6 to "Low (6M)",
-                        12 to "Standard (12M)",
-                        25 to "High (25M)",
-                        50 to "Ultra (50M)"
-                    ).forEach { (mbps, label) ->
-                        EditorFilterChip(label, bitrateMbps == mbps) { bitrateMbps = mbps }
+                        24 to "24 Cinema",
+                        30 to "30 Normal",
+                        60 to "60 Smooth",
+                        120 to "120 Ultra"
+                    ).forEach { (fVal, fLabel) ->
+                        val isSel = (fps == fVal)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSel) ObsidianSurfaceHighest else ObsidianSurfaceLow)
+                                .border(1.5.dp, if (isSel) ElectricCyan else ObsidianBorder, RoundedCornerShape(10.dp))
+                                .clickable { fps = fVal }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                fLabel,
+                                color = if (isSel) ElectricCyan else Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
                     }
                 }
 
-                Text("Frame Rate", color = TextSecondary, fontSize = 12.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
-                    listOf(24, 30, 60).forEach { f ->
-                        EditorFilterChip("${f}fps", fps == f) { fps = f }
+                Spacer(Modifier.height(12.dp))
+
+                Text("Format & Video Codec", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    listOf(
+                        ExportCodec.H264 to "H.264 (Universal MP4)",
+                        ExportCodec.H265 to "HEVC / H.265 (Pro High-Efficiency)"
+                    ).forEach { (cVal, cLabel) ->
+                        val isSel = (codec == cVal)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSel) ObsidianSurfaceHighest else ObsidianSurfaceLow)
+                                .border(1.5.dp, if (isSel) ElectricCyan else ObsidianBorder, RoundedCornerShape(10.dp))
+                                .clickable { codec = cVal }
+                                .padding(vertical = 8.dp, horizontal = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                cLabel,
+                                color = if (isSel) ElectricCyan else Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
 
-                Text("Codec", color = TextSecondary, fontSize = 12.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
-                    ExportCodec.values().forEach { c ->
-                        EditorFilterChip(c.label, codec == c) { codec = c }
-                    }
+                Spacer(Modifier.height(12.dp))
+
+                // Dynamic Bitrate Slider
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Master Bitrate Quality", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("$bitrateMbps Mbps (VBR)", color = LuminescentAmber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+                Slider(
+                    value = bitrateMbps.toFloat(),
+                    onValueChange = { bitrateMbps = it.toInt() },
+                    valueRange = 4f..60f,
+                    modifier = Modifier.fillMaxWidth().height(26.dp),
+                    colors = SliderDefaults.colors(
+                        thumbColor = ElectricCyan,
+                        activeTrackColor = ElectricCyan,
+                        inactiveTrackColor = ObsidianBorder
+                    )
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                // Mastering Options
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(ObsidianSurfaceLow)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Hardware GPU Acceleration", color = Color.White, fontSize = 11.sp)
+                    Switch(
+                        checked = gpuAcceleration,
+                        onCheckedChange = { gpuAcceleration = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = ElectricCyan)
+                    )
+                }
+
+                Spacer(Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(ObsidianSurfaceLow)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("10-Bit Color Profile (HDR10)", color = Color.White, fontSize = 11.sp)
+                    Switch(
+                        checked = hdr10Enabled,
+                        onCheckedChange = { hdr10Enabled = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = VibrantViolet)
+                    )
                 }
 
                 Spacer(Modifier.height(14.dp))
+
                 when (exportState) {
                     is com.clipcut.ui.viewmodel.ExportState.Progress -> {
-                        LinearProgressIndicator(progress = { exportState.progress }, modifier = Modifier.fillMaxWidth(), color = AccentPrimary)
+                        LinearProgressIndicator(
+                            progress = { exportState.progress },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            color = ElectricCyan,
+                            trackColor = ObsidianBorder
+                        )
                         Spacer(Modifier.height(6.dp))
-                        Text(exportState.status, color = TextSecondary, fontSize = 12.sp)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(exportState.status, color = TextSecondary, fontSize = 11.sp)
+                            Text("${(exportState.progress * 100).toInt()}%", color = ElectricCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
                         Spacer(Modifier.height(10.dp))
-                        SecondaryButton("Cancel", onClick = onCancelExport, modifier = Modifier.fillMaxWidth())
+                        SecondaryButton("Cancel Export", onClick = onCancelExport, modifier = Modifier.fillMaxWidth())
                     }
                     is com.clipcut.ui.viewmodel.ExportState.Success -> {
-                        Text("Saved to: ${exportState.galleryPath}", color = AccentSecondary, fontSize = 12.sp)
+                        Text("Export Complete! Saved to Gallery.", color = EmeraldWave, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(4.dp))
+                        Text(exportState.galleryPath, color = TextSecondary, fontSize = 10.sp, maxLines = 1)
                         Spacer(Modifier.height(10.dp))
-                        PrimaryButton("Done", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
+                        Button(
+                            onClick = onDismiss,
+                            modifier = Modifier.fillMaxWidth().height(46.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldWave)
+                        ) {
+                            Text("Done", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
                     }
                     is com.clipcut.ui.viewmodel.ExportState.Error -> {
-                        Text("Export failed: ${exportState.message}", color = AccentPrimary, fontSize = 12.sp)
+                        Text("Export Error: ${exportState.message}", color = Color(0xFFFF5252), fontSize = 11.sp)
                         Spacer(Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             SecondaryButton("View Logs", onClick = onViewLogsClick, modifier = Modifier.weight(1f))
@@ -2319,19 +3683,38 @@ fun ExportDialog(
                         }
                     }
                     com.clipcut.ui.viewmodel.ExportState.Idle -> {
-                        PrimaryButton("Export Video", onClick = {
-                            val (w, h) = currentAspect.calculateExportDimensions(resolution)
-                            onStartExport(
-                                ExportConfig(
-                                    resolution = resolution,
-                                    customWidth = w,
-                                    customHeight = h,
-                                    codec = codec,
-                                    frameRate = fps,
-                                    bitRate = bitrateMbps * 1_000_000
+                        Button(
+                            onClick = {
+                                val (w, h) = currentAspect.calculateExportDimensions(resolution)
+                                onStartExport(
+                                    ExportConfig(
+                                        resolution = resolution,
+                                        customWidth = w,
+                                        customHeight = h,
+                                        codec = codec,
+                                        frameRate = fps,
+                                        bitRate = bitrateMbps * 1_000_000
+                                    )
                                 )
-                            )
-                        }, modifier = Modifier.fillMaxWidth())
+                            },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                            contentPadding = PaddingValues()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Brush.horizontalGradient(listOf(ElectricCyan, VibrantViolet))),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Filled.ArrowUpward, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Export Master Video", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2344,54 +3727,149 @@ fun ExportDialog(
 @Composable
 fun SpeedSheet(current: Float, onApply: (Float) -> Unit, onDismiss: () -> Unit) {
     var s by remember { mutableStateOf(current) }
-    Column {
+    var opticalFlow by remember { mutableStateOf(true) }
+    var pitchLock by remember { mutableStateOf(true) }
+
+    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         SheetHeader("Playback Speed", onDismiss)
-        Spacer(Modifier.height(10.dp))
-        Text("Standard Presets & Motion Rates", color = TextSecondary, fontSize = 12.sp)
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
+
+        // Large Cyberpunk Speed Multiplier Readout
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(ObsidianSurfaceLowest)
+                .border(1.dp, ObsidianBorder, RoundedCornerShape(12.dp))
+                .padding(vertical = 12.dp, horizontal = 16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "${String.format(java.util.Locale.US, "%.2f", s)}x",
+                    color = ElectricCyan,
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Black
+                )
+                Text(
+                    text = when {
+                        s < 0.5f -> "Ultra Slow Motion · Optical Flow"
+                        s < 1.0f -> "Smooth Slow Motion"
+                        s == 1.0f -> "Normal Speed (1.00x)"
+                        s <= 2.0f -> "Fast Motion (2x)"
+                        s <= 5.0f -> "Timelapse Motion"
+                        else -> "Hyperlapse Velocity"
+                    },
+                    color = TextSecondary,
+                    fontSize = 11.sp
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text("Quick Speed Presets", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
         
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
             listOf(
-                0.25f to "Slow Mo",
-                0.5f to "Smooth",
-                1.0f to "Normal",
-                2.0f to "Fast",
-                5.0f to "Hyper"
+                0.2f to "0.2x",
+                0.5f to "0.5x",
+                1.0f to "1.0x",
+                2.0f to "2.0x",
+                4.0f to "4.0x",
+                8.0f to "8.0x"
             ).forEach { (speedVal, label) ->
                 val isSelected = (s == speedVal)
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (isSelected) AccentPrimary.copy(alpha = 0.18f) else Surface3)
-                        .border(1.5.dp, if (isSelected) AccentPrimary else HairlineBorder, RoundedCornerShape(10.dp))
+                        .background(if (isSelected) ObsidianSurfaceHighest else ObsidianSurface)
+                        .border(1.5.dp, if (isSelected) ElectricCyan else ObsidianBorder, RoundedCornerShape(10.dp))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
                         ) { s = speedVal }
-                        .padding(vertical = 10.dp, horizontal = 2.dp),
+                        .padding(vertical = 8.dp, horizontal = 2.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        "${speedVal}x",
-                        color = if (isSelected) AccentPrimary else Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
                         label,
-                        color = TextSecondary,
-                        fontSize = 10.sp,
-                        maxLines = 1
+                        color = if (isSelected) ElectricCyan else Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                     )
                 }
             }
         }
+
         Spacer(Modifier.height(14.dp))
-        SheetSlider("Custom Speed: ${String.format(java.util.Locale.US, "%.2f", s)}x", s, 0.1f..10f) { s = it }
-        Spacer(Modifier.height(12.dp))
-        PrimaryButton("Apply Speed", onClick = { onApply(s) }, modifier = Modifier.fillMaxWidth())
+        SheetSlider("Fine Speed Rate: ${String.format(java.util.Locale.US, "%.2f", s)}x", s, 0.1f..10f) { s = it }
+
+        Spacer(Modifier.height(10.dp))
+
+        // AI & Pitch Options
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(ObsidianSurface)
+                .border(1.dp, ObsidianBorder, RoundedCornerShape(10.dp))
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Optical Flow Smooth AI", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text("Synthesize in-between frames for buttery motion", color = TextSecondary, fontSize = 10.sp)
+            }
+            Switch(
+                checked = opticalFlow,
+                onCheckedChange = { opticalFlow = it },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = ElectricCyan)
+            )
+        }
+
+        Spacer(Modifier.height(6.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(ObsidianSurface)
+                .border(1.dp, ObsidianBorder, RoundedCornerShape(10.dp))
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Preserve Pitch", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text("Keep voices and music in natural tone", color = TextSecondary, fontSize = 10.sp)
+            }
+            Switch(
+                checked = pitchLock,
+                onCheckedChange = { pitchLock = it },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = VibrantViolet)
+            )
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Button(
+            onClick = { onApply(s) },
+            modifier = Modifier.fillMaxWidth().height(46.dp),
+            shape = RoundedCornerShape(10.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+            contentPadding = PaddingValues()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Brush.horizontalGradient(listOf(ElectricCyan, VibrantViolet))),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Apply Speed", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+        }
     }
 }
 
@@ -2594,6 +4072,7 @@ fun TextSheet(
     onOpenCaptions: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     var text by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.text ?: "") }
     var size by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.textSizeSp ?: 28f) }
     var bold by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.textBold ?: true) }
@@ -2606,30 +4085,172 @@ fun TextSheet(
     var hasShadow by remember(initialOverlay?.id) { mutableStateOf(initialOverlay?.dropShadow ?: true) }
     var hasStroke by remember(initialOverlay?.id) { mutableStateOf((initialOverlay?.strokeWidthPx ?: 0f) > 0f) }
 
+    var hueSliderVal by remember { mutableFloatStateOf(0f) }
+
     val textColors = listOf(
-        0xFFFFFFFFL to Color.White,
-        0xFFFF2A6DL to Color(0xFFFF2A6D),
-        0xFF00F5D4L to Color(0xFF00F5D4),
-        0xFFFFD166L to Color(0xFFFFD166),
-        0xFF7928CAL to Color(0xFF7928CA),
-        0xFF4EA8DEL to Color(0xFF4EA8DE),
-        0xFF000000L to Color.Black
+        // Monochrome & Neutrals
+        0xFFFFFFFFL to Color(0xFFFFFFFF), // Pure White
+        0xFFF1F5F9L to Color(0xFFF1F5F9), // Snow Silver
+        0xFFCBD5E1L to Color(0xFFCBD5E1), // Cool Platinum
+        0xFF94A3B8L to Color(0xFF94A3B8), // Slate Gray
+        0xFF475569L to Color(0xFF475569), // Dark Slate
+        0xFF0F172AL to Color(0xFF0F172A), // Midnight Obsidian
+        0xFF000000L to Color(0xFF000000), // Pitch Black
+        // Neons & Cyberpunk
+        0xFF00F2FEL to Color(0xFF00F2FE), // Electric Cyan
+        0xFF00F5D4L to Color(0xFF00F5D4), // Neon Mint
+        0xFFA6FF00L to Color(0xFFA6FF00), // Acid Lime
+        0xFF00FF66L to Color(0xFF00FF66), // Toxic Green
+        0xFFFFEA00L to Color(0xFFFFEA00), // Neon Yellow
+        0xFFFFD166L to Color(0xFFFFD166), // Gold Amber
+        0xFFFF8500L to Color(0xFFFF8500), // Bright Orange
+        0xFFFF5722L to Color(0xFFFF5722), // Tangerine
+        0xFFEF4444L to Color(0xFFEF4444), // Crimson Red
+        0xFFFF2A6DL to Color(0xFFFF2A6D), // Hot Pink
+        0xFFFF007FL to Color(0xFFFF007F), // Cyberpunk Rose
+        0xFFFF1493L to Color(0xFFFF1493), // Deep Magenta
+        0xFF9D4EDDL to Color(0xFF9D4EDD), // Electric Purple
+        0xFF7C3AEDL to Color(0xFF7C3AED), // Hyper Violet
+        // Oceanic & Blues
+        0xFF2563EBL to Color(0xFF2563EB), // Royal Blue
+        0xFF0070F3L to Color(0xFF0070F3), // Azure Blue
+        0xFF4EA8DEL to Color(0xFF4EA8DE), // Sky Blue
+        0xFF38BDF8L to Color(0xFF38BDF8), // Ice Blue
+        0xFF2DD4BFL to Color(0xFF2DD4BF), // Aquamarine
+        0xFF10B981L to Color(0xFF10B981), // Emerald Green
+        0xFF059669L to Color(0xFF059669), // Forest Pine
+        // Pastels & Soft Tones
+        0xFFFEF08AL to Color(0xFFFEF08A), // Pastel Butter
+        0xFFA7F3D0L to Color(0xFFA7F3D0), // Pastel Mint
+        0xFFBAE6FDL to Color(0xFFBAE6FD), // Pastel Sky
+        0xFFDDD6FEL to Color(0xFFDDD6FE), // Pastel Lavender
+        0xFFE879F9L to Color(0xFFE879F9), // Pastel Lilac
+        0xFFFECDD3L to Color(0xFFFECDD3), // Pastel Rose
+        0xFFF5EBE0L to Color(0xFFF5EBE0), // Warm Cream
+        0xFFD4A373L to Color(0xFFD4A373)  // Vintage Bronze
     )
 
     val stylePresets = listOf(
+        "None" to Pair(28f, 0x00000000L),
         "Headline" to Pair(36f, 0x00000000L),
         "Caption" to Pair(22f, 0xB3000000L),
         "Subtitle" to Pair(26f, 0x801A1A24L),
         "Neon Tag" to Pair(30f, 0xCCFF2A6DL),
-        "Boxed" to Pair(24f, 0xE6000000L)
+        "Dark Box" to Pair(24f, 0xE6000000L),
+        "Crimson Tag" to Pair(26f, 0xCCEF4444L),
+        "Emerald Pill" to Pair(26f, 0xCC10B981L)
     )
 
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-        SheetHeader(if (initialOverlay != null) "Edit Text Overlay" else "Text Overlay", onDismiss)
+        SheetHeader(if (initialOverlay != null) "Edit Text Overlay" else "Text Overlay Studio", onDismiss)
         Spacer(Modifier.height(10.dp))
+
+        // ── LIVE WYSIWYG PREVIEW CARD ──
+        val previewFontFamily = remember(selectedFont, ctx) {
+            com.clipcut.ui.util.FontHelper.getFontFamily(ctx, selectedFont)
+        }
+        val previewBg = if (selectedBgColor != 0L) Color(selectedBgColor) else Color.Transparent
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(115.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0xFF1B1E2A), Color(0xFF0F111A))
+                    )
+                )
+                .border(1.5.dp, AccentPrimary.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
+                .padding(12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            // Live rendered text with active font, color, background, outline, shadow
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(previewBg)
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = text.ifBlank { "Type text to preview font..." },
+                    color = Color(selectedColor),
+                    fontSize = (size * 0.72f).coerceIn(16f, 32f).sp,
+                    fontFamily = previewFontFamily,
+                    fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+                    fontStyle = if (italic) androidx.compose.ui.text.font.FontStyle.Italic else androidx.compose.ui.text.font.FontStyle.Normal,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    style = androidx.compose.ui.text.TextStyle(
+                        shadow = if (hasShadow) androidx.compose.ui.graphics.Shadow(
+                            color = Color.Black.copy(alpha = 0.85f),
+                            offset = androidx.compose.ui.geometry.Offset(3f, 3f),
+                            blurRadius = 6f
+                        ) else null
+                    ),
+                    maxLines = 2
+                )
+            }
+
+            // Top-left badges: Active Font & Animation
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(AccentPrimary.copy(alpha = 0.22f))
+                        .border(0.5.dp, AccentPrimary.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        "✦ ${selectedFont.label}",
+                        color = AccentPrimary,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                if (selectedAnimation != TextAnimation.NONE) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(VibrantViolet.copy(alpha = 0.25f))
+                            .border(0.5.dp, VibrantViolet.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            selectedAnimation.displayName,
+                            color = Color(0xFFC6BFFF),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Bottom-right tag: WYSIWYG indicator
+            Text(
+                "LIVE PREVIEW",
+                color = TextTertiary,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(2.dp)
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // Text input field
         OutlinedTextField(
             value = text, onValueChange = { text = it },
-            placeholder = { Text("Type text here...", color = TextTertiary) },
+            placeholder = { Text("Type text here to preview in all fonts...", color = TextTertiary) },
             modifier = Modifier.fillMaxWidth(),
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = Surface3, unfocusedContainerColor = Surface3,
@@ -2638,17 +4259,174 @@ fun TextSheet(
             )
         )
 
-        Spacer(Modifier.height(12.dp))
-        Text("Font Family", color = TextSecondary, fontSize = 12.sp)
+        Spacer(Modifier.height(14.dp))
+
+        // ── FONT FAMILY PICKER WITH LIVE CARD PREVIEWS ──
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Font Family (Tap to test & select)", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text("${FontFamilyOption.values().size} Fonts", color = AccentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
         Spacer(Modifier.height(8.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(FontFamilyOption.values().toList()) { font ->
-                EditorFilterChip(font.label, selectedFont == font) { selectedFont = font }
+                val isSel = (selectedFont == font)
+                val fontFam = remember(font, ctx) {
+                    com.clipcut.ui.util.FontHelper.getFontFamily(ctx, font)
+                }
+                val sampleText = if (text.isNotBlank()) text.take(12) else "Style Aa"
+                Box(
+                    modifier = Modifier
+                        .width(112.dp)
+                        .height(74.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isSel) AccentPrimary.copy(alpha = 0.18f) else Surface2)
+                        .border(
+                            width = if (isSel) 2.dp else 1.dp,
+                            color = if (isSel) AccentPrimary else HairlineBorder,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        .clickable { selectedFont = font }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Text(
+                            font.label,
+                            color = if (isSel) AccentPrimary else TextSecondary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = sampleText,
+                            color = if (isSel) Color(selectedColor) else Color.White,
+                            fontFamily = fontFam,
+                            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+                            fontStyle = if (italic) androidx.compose.ui.text.font.FontStyle.Italic else androidx.compose.ui.text.font.FontStyle.Normal,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(5.dp)
+                                .clip(CircleShape)
+                                .background(if (isSel) AccentPrimary else Color.Transparent)
+                        )
+                    }
+                }
             }
         }
 
-        Spacer(Modifier.height(12.dp))
-        Text("Entrance Animation", color = TextSecondary, fontSize = 12.sp)
+        Spacer(Modifier.height(14.dp))
+
+        // ── EXPANDED COLOR PALETTE & RAINBOW HUE SLIDER ──
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Font Color (36+ Swatches & Custom Rainbow)", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(Color(selectedColor))
+                        .border(1.dp, Color.White.copy(alpha = 0.6f), CircleShape)
+                )
+                Text(
+                    "#%06X".format(selectedColor and 0xFFFFFFL),
+                    color = AccentPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        // 2-row horizontal scrolling color swatches
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val chunked = textColors.chunked(2)
+            items(chunked) { pair ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    pair.forEach { (colorVal, composeColor) ->
+                        val isSelected = (selectedColor == colorVal)
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(composeColor)
+                                .border(
+                                    if (isSelected) 2.5.dp else 1.dp,
+                                    if (isSelected) AccentPrimary else Color.White.copy(alpha = 0.35f),
+                                    CircleShape
+                                )
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    selectedColor = colorVal
+                                }
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        // Custom Rainbow Hue Slider for infinite colors
+        Text("Continuous Hue Spectrum", color = TextSecondary, fontSize = 11.sp)
+        Spacer(Modifier.height(4.dp))
+        val rainbowBrush = remember {
+            Brush.horizontalGradient(
+                listOf(
+                    Color.Red, Color.Yellow, Color.Green,
+                    Color.Cyan, Color.Blue, Color.Magenta, Color.Red
+                )
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(18.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(rainbowBrush)
+                .border(1.dp, HairlineBorder, RoundedCornerShape(9.dp))
+        )
+        Slider(
+            value = hueSliderVal,
+            onValueChange = { h ->
+                hueSliderVal = h
+                val hsvColor = Color.hsv(h, 1.0f, 1.0f)
+                val argb = (0xFF000000L or ((hsvColor.red * 255).toLong() shl 16) or ((hsvColor.green * 255).toLong() shl 8) or (hsvColor.blue * 255).toLong())
+                selectedColor = argb
+            },
+            valueRange = 0f..360f,
+            colors = SliderDefaults.colors(
+                thumbColor = Color(selectedColor),
+                activeTrackColor = Color.Transparent,
+                inactiveTrackColor = Color.Transparent
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset(y = (-14).dp)
+        )
+
+        // ── ENTRANCE ANIMATION ──
+        Text("Entrance Animation", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(TextAnimation.values().toList()) { anim ->
@@ -2657,7 +4435,9 @@ fun TextSheet(
         }
 
         Spacer(Modifier.height(12.dp))
-        Text("Text Style Presets", color = TextSecondary, fontSize = 12.sp)
+
+        // ── TEXT STYLE PRESETS ──
+        Text("Text Style & Background Presets", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(stylePresets) { (name, preset) ->
@@ -2669,32 +4449,13 @@ fun TextSheet(
         }
 
         Spacer(Modifier.height(12.dp))
-        Text("Font Color", color = TextSecondary, fontSize = 12.sp)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            textColors.forEach { (colorVal, composeColor) ->
-                val isSelected = (selectedColor == colorVal)
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(composeColor)
-                        .border(
-                            if (isSelected) 2.5.dp else 1.dp,
-                            if (isSelected) AccentPrimary else Color.White.copy(alpha = 0.4f),
-                            CircleShape
-                        )
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { selectedColor = colorVal }
-                )
-            }
-        }
 
-        Spacer(Modifier.height(12.dp))
+        // Font Size slider
         SheetSlider("Font Size: ${size.toInt()}sp", size, 14f..80f) { size = it }
 
+        Spacer(Modifier.height(8.dp))
+
+        // Styling checkboxes: Bold, Italic, Shadow, Outline
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = bold, onCheckedChange = { bold = it }, colors = CheckboxDefaults.colors(checkedColor = AccentPrimary))
@@ -2714,12 +4475,17 @@ fun TextSheet(
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(14.dp))
+
         PrimaryButton(if (initialOverlay != null) "Update Text Overlay" else "Add Text to Timeline", onClick = {
             if (text.isNotBlank()) {
                 val startUs = initialOverlay?.timelineStartUs ?: playheadUs.coerceAtLeast(0L)
-                val endUs = initialOverlay?.timelineEndUs ?: ((startUs + 3_000_000L).let { if (totalDurationUs > startUs) it.coerceAtMost(totalDurationUs) else it }.coerceAtLeast(startUs + 500_000L))
-                val targetItem = (initialOverlay ?: OverlayItem()).copy(
+                val endUs = initialOverlay?.timelineEndUs ?: ((startUs + 5_000_000L).let { if (totalDurationUs > startUs) it.coerceAtMost(totalDurationUs) else it }.coerceAtLeast(startUs + 1_000_000L))
+                val targetItem = (initialOverlay ?: OverlayItem(
+                    normalizedX = 0.5f,
+                    normalizedY = 0.5f,
+                    scale = 1.0f
+                )).copy(
                     text = text,
                     textSizeSp = size,
                     textBold = bold,
@@ -2749,7 +4515,7 @@ fun StickerSheet(onPick: (String) -> Unit, onDismiss: () -> Unit) {
     Column {
         SheetHeader("Stickers & Overlays", onDismiss)
         Spacer(Modifier.height(10.dp))
-        val categories = listOf("Trending", "InShot Emojis", "Frames & Masks", "Censor Stamps", "Reels & Social", "Arrows & Pointers", "Vlog & Life", "Retro Y2K", "Aesthetic", "Emoji", "Badges")
+        val categories = listOf("Trending", "InShot Emojis", "Frames & Masks", "Sky Overlays", "Studio Backgrounds", "Motion Titles", "Censor Stamps", "Reels & Social", "Arrows & Pointers", "Vlog & Life", "Retro Y2K", "Aesthetic", "Emoji", "Badges")
         var category by remember { mutableStateOf("Trending") }
 
         ScrollableTabRow(
@@ -2795,7 +4561,47 @@ fun StickerSheet(onPick: (String) -> Unit, onDismiss: () -> Unit) {
                 "asset://overlays/frames/Heart.png",
                 "asset://overlays/frames/Circular.png",
                 "asset://overlays/frames/Water.png",
-                "asset://overlays/frames/Square.png"
+                "asset://overlays/frames/Square.png",
+                "asset://overlays/frames/Rectangle.png"
+            )
+            "Sky Overlays" -> listOf(
+                "asset://overlays/sky/PRESET_SYK_1.png",
+                "asset://overlays/sky/PRESET_SYK_2.png",
+                "asset://overlays/sky/PRESET_SYK_3.png",
+                "asset://overlays/sky/PRESET_SYK_4.png",
+                "asset://overlays/sky/PRESET_SYK_5.png",
+                "asset://overlays/sky/PRESET_SYK_6.png",
+                "asset://overlays/sky/PRESET_SYK_7.png",
+                "asset://overlays/sky/PRESET_SYK_8.png",
+                "asset://overlays/sky/PRESET_SYK_9.png",
+                "asset://overlays/sky/PRESET_SYK_10.png"
+            )
+            "Studio Backgrounds" -> listOf(
+                "asset://overlays/backgrounds/human_seg_1.webp",
+                "asset://overlays/backgrounds/human_seg_2.webp",
+                "asset://overlays/backgrounds/human_seg_3.webp",
+                "asset://overlays/backgrounds/human_seg_4.webp",
+                "asset://overlays/backgrounds/human_seg_5.webp",
+                "asset://overlays/backgrounds/human_seg_6.webp",
+                "asset://overlays/backgrounds/human_seg_7.webp",
+                "asset://overlays/backgrounds/human_seg_8.webp",
+                "asset://overlays/backgrounds/human_seg_9.webp",
+                "asset://overlays/backgrounds/human_seg_10.webp",
+                "asset://overlays/backgrounds/human_seg_11.webp",
+                "asset://overlays/backgrounds/human_seg_12.webp",
+                "asset://overlays/backgrounds/human_seg_13.webp",
+                "asset://overlays/backgrounds/human_seg_14.webp",
+                "asset://overlays/backgrounds/human_seg_15.webp",
+                "asset://overlays/backgrounds/human_seg_16.webp",
+                "asset://overlays/backgrounds/human_seg_17.webp"
+            )
+            "Motion Titles" -> listOf(
+                "asset://overlays/titles/Big_Title_Pack_Title_04.png",
+                "asset://overlays/titles/Big_Title_Pack_Title_14.png",
+                "asset://overlays/titles/Big_Title_Pack_Title_18.png",
+                "asset://overlays/titles/Social_Media_Watermark_Pack_Title_01.png",
+                "asset://overlays/titles/Vlog_Title_Pack_Title_08.png",
+                "asset://overlays/titles/Vlog_Title_Pack_Title_15.png"
             )
             "Censor Stamps" -> listOf(
                 "⛔ CENSORED", "🔒 TOP SECRET", "⚠️ WARNING", "🔞 18+ ONLY",
@@ -2834,55 +4640,187 @@ fun StickerSheet(onPick: (String) -> Unit, onDismiss: () -> Unit) {
             else -> listOf("✨", "🔥", "❤️")
         }
 
+        val isOverlayCategory = category in listOf("Frames & Masks", "Sky Overlays", "Studio Backgrounds", "Motion Titles")
+        val ctx = androidx.compose.ui.platform.LocalContext.current
+
         LazyVerticalGrid(
-            columns = GridCells.Fixed(4),
-            modifier = Modifier.height(290.dp).padding(horizontal = 8.dp),
+            columns = GridCells.Fixed(if (isOverlayCategory) 2 else 4),
+            modifier = Modifier.height(310.dp).padding(horizontal = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(glyphs) { g ->
-                Box(
-                    modifier = Modifier
-                        .height(52.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Surface3)
-                        .border(1.dp, HairlineBorder, RoundedCornerShape(10.dp))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { onPick(g) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (g.startsWith("asset://")) {
-                        val clean = g.removePrefix("asset://")
-                        val ctx = androidx.compose.ui.platform.LocalContext.current
-                        val bmp = remember(g) {
-                            try {
-                                ctx.assets.open(clean).use { stream ->
-                                    android.graphics.BitmapFactory.decodeStream(stream)
-                                }?.asImageBitmap()
-                            } catch (_: Throwable) { null }
+                if (isOverlayCategory && g.startsWith("asset://")) {
+                    val assetPath = g.removePrefix("asset://")
+                    val isFrame = category == "Frames & Masks"
+                    val isSky = category == "Sky Overlays"
+                    val isStudio = category == "Studio Backgrounds"
+                    val isTitle = category == "Motion Titles"
+
+                    val title = when {
+                        isFrame -> assetPath.substringAfterLast("/").removeSuffix(".png").replace("_", " ") + " Viewfinder"
+                        isSky -> "Sky Preset #" + assetPath.substringAfterLast("/").removeSuffix(".png").replace("PRESET_SYK_", "")
+                        isStudio -> "Studio Backdrop #" + assetPath.substringAfterLast("/").removeSuffix(".webp").replace("human_seg_", "")
+                        isTitle -> assetPath.substringAfterLast("/").removeSuffix(".png").replace("_", " ")
+                        else -> assetPath.substringAfterLast("/")
+                    }
+                    val badgeLabel = when {
+                        isFrame -> "FRAME"
+                        isSky -> "SKY"
+                        isStudio -> "STUDIO"
+                        isTitle -> "TITLE"
+                        else -> "OVERLAY"
+                    }
+
+                    val bmp: androidx.compose.ui.graphics.ImageBitmap? = remember(assetPath) {
+                        com.clipcut.ui.util.AssetImageHelper.loadThumbnail(ctx, assetPath, 240, 160)
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Surface2)
+                            .border(1.dp, HairlineBorder, RoundedCornerShape(12.dp))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) { onPick(g) }
+                            .padding(6.dp)
+                    ) {
+                        val boxModifier = if (isStudio) {
+                            Modifier
+                                .fillMaxWidth()
+                                .height(68.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF0D1117))
+                        } else if (isSky) {
+                            Modifier
+                                .fillMaxWidth()
+                                .height(68.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Brush.verticalGradient(listOf(Color(0xFF0F172A), Color(0xFF0284C7))))
+                        } else {
+                            Modifier
+                                .fillMaxWidth()
+                                .height(68.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF161622))
                         }
-                        if (bmp != null) {
-                            androidx.compose.foundation.Image(
-                                bitmap = bmp,
-                                contentDescription = "Sticker",
-                                modifier = Modifier.size(40.dp)
+
+                        Box(
+                            modifier = boxModifier,
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isFrame) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 6.dp, vertical = 5.dp)
+                                        .background(
+                                            Brush.verticalGradient(listOf(Color(0xFF1E3A8A), Color(0xFF065F46))),
+                                            RoundedCornerShape(4.dp)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "VIDEO CANVAS",
+                                        color = Color.White.copy(alpha = 0.35f),
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            if (bmp != null) {
+                                androidx.compose.foundation.Image(
+                                    bitmap = bmp,
+                                    contentDescription = title,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = if (isFrame || isTitle) androidx.compose.ui.layout.ContentScale.Fit else androidx.compose.ui.layout.ContentScale.Crop
+                                )
+                            } else {
+                                Text(
+                                    when {
+                                        isFrame -> "🎞️"
+                                        isSky -> "🌤️"
+                                        isStudio -> "🎙️"
+                                        else -> "🎬"
+                                    },
+                                    fontSize = 20.sp
+                                )
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(4.dp)
+                                    .background(Color(0xCC000000), RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Text(badgeLabel, color = AccentPrimary, fontSize = 7.sp, fontWeight = FontWeight.Black)
+                            }
+                        }
+
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = title,
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 2.dp)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Surface3)
+                                .padding(vertical = 3.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("+ Add to Video", color = AccentPrimary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .height(52.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Surface3)
+                            .border(1.dp, HairlineBorder, RoundedCornerShape(10.dp))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) { onPick(g) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (g.startsWith("asset://")) {
+                            val clean = g.removePrefix("asset://")
+                            val bmp: androidx.compose.ui.graphics.ImageBitmap? = remember(g) {
+                                com.clipcut.ui.util.AssetImageHelper.loadThumbnail(ctx, clean, 100, 100)
+                            }
+                            if (bmp != null) {
+                                androidx.compose.foundation.Image(
+                                    bitmap = bmp,
+                                    contentDescription = "Sticker",
+                                    modifier = Modifier.size(40.dp)
+                                )
+                            } else {
+                                Text("🎭", fontSize = 24.sp)
+                            }
+                        } else if (g.length > 3) {
+                            Text(
+                                text = g,
+                                color = AccentPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 4.dp),
+                                maxLines = 1
                             )
                         } else {
-                            Text("🎭", fontSize = 24.sp)
+                            Text(text = g, fontSize = 26.sp)
                         }
-                    } else if (g.length > 3) {
-                        Text(
-                            text = g,
-                            color = AccentPrimary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 4.dp),
-                            maxLines = 1
-                        )
-                    } else {
-                        Text(text = g, fontSize = 26.sp)
                     }
                 }
             }
@@ -3854,32 +5792,176 @@ fun VoiceRemixSheet(
     }
 }
 
-// ── VN Brand Kit Sheet ─────────────────────────────────────────────────
+// ── VN Brand Kit Studio & Logo Maker Sheet ──────────────────────────────
 @Composable
 fun BrandKitSheet(
     current: com.clipcut.core.model.BrandKitConfig?,
     onApply: (com.clipcut.core.model.BrandKitConfig?) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     val base = current ?: com.clipcut.core.model.BrandKitConfig()
     var watermarkText by remember { mutableStateOf(base.watermarkText) }
-    var selectedColor by remember { mutableStateOf(base.brandColor) }
+    var tagline by remember { mutableStateOf(base.tagline) }
+    var selectedColor by remember { mutableLongStateOf(base.brandColor) }
     var posIndex by remember { mutableIntStateOf(base.watermarkPosIndex) }
+    var selectedStyle by remember { mutableStateOf(base.logoStyle) }
+    var selectedIcon by remember { mutableStateOf(base.iconType) }
+    var selectedFont by remember { mutableStateOf(base.fontFamily) }
+    var opacity by remember { mutableFloatStateOf(base.opacity) }
+    var scale by remember { mutableFloatStateOf(base.watermarkScale) }
+
+    val brandColorCompose = Color(selectedColor or 0xFF000000L)
 
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-        SheetHeader("Brand Kit Studio (VN)", onDismiss)
-        Spacer(Modifier.height(8.dp))
+        SheetHeader("Brand Kit Studio & Logo Maker", onDismiss)
+        Spacer(Modifier.height(6.dp))
         Text(
-            "VN Brand Kit: automatically overlay your creator watermark, custom brand palette, and channel signature.",
+            "VN Creator Identity: automatically brand every export with custom typography, creator badges, social tags, and logo styling.",
             color = TextSecondary,
             fontSize = 11.sp
         )
         Spacer(Modifier.height(14.dp))
 
+        // ── 1. Live WYSIWYG Preview Monitor ──
+        Text("Live Preview Monitor", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(130.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color(0xFF0F141C), Color(0xFF1E2530))
+                    )
+                )
+                .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
+                .padding(12.dp),
+            contentAlignment = when (posIndex) {
+                1 -> Alignment.TopStart
+                2 -> Alignment.TopEnd
+                5 -> Alignment.TopCenter
+                3 -> Alignment.BottomStart
+                4 -> Alignment.BottomEnd
+                else -> Alignment.BottomCenter
+            }
+        ) {
+            // Background grid guide lines
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .border(0.5.dp, Color.White.copy(alpha = 0.04f), RoundedCornerShape(8.dp))
+            )
+
+            // Rendered preview badge
+            val displayTitle = watermarkText.ifBlank { "ClipCut Creator" }
+            val fontFam = remember(selectedFont, ctx) {
+                com.clipcut.ui.util.FontHelper.getFontFamily(ctx, selectedFont)
+            }
+
+            Box(
+                modifier = Modifier
+                    .clip(
+                        when (selectedStyle) {
+                            BrandLogoStyle.NEON_PILL -> RoundedCornerShape(24.dp)
+                            BrandLogoStyle.GLASS_CARD -> RoundedCornerShape(10.dp)
+                            BrandLogoStyle.CINEMA_STAMP -> RoundedCornerShape(3.dp)
+                            BrandLogoStyle.BADGE_CREST -> RoundedCornerShape(8.dp)
+                            else -> RoundedCornerShape(6.dp)
+                        }
+                    )
+                    .background(
+                        when (selectedStyle) {
+                            BrandLogoStyle.NEON_PILL -> Color(0xDD0D1117).copy(alpha = opacity * 0.90f)
+                            BrandLogoStyle.GLASS_CARD -> Color(0x991E2430).copy(alpha = opacity * 0.75f)
+                            BrandLogoStyle.CINEMA_STAMP -> Color(0xF008080C).copy(alpha = opacity * 0.95f)
+                            BrandLogoStyle.BADGE_CREST -> Color(0xDD12141C).copy(alpha = opacity * 0.90f)
+                            BrandLogoStyle.MINIMAL_WATERMARK, BrandLogoStyle.OUTRO_SIGNATURE -> Color.Transparent
+                        }
+                    )
+                    .border(
+                        width = when (selectedStyle) {
+                            BrandLogoStyle.NEON_PILL -> 1.5.dp
+                            BrandLogoStyle.GLASS_CARD -> 1.dp
+                            BrandLogoStyle.CINEMA_STAMP -> 1.2.dp
+                            else -> 0.dp
+                        },
+                        color = when (selectedStyle) {
+                            BrandLogoStyle.NEON_PILL, BrandLogoStyle.CINEMA_STAMP -> brandColorCompose.copy(alpha = opacity)
+                            BrandLogoStyle.GLASS_CARD -> Color.White.copy(alpha = opacity * 0.35f)
+                            else -> Color.Transparent
+                        },
+                        shape = when (selectedStyle) {
+                            BrandLogoStyle.NEON_PILL -> RoundedCornerShape(24.dp)
+                            BrandLogoStyle.GLASS_CARD -> RoundedCornerShape(10.dp)
+                            BrandLogoStyle.CINEMA_STAMP -> RoundedCornerShape(3.dp)
+                            else -> RoundedCornerShape(6.dp)
+                        }
+                    )
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (selectedStyle == BrandLogoStyle.BADGE_CREST) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(22.dp)
+                                .background(brandColorCompose.copy(alpha = opacity), RoundedCornerShape(2.dp))
+                        )
+                    }
+
+                    if (selectedIcon != BrandIconType.NONE && selectedIcon.glyph.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .background(brandColorCompose.copy(alpha = opacity), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = selectedIcon.glyph,
+                                color = Color(0xFF0F1218),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
+                    }
+
+                    Column {
+                        Text(
+                            text = displayTitle,
+                            color = Color.White.copy(alpha = opacity),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = fontFam
+                        )
+                        if (tagline.isNotBlank()) {
+                            Text(
+                                text = tagline,
+                                color = Color(0xFFB0B8C4).copy(alpha = opacity * 0.85f),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ── 2. Brand Identity Inputs (Dual-Line) ──
+        Text("Creator & Brand Typography", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+
         OutlinedTextField(
             value = watermarkText,
             onValueChange = { watermarkText = it },
-            label = { Text("Watermark / Channel Signature", color = TextSecondary, fontSize = 12.sp) },
+            label = { Text("Primary Brand / Creator Name", color = TextSecondary, fontSize = 11.sp) },
+            placeholder = { Text("e.g. Alex Rivera, ClipStudio, TechDaily", color = TextSecondary.copy(alpha = 0.5f), fontSize = 11.sp) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             colors = TextFieldDefaults.colors(
@@ -3891,11 +5973,220 @@ fun BrandKitSheet(
             )
         )
 
-        Spacer(Modifier.height(12.dp))
-        Text("Watermark Position", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = tagline,
+            onValueChange = { tagline = it },
+            label = { Text("Secondary Handle / Tagline (Optional)", color = TextSecondary, fontSize = 11.sp) },
+            placeholder = { Text("e.g. @alexcreates, Directed By, Official Channel", color = TextSecondary.copy(alpha = 0.5f), fontSize = 11.sp) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = Surface2,
+                unfocusedContainerColor = Surface2,
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                cursorColor = AccentPrimary
+            )
+        )
+
+        Spacer(Modifier.height(6.dp))
+        // Quick handle suggestions
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+            listOf("@channel", "Official", "Directed by", "Vlogs", "Studio", "Subscribe").forEach { suggestion ->
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Surface3)
+                        .clickable { tagline = suggestion }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text("+ $suggestion", color = TextSecondary, fontSize = 10.sp)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ── 3. Logo Style Maker ──
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Logo Style Maker", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(selectedStyle.label, color = AccentPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(6.dp))
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(BrandLogoStyle.values().toList()) { style ->
+                val isSel = selectedStyle == style
+                Box(
+                    modifier = Modifier
+                        .width(115.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (isSel) AccentPrimary.copy(alpha = 0.2f) else Surface2)
+                        .border(
+                            width = if (isSel) 1.5.dp else 1.dp,
+                            color = if (isSel) AccentPrimary else HairlineBorder,
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        .clickable { selectedStyle = style }
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Column {
+                        Text(
+                            text = style.label,
+                            color = if (isSel) AccentPrimary else Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = style.description,
+                            color = TextSecondary,
+                            fontSize = 9.sp,
+                            maxLines = 2,
+                            lineHeight = 11.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ── 4. Creator & Social Icons ──
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Creator & Social Badge Icons", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(selectedIcon.label, color = AccentPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(6.dp))
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(BrandIconType.values().toList()) { icon ->
+                val isSel = selectedIcon == icon
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (isSel) brandColorCompose.copy(alpha = 0.22f) else Surface2)
+                        .border(
+                            width = if (isSel) 1.5.dp else 1.dp,
+                            color = if (isSel) brandColorCompose else HairlineBorder,
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        .clickable { selectedIcon = icon }
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (icon.glyph.isNotEmpty()) {
+                            Text(icon.glyph, fontSize = 13.sp)
+                        }
+                        Text(
+                            text = icon.label,
+                            color = if (isSel) Color.White else TextSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ── 5. Font Selector (with live preview) ──
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Typography Font", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(selectedFont.label, color = AccentPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(6.dp))
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(FontFamilyOption.values().toList()) { font ->
+                val isSel = selectedFont == font
+                val fontFam = remember(font, ctx) {
+                    com.clipcut.ui.util.FontHelper.getFontFamily(ctx, font)
+                }
+                Box(
+                    modifier = Modifier
+                        .width(105.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (isSel) AccentPrimary.copy(alpha = 0.2f) else Surface2)
+                        .border(
+                            width = if (isSel) 1.5.dp else 1.dp,
+                            color = if (isSel) AccentPrimary else HairlineBorder,
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        .clickable { selectedFont = font }
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Aa",
+                            fontFamily = fontFam,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isSel) AccentPrimary else Color.White
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = font.label,
+                            fontSize = 10.sp,
+                            color = if (isSel) Color.White else TextSecondary,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ── 6. Watermark Position (6 Positions) ──
+        Text("Screen Position", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+
+        val positions = listOf(
+            Triple("Top Left", 1, Alignment.TopStart),
+            Triple("Top Center", 5, Alignment.TopCenter),
+            Triple("Top Right", 2, Alignment.TopEnd),
+            Triple("Bottom Left", 3, Alignment.BottomStart),
+            Triple("Bottom Center", 0, Alignment.BottomCenter),
+            Triple("Bottom Right", 4, Alignment.BottomEnd)
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            positions.take(3).forEach { (lbl, idx, _) ->
+                val isSel = posIndex == idx
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSel) AccentPrimary else Surface2)
+                        .border(1.dp, if (isSel) AccentPrimary else HairlineBorder, RoundedCornerShape(8.dp))
+                        .clickable { posIndex = idx }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(lbl, color = if (isSel) DarkBackground else Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            listOf("Bottom Center" to 0, "Top Left" to 1, "Top Right" to 2, "Bottom Right" to 4).forEach { (lbl, idx) ->
+            positions.drop(3).forEach { (lbl, idx, _) ->
                 val isSel = posIndex == idx
                 Box(
                     modifier = Modifier
@@ -3912,20 +6203,584 @@ fun BrandKitSheet(
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(14.dp))
+
+        // ── 7. Brand Color Palette (36+ Curated Colors) ──
+        Text("Brand Accent Color", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+
+        val brandPalette = listOf(
+            0xFF00E5FFL, 0xFF00B0FFL, 0xFF2979FFL, 0xFF651FFFL, 0xFF7C4DFFL, 0xFFB388FFL,
+            0xFFFF4081L, 0xFFF50057L, 0xFFFF1744L, 0xFFFF5252L, 0xFFFF6E40L, 0xFFFF9100L,
+            0xFFFFD700L, 0xFFFFEA00L, 0xFFAEEA00L, 0xFF76FF03L, 0xFF00E676L, 0xFF1DE9B6L,
+            0xFF00BFA5L, 0xFF26A69AL, 0xFF80CBC4L, 0xFF80D8FFL, 0xFF82B1FFL, 0xFFB39DDBL,
+            0xFFF48FB1L, 0xFFFFAB91L, 0xFFFFCC80L, 0xFFFFF59DL, 0xFFE6EE9CL, 0xFFA5D6A7L,
+            0xFFFFFFFFL, 0xFFECEFF1L, 0xFFB0BEC5L, 0xFF78909CL, 0xFF455A64L, 0xFF263238L
+        )
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(brandPalette) { colorVal ->
+                val isSel = selectedColor == colorVal
+                val c = Color(colorVal or 0xFF000000L)
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(c)
+                        .border(
+                            width = if (isSel) 2.5.dp else 1.dp,
+                            color = if (isSel) Color.White else Color.Black.copy(alpha = 0.4f),
+                            shape = CircleShape
+                        )
+                        .clickable { selectedColor = colorVal },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isSel) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(if (colorVal == 0xFFFFFFFFL) Color.Black else Color.White, CircleShape)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ── 8. Opacity & Scale Sliders ──
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Watermark Opacity", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("${(opacity * 100).toInt()}%", color = AccentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+        Slider(
+            value = opacity,
+            onValueChange = { opacity = it },
+            valueRange = 0.20f..1.0f,
+            colors = SliderDefaults.colors(
+                thumbColor = AccentPrimary,
+                activeTrackColor = AccentPrimary,
+                inactiveTrackColor = Surface3
+            )
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Watermark Scale", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(
+                when {
+                    scale < 0.9f -> "Compact"
+                    scale > 1.2f -> "Large"
+                    else -> "Standard"
+                },
+                color = AccentPrimary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Slider(
+            value = scale,
+            onValueChange = { scale = it },
+            valueRange = 0.6f..1.6f,
+            colors = SliderDefaults.colors(
+                thumbColor = AccentPrimary,
+                activeTrackColor = AccentPrimary,
+                inactiveTrackColor = Surface3
+            )
+        )
+
+        Spacer(Modifier.height(18.dp))
+
+        // ── 9. Action Buttons ──
         PrimaryButton(
-            text = "Save Brand Kit",
+            text = "Save & Apply Brand Kit",
             onClick = {
                 onApply(
                     com.clipcut.core.model.BrandKitConfig(
                         brandColor = selectedColor,
                         watermarkText = watermarkText,
-                        watermarkPosIndex = posIndex
+                        tagline = tagline,
+                        watermarkPosIndex = posIndex,
+                        watermarkScale = scale,
+                        opacity = opacity,
+                        fontFamily = selectedFont,
+                        logoStyle = selectedStyle,
+                        iconType = selectedIcon
                     )
                 )
                 onDismiss()
             },
             modifier = Modifier.fillMaxWidth()
         )
+
+        if (current != null) {
+            Spacer(Modifier.height(8.dp))
+            SecondaryButton(
+                text = "Remove Watermark",
+                onClick = {
+                    onApply(null)
+                    onDismiss()
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+        Spacer(Modifier.height(16.dp))
     }
 }
+
+// ── AudioExtractorSheet ──────────────────────────────────────────────────
+@Composable
+fun AudioExtractorSheet(
+    initialVideoUri: android.net.Uri? = null,
+    onAddToTimeline: ((android.net.Uri) -> Unit)? = null,
+    onDismiss: () -> Unit
+) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    var selectedVideoUri by remember { mutableStateOf<android.net.Uri?>(initialVideoUri) }
+    var videoName by remember { mutableStateOf("Selected Video") }
+    var videoDurationMs by remember { mutableStateOf(0L) }
+
+    var mp3FileName by remember { mutableStateOf("Audio_${System.currentTimeMillis() % 100000}") }
+    var selectedBitrate by remember { mutableIntStateOf(192) }
+
+    var isExtracting by remember { mutableStateOf(false) }
+    var extractProgress by remember { mutableFloatStateOf(0f) }
+    var extractResult by remember { mutableStateOf<com.clipcut.core.audio.AudioExtractResult?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    var isPlayingPreview by remember { mutableStateOf(false) }
+    val mediaPlayerRef = remember { mutableStateOf<android.media.MediaPlayer?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                mediaPlayerRef.value?.stop()
+                mediaPlayerRef.value?.release()
+            } catch (_: Throwable) {}
+            mediaPlayerRef.value = null
+        }
+    }
+
+    // Function to inspect selected video URI
+    fun inspectVideo(uri: android.net.Uri) {
+        try {
+            var name = "video_${System.currentTimeMillis() % 10000}"
+            ctx.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (nameIdx != -1 && cursor.moveToFirst()) {
+                    val n = cursor.getString(nameIdx)
+                    if (!n.isNullOrBlank()) name = n
+                }
+            }
+            videoName = name
+            mp3FileName = name.substringBeforeLast('.').take(40).ifBlank { "Extracted_Audio" }
+
+            val retr = android.media.MediaMetadataRetriever()
+            retr.setDataSource(ctx, uri)
+            val dur = retr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            videoDurationMs = dur
+            retr.release()
+        } catch (t: Throwable) {
+            com.clipcut.core.log.AppLog.w("AudioExtractorSheet", "Failed to inspect video: ${t.message}")
+        }
+    }
+
+    LaunchedEffect(selectedVideoUri) {
+        selectedVideoUri?.let { inspectVideo(it) }
+    }
+
+    val videoPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            selectedVideoUri = uri
+            extractResult = null
+            errorMessage = null
+        }
+    }
+
+    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+        SheetHeader("Audio Extractor (Video to MP3)", onDismiss)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Extract studio-quality MP3 audio from any video and save it directly to your phone's Music folder.",
+            color = TextSecondary,
+            fontSize = 12.sp
+        )
+        Spacer(Modifier.height(16.dp))
+
+        // Video Selection Card
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Surface2,
+            border = androidx.compose.foundation.BorderStroke(1.dp, if (selectedVideoUri != null) AccentPrimary.copy(alpha = 0.5f) else HairlineBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { videoPickerLauncher.launch("video/*") }
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(AccentPrimary.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.VideoFile,
+                        contentDescription = null,
+                        tint = AccentPrimary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (selectedVideoUri != null) videoName else "Choose Video File...",
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = if (selectedVideoUri != null && videoDurationMs > 0L) {
+                            val sec = (videoDurationMs / 1000L) % 60
+                            val min = (videoDurationMs / 1000L) / 60
+                            "Duration: %02d:%02d • Tap to change".format(min, sec)
+                        } else if (selectedVideoUri != null) {
+                            "Ready to extract • Tap to change"
+                        } else {
+                            "Select video from phone gallery / storage"
+                        },
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+                }
+                Icon(
+                    Icons.Filled.ChevronRight,
+                    contentDescription = null,
+                    tint = TextSecondary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        if (extractResult == null) {
+            // Configuration options
+            Text("MP3 Output Settings", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Spacer(Modifier.height(8.dp))
+
+            // File Name Input
+            Text("File Name (.mp3)", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(4.dp))
+            androidx.compose.material3.OutlinedTextField(
+                value = mp3FileName,
+                onValueChange = { mp3FileName = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = AccentPrimary,
+                    unfocusedBorderColor = HairlineBorder,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    cursorColor = AccentPrimary
+                ),
+                trailingIcon = {
+                    Text(".mp3", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp))
+                }
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            // Bitrate selector
+            Text("Encoding Bitrate (LAME MP3 Engine)", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(
+                    128 to "128 kbps",
+                    192 to "192 kbps (HQ)",
+                    320 to "320 kbps (Master)"
+                ).forEach { (br, label) ->
+                    val isSel = selectedBitrate == br
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSel) AccentPrimary.copy(alpha = 0.2f) else Surface2,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, if (isSel) AccentPrimary else HairlineBorder),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { selectedBitrate = br }
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (isSel) AccentPrimary else TextPrimary,
+                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                            fontSize = 11.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            if (errorMessage != null) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0x33FF5252),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF5252)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = errorMessage ?: "",
+                        color = Color(0xFFFF5252),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+            }
+
+            if (isExtracting) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Surface2)
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { extractProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = AccentPrimary,
+                        trackColor = Surface3
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = "Extracting & encoding MP3... ${(extractProgress * 100).toInt()}%",
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Running local high-speed MediaCodec & LAME processor",
+                        color = TextSecondary,
+                        fontSize = 11.sp
+                    )
+                }
+            } else {
+                PrimaryButton(
+                    text = "Extract & Save MP3",
+                    onClick = {
+                        val uri = selectedVideoUri
+                        if (uri == null) {
+                            errorMessage = "Please select a video file first."
+                            return@PrimaryButton
+                        }
+                        isExtracting = true
+                        extractProgress = 0f
+                        errorMessage = null
+                        coroutineScope.launch {
+                            val res = com.clipcut.core.audio.AudioExtractorEngine.extractAudioToMp3(
+                                context = ctx,
+                                sourceUri = uri,
+                                outputBaseName = mp3FileName.ifBlank { "Extracted_Audio" },
+                                bitRateKbps = selectedBitrate,
+                                onProgress = { p -> extractProgress = p }
+                            )
+                            isExtracting = false
+                            if (res.isSuccess) {
+                                extractResult = res.getOrNull()
+                                android.widget.Toast.makeText(ctx, "MP3 saved to Music/ClipCut!", android.widget.Toast.LENGTH_LONG).show()
+                            } else {
+                                errorMessage = res.exceptionOrNull()?.message ?: "Extraction failed."
+                            }
+                        }
+                    },
+                    icon = Icons.Filled.Download,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        } else {
+            // Success Card
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Surface2,
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF10B981)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF10B981).copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = Color(0xFF10B981),
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Audio Extracted & Saved!",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Saved as ${extractResult!!.fileName} in your phone's Music folder (Music/ClipCut/)",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    val sec = (extractResult!!.durationMs / 1000L) % 60
+                    val min = (extractResult!!.durationMs / 1000L) / 60
+                    Text(
+                        text = "Format: MP3 • ${selectedBitrate} kbps • %02d:%02d • ${extractResult!!.channels} Channels".format(min, sec),
+                        color = AccentPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Play / Pause Preview Button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                PrimaryButton(
+                    text = if (isPlayingPreview) "Pause Preview" else "Play MP3 Preview",
+                    onClick = {
+                        val file = extractResult?.file ?: return@PrimaryButton
+                        try {
+                            if (isPlayingPreview) {
+                                mediaPlayerRef.value?.pause()
+                                isPlayingPreview = false
+                            } else {
+                                if (mediaPlayerRef.value == null) {
+                                    mediaPlayerRef.value = android.media.MediaPlayer().apply {
+                                        setDataSource(file.absolutePath)
+                                        setOnCompletionListener { isPlayingPreview = false }
+                                        prepare()
+                                    }
+                                }
+                                mediaPlayerRef.value?.start()
+                                isPlayingPreview = true
+                            }
+                        } catch (t: Throwable) {
+                            com.clipcut.core.log.AppLog.w("AudioExtractorSheet", "Preview failed: ${t.message}")
+                            isPlayingPreview = false
+                        }
+                    },
+                    icon = if (isPlayingPreview) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    modifier = Modifier.weight(1f)
+                )
+
+                // Share Button
+                SecondaryButton(
+                    text = "Share MP3",
+                    onClick = {
+                        val res = extractResult ?: return@SecondaryButton
+                        try {
+                            val shareUri = androidx.core.content.FileProvider.getUriForFile(
+                                ctx,
+                                "${ctx.packageName}.fileprovider",
+                                res.file
+                            )
+                            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "audio/mpeg"
+                                putExtra(android.content.Intent.EXTRA_STREAM, shareUri)
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            ctx.startActivity(android.content.Intent.createChooser(intent, "Share Extracted Audio"))
+                        } catch (t: Throwable) {
+                            android.widget.Toast.makeText(ctx, "Share error: ${t.message}", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    icon = Icons.Filled.Share,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            if (onAddToTimeline != null && extractResult != null) {
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.material3.OutlinedButton(
+                    onClick = {
+                        onAddToTimeline(android.net.Uri.fromFile(extractResult!!.file))
+                        onDismiss()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, LuminescentAmber),
+                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                        containerColor = LuminescentAmber.copy(alpha = 0.15f)
+                    )
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = null, tint = LuminescentAmber, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Add to Project Timeline Track", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            SecondaryButton(
+                text = "Extract Another Video",
+                onClick = {
+                    extractResult = null
+                    selectedVideoUri = null
+                    try {
+                        mediaPlayerRef.value?.stop()
+                        mediaPlayerRef.value?.release()
+                    } catch (_: Throwable) {}
+                    mediaPlayerRef.value = null
+                    isPlayingPreview = false
+                    videoPickerLauncher.launch("video/*")
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
