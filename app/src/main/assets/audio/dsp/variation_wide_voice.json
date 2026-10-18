@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "variation_wide_voice",
+    "unique_name": "audio/effect/variation_wide_voice",
+    "params": [
+        {
+            "name": "EffectType",
+            "type": 5,
+            "min_value": 9,
+            "max_value": 9,
+            "default_value": 9
+        }
+    ],
+    "ENCRYPT": "0"
+}

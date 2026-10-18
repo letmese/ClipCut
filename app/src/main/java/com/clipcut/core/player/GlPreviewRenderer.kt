@@ -39,6 +39,7 @@ class GlPreviewRenderer(private val context: Context) {
 
     var positionProvider: (() -> Long)? = null
     var playerManager: PreviewPlayerManager? = null
+    @Volatile var isCropEditingActive: Boolean = false
 
     private var eglCore: EglCore? = null
     private var eglSurface: EGLSurface? = null
@@ -64,6 +65,15 @@ class GlPreviewRenderer(private val context: Context) {
     private var prevClipFboHeight = 0
     @Volatile private var hasPrevClip = false
     @Volatile var activeEditingOverlayId: String? = null
+        set(value) {
+            field = value
+            isDirty = true
+        }
+    @Volatile var brandKitConfig: com.clipcut.core.model.BrandKitConfig? = null
+        set(value) {
+            field = value
+            isDirty = true
+        }
     @Volatile var activeEditingPipId: String? = null
     @Volatile var activeEditingPipX: Float? = null
     @Volatile var activeEditingPipY: Float? = null
@@ -93,6 +103,20 @@ class GlPreviewRenderer(private val context: Context) {
         activeEditingPipY = y
         activeEditingPipScale = scale
         activeEditingPipRotation = rotation
+        isDirty = true
+    }
+
+    @Volatile var activeEditingOverlayX: Float? = null
+    @Volatile var activeEditingOverlayY: Float? = null
+    @Volatile var activeEditingOverlayScale: Float? = null
+    @Volatile var activeEditingOverlayRotation: Float? = null
+
+    fun setEditingOverlayTransform(id: String?, x: Float?, y: Float?, scale: Float?, rotation: Float?) {
+        activeEditingOverlayId = id
+        activeEditingOverlayX = x
+        activeEditingOverlayY = y
+        activeEditingOverlayScale = scale
+        activeEditingOverlayRotation = rotation
         isDirty = true
     }
 
@@ -327,6 +351,17 @@ class GlPreviewRenderer(private val context: Context) {
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
+        val proj = project
+        val activeBg = proj?.overlays?.firstOrNull {
+            over.isBackgroundOverlay(it) && posUs in it.timelineStartUs..it.timelineEndUs
+        }
+        if (activeBg != null) {
+            val bgTexId = over.getBackgroundTexture(activeBg)
+            if (bgTexId != -1) {
+                filter.draw(bgTexId, GlUtil.FLIP_Y_MATRIX, GlUtil.IDENTITY_MATRIX, w, h)
+            }
+        }
+
         if (clip != null) {
             val offsetUs = (posUs - clipStartUs).coerceAtLeast(0L)
             val transProgress = if (clip.transitionType != TransitionType.NONE && clip.transitionDurationUs > 0) {
@@ -335,13 +370,22 @@ class GlPreviewRenderer(private val context: Context) {
 
             val useTransition = (hasPrevClip && prevClipFbo != null && clip.transitionType != TransitionType.NONE && transProgress in 0f..0.999f)
 
+            val videoMvp = FloatArray(16)
+            if (activeBg != null) {
+                Matrix.setIdentityM(videoMvp, 0)
+                val s = if (clip.chromaKeyColor != null) 0.88f else 0.80f
+                Matrix.scaleM(videoMvp, 0, s, s, 1.0f)
+            } else {
+                Matrix.setIdentityM(videoMvp, 0)
+            }
+
             pipe.applyPostProcessing(
                 sourceTexId = oesTex,
                 sourceTexMatrix = texMatrix,
                 sourceIsOes = true,
-                mvpMatrix = GlUtil.IDENTITY_MATRIX,
+                mvpMatrix = videoMvp,
                 rotationDegrees = clip.rotationDegrees,
-                clip = clip,
+                clip = if (isCropEditingActive) clip.copy(cropRect = com.clipcut.core.model.CropRect(0f, 0f, 1f, 1f)) else clip,
                 transitionProgress = if (useTransition) transProgress else 0f,
                 prevClipTexId = if (useTransition) prevClipFbo?.textureId else null,
                 activeBlurs = project?.blurTracks ?: emptyList(),
@@ -375,7 +419,6 @@ class GlPreviewRenderer(private val context: Context) {
             }
         }
 
-        val proj = project
         if (proj != null) {
             val activeExoPip = proj.pipTracks.firstOrNull { pip ->
                 pip.uri.isNotEmpty() && (
@@ -543,18 +586,24 @@ class GlPreviewRenderer(private val context: Context) {
                 }
             }
 
-            // Render Overlays / Text & Blur Image Stickers
-            val imageBlurs = proj.blurTracks.filter { it.blurType == com.clipcut.core.model.BlurType.IMAGE }
-            if (proj.overlays.isNotEmpty() || imageBlurs.isNotEmpty()) {
-                val editingId = activeEditingOverlayId
-                val overlaysToRender = if (editingId != null) {
-                    proj.overlays.filter { it.id != editingId }
-                } else {
-                    proj.overlays
-                }
+            // Render Overlays (Frames, Stickers, Motion Titles, Brand Kit Watermark) & Paint Blurs on GL
+            val activeForeOverlays = proj.overlays.filter {
+                !over.isBackgroundOverlay(it) && posUs in it.timelineStartUs..it.timelineEndUs
+            }
+            val activeBlurs = proj.blurTracks.filter {
+                (it.blurType == com.clipcut.core.model.BlurType.IMAGE || it.paintStrokes.isNotEmpty()) &&
+                posUs in it.timelineStartUs..it.timelineEndUs
+            }
+            val hasBrandKit = brandKitConfig != null && (
+                brandKitConfig?.watermarkText?.isNotBlank() == true ||
+                !brandKitConfig?.logoUri.isNullOrBlank() ||
+                brandKitConfig?.iconType != com.clipcut.core.model.BrandIconType.NONE ||
+                brandKitConfig?.tagline?.isNotBlank() == true
+            )
+            if (activeForeOverlays.isNotEmpty() || activeBlurs.isNotEmpty() || hasBrandKit) {
                 over.renderOverlays(
-                    overlays = overlaysToRender,
-                    blurTracks = imageBlurs,
+                    overlays = activeForeOverlays,
+                    blurTracks = activeBlurs,
                     currentPtsUs = posUs,
                     viewportWidth = w,
                     viewportHeight = h,
@@ -563,7 +612,13 @@ class GlPreviewRenderer(private val context: Context) {
                     editingBlurY = activeEditingBlurY,
                     editingBlurW = activeEditingBlurWidth,
                     editingBlurH = activeEditingBlurHeight,
-                    editingBlurRot = activeEditingBlurRotation
+                    editingBlurRot = activeEditingBlurRotation,
+                    editingOverlayId = activeEditingOverlayId,
+                    editingOverlayX = activeEditingOverlayX,
+                    editingOverlayY = activeEditingOverlayY,
+                    editingOverlayScale = activeEditingOverlayScale,
+                    editingOverlayRot = activeEditingOverlayRotation,
+                    brandKitConfig = brandKitConfig
                 )
                 val overId = over.textureId
                 if (overId != -1) {
@@ -616,7 +671,11 @@ class GlPreviewRenderer(private val context: Context) {
 
     private fun findClipAt(timelineUs: Long): TimelineItem? = findClipAndOffsetAt(timelineUs).first
 
-    fun setProject(project: Project) { this.project = project; isDirty = true }
+    fun setProject(project: Project) {
+        this.project = project
+        this.brandKitConfig = project.brandKitConfig
+        isDirty = true
+    }
     fun pause() { paused = true }
     fun resume() { paused = false; isDirty = true }
     fun seekTo(@Suppress("UNUSED_PARAMETER") timelineUs: Long) { isDirty = true }

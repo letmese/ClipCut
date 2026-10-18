@@ -1,0 +1,10 @@
+
+        <?xml version="1.0" encoding="utf-8"?>
+        <Filter>
+        <GUID>B51AECA5-00B5-4274-9402-A3BC31094D0A</GUID>
+        <Name>Spiral</Name>
+        <Transition>1</Transition>
+        <GPUFilter>
+    	<ConfigFile>Spiral.conf</ConfigFile>
+    	</GPUFilter>
+    	</Filter>

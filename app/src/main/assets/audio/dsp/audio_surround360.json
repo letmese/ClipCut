@@ -1,0 +1,7 @@
+{
+    "type": "audio_effect",
+    "display_name": "audio_surround360",
+    "unique_name": "audio/effect/audio_surround360",
+    "params": [],
+    "ENCRYPT": "0"
+}

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Filter>
+<GUID>50D81964-E6A1-464A-BD24-C3FCB59FFB3F</GUID>
+<Name>3D Warp Box Distortion Right</Name>
+<Transition>1</Transition>
+<GPUFilter>
+<ConfigFile>3D Warp Box Distortion Right.conf</ConfigFile>
+</GPUFilter>
+</Filter>

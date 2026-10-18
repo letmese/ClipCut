@@ -1,0 +1,22 @@
+{
+    "type": "audio_effect",
+    "display_name": "fade",
+    "unique_name": "audio/effect/fade",
+    "params": [
+        {
+            "name": "FadeInTime",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 0.0
+        },
+        {
+            "name": "FadeOutTime",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 0.0
+        }
+    ],
+    "ENCRYPT": "0"
+}

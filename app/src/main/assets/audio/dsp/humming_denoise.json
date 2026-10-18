@@ -1,0 +1,29 @@
+{
+    "type": "audio_effect",
+    "display_name": "humming_denoise",
+    "unique_name": "audio/effect/humming_denoise",
+    "params": [
+        {
+            "name": "GainDb",
+            "type": 3,
+            "min_value": -60.0,
+            "max_value": 0.0,
+            "default_value": -50.0
+        },
+        {
+            "name": "Freq",
+            "type": 3,
+            "min_value": 40.0,
+            "max_value": 70.0,
+            "default_value": 60.0
+        },
+        {
+            "name": "HarmonicNum",
+            "type": 5,
+            "min_value": 1,
+            "max_value": 8,
+            "default_value": 8
+        }
+    ],
+    "ENCRYPT": "0"
+}

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Filter>
+<GUID>E6597230-6AE6-4B41-80EB-5E7A540F760D</GUID>
+<Name>Glitch Dissolve</Name>
+<Transition>1</Transition>
+<GPUFilter>
+<ConfigFile>Glitch Dissolve.conf</ConfigFile>
+</GPUFilter>
+</Filter>

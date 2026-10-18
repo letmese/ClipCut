@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "audio_wind",
+    "unique_name": "audio/effect/audio_wind",
+    "params": [
+        {
+            "name": "effect_type",
+            "type": 5,
+            "min_value": 1,
+            "max_value": 1,
+            "default_value": 1
+        }
+    ],
+    "ENCRYPT": "0"
+}

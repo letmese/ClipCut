@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "voice_change_husky",
+    "unique_name": "audio/effect/voice_change_husky",
+    "params": [
+        {
+            "name": "VoiceChange_Type",
+            "type": 5,
+            "min_value": 13,
+            "max_value": 13,
+            "default_value": 13
+        }
+    ],
+    "ENCRYPT": "0"
+}

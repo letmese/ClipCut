@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "voice_change_radio",
+    "unique_name": "audio/effect/voice_change_radio",
+    "params": [
+        {
+            "name": "VoiceChange_Type",
+            "type": 5,
+            "min_value": 9,
+            "max_value": 9,
+            "default_value": 9
+        }
+    ],
+    "ENCRYPT": "0"
+}

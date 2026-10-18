@@ -2,36 +2,66 @@ package com.clipcut.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
+import com.clipcut.ui.viewmodel.SettingsViewModel
 
 /**
- * ClipCut theme. The product is dark-first (Base #0A0A0F). We still expose a
- * `light` fall-back so that androidx.compose.material3 defaults (which need
- * both lightScheme & darkScheme) keep working in previews.
+ * ClipCut theme with real-time responsive light/dark/system mode and dynamic creative accent.
  */
 @Composable
 fun ClipCutTheme(
+    settingsViewModel: SettingsViewModel? = null,
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    val darkColorScheme = androidx.compose.material3.darkColorScheme(
-        primary = md_theme_dark_primary,
-        onPrimary = md_theme_dark_onPrimary,
-        primaryContainer = md_theme_dark_primaryContainer,
-        onPrimaryContainer = md_theme_dark_onPrimaryContainer,
-        secondary = md_theme_dark_secondary,
-        tertiary = md_theme_dark_tertiary,
-        background = md_theme_dark_background,
-        onBackground = md_theme_dark_onBackground,
-        surface = md_theme_dark_surface,
-        onSurface = md_theme_dark_onSurface,
-        surfaceVariant = md_theme_dark_surfaceVariant,
-        onSurfaceVariant = md_theme_dark_onSurfaceVariant,
-        outline = md_theme_dark_outline
-    )
+    val vm = settingsViewModel ?: androidx.lifecycle.viewmodel.compose.viewModel<SettingsViewModel>()
+    val themeMode by vm.theme.collectAsState()
+    val accentHex by vm.accent.collectAsState()
+
+    // Sync ThemeState immediately during composition
+    ThemeState.update(themeMode, accentHex, darkTheme)
+
+    val colorScheme = if (ThemeState.isDark) {
+        darkColorScheme(
+            primary = ThemeState.accentColor,
+            onPrimary = Color.Black,
+            primaryContainer = ThemeState.accentColor.copy(alpha = 0.3f),
+            onPrimaryContainer = Color.White,
+            secondary = VibrantViolet,
+            tertiary = LuminescentAmber,
+            background = ThemeState.background,
+            onBackground = ThemeState.textPrimary,
+            surface = ThemeState.surface,
+            onSurface = ThemeState.textPrimary,
+            surfaceVariant = ThemeState.surface3,
+            onSurfaceVariant = ThemeState.textSecondary,
+            outline = ThemeState.border
+        )
+    } else {
+        lightColorScheme(
+            primary = ThemeState.accentColor,
+            onPrimary = Color.White,
+            primaryContainer = ThemeState.accentColor.copy(alpha = 0.2f),
+            onPrimaryContainer = Color.Black,
+            secondary = VibrantViolet,
+            tertiary = LuminescentAmber,
+            background = ThemeState.background,
+            onBackground = ThemeState.textPrimary,
+            surface = ThemeState.surface,
+            onSurface = ThemeState.textPrimary,
+            surfaceVariant = ThemeState.surface3,
+            onSurfaceVariant = ThemeState.textSecondary,
+            outline = ThemeState.border
+        )
+    }
+
     MaterialTheme(
-        colorScheme = darkColorScheme,
+        colorScheme = colorScheme,
         typography = Typography,
         shapes = Shapes,
         content = content
@@ -39,13 +69,13 @@ fun ClipCutTheme(
 }
 
 object ClipCutColors {
-    val Base: Color = md_theme_dark_background
-    val Surface1: Color = com.clipcut.ui.theme.Surface1
-    val Surface2: Color = com.clipcut.ui.theme.Surface2
-    val Surface3: Color = com.clipcut.ui.theme.Surface3
-    val Accent: Color = md_theme_dark_primary
-    val AccentTeal: Color = md_theme_dark_secondary
-    val AccentBlue: Color = md_theme_dark_tertiary
-    val AccentGold: Color = com.clipcut.ui.theme.AccentGold
-    val AccentViolet: Color = com.clipcut.ui.theme.AccentViolet
+    val Base: Color get() = ThemeState.background
+    val Surface1: Color get() = ThemeState.surface1
+    val Surface2: Color get() = ThemeState.surface2
+    val Surface3: Color get() = ThemeState.surface3
+    val Accent: Color get() = ThemeState.accentColor
+    val AccentTeal: Color get() = EmeraldWave
+    val AccentBlue: Color get() = ThemeState.accentColor
+    val AccentGold: Color get() = LuminescentAmber
+    val AccentViolet: Color get() = VibrantViolet
 }

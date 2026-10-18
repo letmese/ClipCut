@@ -380,9 +380,13 @@ fun EditorScreen(
             viewModel.importMedia(uri, mediaType)
         }
     }
+    var pendingAudioUri by remember { mutableStateOf<Uri?>(null) }
+    var editingAudioTrack by remember { mutableStateOf<com.clipcut.core.model.AudioTrackItem?>(null) }
     val pickAudio = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
-            viewModel.addAudioTrack(uri)
+            pendingAudioUri = uri
+            editingAudioTrack = null
+            activeSpecialSheet = "audio_trimmer"
         }
     }
     val pickBlurImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -2876,14 +2880,37 @@ fun EditorScreen(
             "voiceover" -> "Voiceover"
             "captions" -> "Auto Captions"
             "pip" -> "PiP Layer"
+            "extract_audio" -> "Extract Audio"
+            "audio_trimmer" -> if (editingAudioTrack != null) "Live Audio Trimmer" else "Custom Audio Studio"
             else -> tool?.label ?: ""
         },
-        onDone = { selectedTool = null; activeSpecialSheet = null },
-        onDismiss = { selectedTool = null; activeSpecialSheet = null },
+        onDone = { selectedTool = null; activeSpecialSheet = null; pendingAudioUri = null; editingAudioTrack = null },
+        onDismiss = { selectedTool = null; activeSpecialSheet = null; pendingAudioUri = null; editingAudioTrack = null },
         visible = (tool != null || activeSpecialSheet != null) && !isFingerPaintActive && tool != EditorTool.CROP
     ) {
         if (activeSpecialSheet != null) {
             when (activeSpecialSheet) {
+                "audio_trimmer" -> LiveAudioTrimmerSheet(
+                    audioUri = pendingAudioUri,
+                    existingTrack = editingAudioTrack,
+                    onAddTrack = { uri, name, startUs, endUs, durUs ->
+                        viewModel.addAudioTrackWithTrim(uri, name, startUs, endUs, durUs)
+                        activeSpecialSheet = null
+                        pendingAudioUri = null
+                        editingAudioTrack = null
+                    },
+                    onUpdateTrack = { id, startUs, endUs ->
+                        viewModel.trimAudioTrack(id, startUs, endUs)
+                        activeSpecialSheet = null
+                        pendingAudioUri = null
+                        editingAudioTrack = null
+                    },
+                    onDismiss = {
+                        activeSpecialSheet = null
+                        pendingAudioUri = null
+                        editingAudioTrack = null
+                    }
+                )
                 "voiceover" -> VoiceoverSheet(
                     playheadUs = positionUs,
                     onVoiceoverRecorded = { viewModel.addAudioTrack(it) },
@@ -2907,8 +2934,9 @@ fun EditorScreen(
                 "extract_audio" -> AudioExtractorSheet(
                     initialVideoUri = project?.videoClips?.firstOrNull()?.uri?.let { android.net.Uri.parse(it) },
                     onAddToTimeline = { mp3Uri ->
-                        viewModel.addAudioTrack(mp3Uri)
-                        activeSpecialSheet = null
+                        pendingAudioUri = mp3Uri
+                        editingAudioTrack = null
+                        activeSpecialSheet = "audio_trimmer"
                     },
                     onDismiss = { activeSpecialSheet = null }
                 )
@@ -2924,6 +2952,11 @@ fun EditorScreen(
                     onPickMusicClick = { pickAudio.launch("audio/*") },
                     onDeleteTrack = { id -> viewModel.removeAudioTrack(id) },
                     onTrimTrack = { id, s, e -> viewModel.trimAudioTrack(id, s, e) },
+                    onOpenLiveTrimmer = { track ->
+                        editingAudioTrack = track
+                        pendingAudioUri = null
+                        activeSpecialSheet = "audio_trimmer"
+                    },
                     onVoiceoverClick = { activeSpecialSheet = "voiceover" },
                     onAddAssetAudio = { path, name -> viewModel.addAssetAudioTrack(path, name) },
                     onExtractAudioClick = { activeSpecialSheet = "extract_audio" },

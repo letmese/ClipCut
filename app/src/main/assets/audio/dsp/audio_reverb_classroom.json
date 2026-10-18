@@ -1,0 +1,7 @@
+{
+    "type": "audio_effect",
+    "display_name": "audio_reverb_classroom",
+    "unique_name": "audio/effect/audio_reverb_classroom",
+    "params": [],
+    "ENCRYPT": "0"
+}

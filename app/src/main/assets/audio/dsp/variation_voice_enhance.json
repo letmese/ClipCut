@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "variation_voice_enhance",
+    "unique_name": "audio/effect/variation_voice_enhance",
+    "params": [
+        {
+            "name": "EffectType",
+            "type": 5,
+            "min_value": 0,
+            "max_value": 0,
+            "default_value": 0
+        }
+    ],
+    "ENCRYPT": "0"
+}

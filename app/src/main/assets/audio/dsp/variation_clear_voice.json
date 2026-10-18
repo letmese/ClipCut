@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "variation_clear_voice",
+    "unique_name": "audio/effect/variation_clear_voice",
+    "params": [
+        {
+            "name": "EffectType",
+            "type": 5,
+            "min_value": 2,
+            "max_value": 2,
+            "default_value": 2
+        }
+    ],
+    "ENCRYPT": "0"
+}

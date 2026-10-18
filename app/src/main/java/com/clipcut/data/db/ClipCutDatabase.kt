@@ -37,7 +37,8 @@ data class ProjectEntity(
     val originalVideoVolume: Float = 1.0f,
     val backgroundMusicVolume: Float = 1.0f,
     val audioDuckingEnabled: Boolean = false,
-    val audioDuckLevel: Float = 0.3f
+    val audioDuckLevel: Float = 0.3f,
+    val brandKitJson: String = ""
 ) {
     private val gson = Gson()
 
@@ -48,6 +49,9 @@ data class ProjectEntity(
         val pips = gson.fromJson<List<PiPTrackItem>>(pipTracksJson, object : TypeToken<List<PiPTrackItem>>() {}.type) ?: emptyList()
         val blurs = gson.fromJson<List<com.clipcut.core.model.BlurTrackItem>>(blurTracksJson, object : TypeToken<List<com.clipcut.core.model.BlurTrackItem>>() {}.type) ?: emptyList()
         val beats = gson.fromJson<List<BeatMarker>>(beatMarkersJson, object : TypeToken<List<BeatMarker>>() {}.type) ?: emptyList()
+        val bk = if (brandKitJson.isNotBlank()) {
+            try { gson.fromJson<com.clipcut.core.model.BrandKitConfig>(brandKitJson, com.clipcut.core.model.BrandKitConfig::class.java) } catch (_: Throwable) { null }
+        } else null
         val ar = com.clipcut.core.model.AspectRatio.fromLabel(aspectRatio)
         return Project(
             id = id, name = name, createdTime = createdTime, lastModifiedTime = lastModifiedTime,
@@ -55,7 +59,8 @@ data class ProjectEntity(
             videoClips = clips, audioTracks = audio, overlays = overlays,
             pipTracks = pips, blurTracks = blurs, beatMarkers = beats,
             originalVideoVolume = originalVideoVolume, backgroundMusicVolume = backgroundMusicVolume,
-            audioDuckingEnabled = audioDuckingEnabled, audioDuckLevel = audioDuckLevel
+            audioDuckingEnabled = audioDuckingEnabled, audioDuckLevel = audioDuckLevel,
+            brandKitConfig = bk
         )
     }
 
@@ -74,7 +79,8 @@ data class ProjectEntity(
             originalVideoVolume = project.originalVideoVolume,
             backgroundMusicVolume = project.backgroundMusicVolume,
             audioDuckingEnabled = project.audioDuckingEnabled,
-            audioDuckLevel = project.audioDuckLevel
+            audioDuckLevel = project.audioDuckLevel,
+            brandKitJson = project.brandKitConfig?.let { gson.toJson(it) } ?: ""
         )
     }
 }
@@ -103,11 +109,14 @@ class ClipCutDatabase private constructor(context: Context) : SQLiteOpenHelper(c
         if (oldV < 2) {
             try { db.execSQL("ALTER TABLE $TBL ADD COLUMN blurTracksJson TEXT DEFAULT '[]'") } catch (_: Throwable) {}
         }
+        if (oldV < 3) {
+            try { db.execSQL("ALTER TABLE $TBL ADD COLUMN brandKitJson TEXT DEFAULT ''") } catch (_: Throwable) {}
+        }
     }
 
     companion object {
         private const val DB_NAME = "clipcut.db"
-        private const val DB_VERSION = 2
+        private const val DB_VERSION = 3
         private const val SQL_CREATE = """
             CREATE TABLE $TBL(
                 id TEXT PRIMARY KEY,
@@ -124,7 +133,8 @@ class ClipCutDatabase private constructor(context: Context) : SQLiteOpenHelper(c
                 originalVideoVolume REAL DEFAULT 1.0,
                 backgroundMusicVolume REAL DEFAULT 1.0,
                 audioDuckingEnabled INTEGER DEFAULT 0,
-                audioDuckLevel REAL DEFAULT 0.3
+                audioDuckLevel REAL DEFAULT 0.3,
+                brandKitJson TEXT DEFAULT ''
             )
         """
         private const val SQL_DROP = "DROP TABLE IF EXISTS $TBL"
@@ -190,7 +200,8 @@ private class ProjectDaoImpl(private val helper: ClipCutDatabase) : ProjectDao {
         originalVideoVolume = c.getFloat(c.getColumnIndexOrThrow("originalVideoVolume")),
         backgroundMusicVolume = c.getFloat(c.getColumnIndexOrThrow("backgroundMusicVolume")),
         audioDuckingEnabled = c.getInt(c.getColumnIndexOrThrow("audioDuckingEnabled")) == 1,
-        audioDuckLevel = c.getFloat(c.getColumnIndexOrThrow("audioDuckLevel"))
+        audioDuckLevel = c.getFloat(c.getColumnIndexOrThrow("audioDuckLevel")),
+        brandKitJson = c.getColumnIndex("brandKitJson").takeIf { it != -1 }?.let { c.getString(it) } ?: ""
     )
 
     private fun entityToCV(e: ProjectEntity) = ContentValues().apply {
@@ -209,5 +220,6 @@ private class ProjectDaoImpl(private val helper: ClipCutDatabase) : ProjectDao {
         put("backgroundMusicVolume", e.backgroundMusicVolume)
         put("audioDuckingEnabled", e.audioDuckingEnabled)
         put("audioDuckLevel", e.audioDuckLevel)
+        put("brandKitJson", e.brandKitJson)
     }
 }

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Filter>
+<GUID>C1C6DE21-8102-4C4A-BCF1-03986A0DEAB3</GUID>
+<Name>Blur Dissolve 1</Name>
+<Transition>1</Transition>
+<GPUFilter>
+<ConfigFile>Blur Dissolve 1.conf</ConfigFile>
+</GPUFilter>
+</Filter>

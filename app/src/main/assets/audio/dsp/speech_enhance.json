@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "speech_enhance",
+    "unique_name": "audio/effect/speech_enhance",
+    "params": [
+        {
+            "name": "atten_lim_db",
+            "type": 5,
+            "min_value": 0,
+            "max_value": 100,
+            "default_value": 80
+        }
+    ],
+    "ENCRYPT": "0"
+}

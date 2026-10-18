@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -113,6 +115,7 @@ fun AudioSheet(
     onPickMusicClick: () -> Unit,
     onDeleteTrack: (String) -> Unit = {},
     onTrimTrack: (String, Long, Long) -> Unit = { _, _, _ -> },
+    onOpenLiveTrimmer: (AudioTrackItem) -> Unit = {},
     onVoiceoverClick: () -> Unit = {},
     onAddAssetAudio: (String, String) -> Unit = { _, _ -> },
     onExtractAudioClick: () -> Unit = {},
@@ -123,6 +126,9 @@ fun AudioSheet(
     var currentlyPlayingPath by remember { mutableStateOf<String?>(null) }
     val mediaPlayerRef = remember { mutableStateOf<android.media.MediaPlayer?>(null) }
 
+    var playingTrackId by remember { mutableStateOf<String?>(null) }
+    val trackPlayerRef = remember { mutableStateOf<android.media.MediaPlayer?>(null) }
+
     DisposableEffect(Unit) {
         onDispose {
             try {
@@ -130,6 +136,57 @@ fun AudioSheet(
                 mediaPlayerRef.value?.release()
             } catch (_: Throwable) {}
             mediaPlayerRef.value = null
+
+            try {
+                trackPlayerRef.value?.stop()
+                trackPlayerRef.value?.release()
+            } catch (_: Throwable) {}
+            trackPlayerRef.value = null
+        }
+    }
+
+    fun playTrackPreview(track: AudioTrackItem) {
+        if (playingTrackId == track.id && trackPlayerRef.value?.isPlaying == true) {
+            try {
+                trackPlayerRef.value?.stop()
+                trackPlayerRef.value?.release()
+            } catch (_: Throwable) {}
+            trackPlayerRef.value = null
+            playingTrackId = null
+            return
+        }
+
+        try {
+            trackPlayerRef.value?.stop()
+            trackPlayerRef.value?.release()
+            trackPlayerRef.value = null
+
+            val mp = android.media.MediaPlayer()
+            val uri = android.net.Uri.parse(track.uri)
+            if (track.uri.startsWith("asset://") || (!track.uri.contains("://") && !track.uri.startsWith("/"))) {
+                val clean = track.uri.removePrefix("asset://").removePrefix("/")
+                val tempFile = java.io.File(ctx.cacheDir, "track_preview.tmp")
+                ctx.assets.open(clean).use { input ->
+                    tempFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                mp.setDataSource(tempFile.absolutePath)
+            } else if (uri.scheme == "content") {
+                mp.setDataSource(ctx, uri)
+            } else {
+                val path = uri.path ?: track.uri
+                mp.setDataSource(path)
+            }
+            mp.setOnCompletionListener {
+                playingTrackId = null
+            }
+            mp.prepare()
+            val startMs = (track.trimStartUs / 1000).toInt()
+            if (startMs > 0) mp.seekTo(startMs)
+            mp.start()
+            playingTrackId = track.id
+            trackPlayerRef.value = mp
+        } catch (_: Throwable) {
+            playingTrackId = null
         }
     }
 
@@ -320,6 +377,7 @@ fun AudioSheet(
                         .background(Surface2)
                         .padding(12.dp)
                 ) {
+                    val isTrackPlaying = (playingTrackId == track.id)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -330,12 +388,41 @@ fun AudioSheet(
                             Text(track.name.ifEmpty { "Audio Track" }, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                             Text("${durSec}s • ${(track.volume * 100).toInt()}% vol", color = TextSecondary, fontSize = 11.sp)
                         }
+                        // Live audition play/pause cut button
+                        IconButton(
+                            onClick = { playTrackPreview(track) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                if (isTrackPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = if (isTrackPlaying) "Pause" else "Play",
+                                tint = AccentPrimary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                         IconButton(
                             onClick = { onDeleteTrack(track.id) },
                             modifier = Modifier.size(36.dp)
                         ) {
                             Icon(Icons.Filled.Delete, contentDescription = "Delete Track", tint = Color(0xFFFF5252), modifier = Modifier.size(20.dp))
                         }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    // Live Trimmer Studio Quick Open Button
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { onOpenLiveTrimmer(track) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(36.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AccentPrimary.copy(alpha = 0.7f)),
+                        colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                            containerColor = AccentPrimary.copy(alpha = 0.12f)
+                        )
+                    ) {
+                        Text("✂️ Open Live Cut & Waveform Studio", color = AccentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
 
                     Spacer(Modifier.height(8.dp))
@@ -4146,8 +4233,8 @@ fun TextSheet(
         Spacer(Modifier.height(10.dp))
 
         // ── LIVE WYSIWYG PREVIEW CARD ──
-        val previewFontFamily = remember(selectedFont, ctx) {
-            com.clipcut.ui.util.FontHelper.getFontFamily(ctx, selectedFont)
+        val previewFontFamily = remember(selectedFont, ctx, text) {
+            com.clipcut.ui.util.FontHelper.getFontFamily(ctx, selectedFont, text)
         }
         val previewBg = if (selectedBgColor != 0L) Color(selectedBgColor) else Color.Transparent
 
@@ -4274,10 +4361,12 @@ fun TextSheet(
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(FontFamilyOption.values().toList()) { font ->
                 val isSel = (selectedFont == font)
-                val fontFam = remember(font, ctx) {
-                    com.clipcut.ui.util.FontHelper.getFontFamily(ctx, font)
+                val fontFam = remember(font, ctx, text) {
+                    com.clipcut.ui.util.FontHelper.getFontFamily(ctx, font, text)
                 }
-                val sampleText = if (text.isNotBlank()) text.take(12) else "Style Aa"
+                val sampleText = remember(font, text) {
+                    com.clipcut.ui.util.FontHelper.getPreviewSample(font, text)
+                }
                 Box(
                     modifier = Modifier
                         .width(112.dp)
@@ -5803,6 +5892,7 @@ fun BrandKitSheet(
     val base = current ?: com.clipcut.core.model.BrandKitConfig()
     var watermarkText by remember { mutableStateOf(base.watermarkText) }
     var tagline by remember { mutableStateOf(base.tagline) }
+    var customLogoUri by remember { mutableStateOf(base.logoUri) }
     var selectedColor by remember { mutableLongStateOf(base.brandColor) }
     var posIndex by remember { mutableIntStateOf(base.watermarkPosIndex) }
     var selectedStyle by remember { mutableStateOf(base.logoStyle) }
@@ -5810,6 +5900,23 @@ fun BrandKitSheet(
     var selectedFont by remember { mutableStateOf(base.fontFamily) }
     var opacity by remember { mutableFloatStateOf(base.opacity) }
     var scale by remember { mutableFloatStateOf(base.watermarkScale) }
+
+    val logoPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        if (uri != null) {
+            try {
+                // Persist file into app private files to guarantee export read access
+                val logoFile = java.io.File(ctx.filesDir, "brand_kit_logo_${System.currentTimeMillis()}.png")
+                ctx.contentResolver.openInputStream(uri)?.use { input ->
+                    logoFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                customLogoUri = logoFile.absolutePath
+            } catch (t: Throwable) {
+                customLogoUri = uri.toString()
+            }
+        }
+    }
 
     val brandColorCompose = Color(selectedColor or 0xFF000000L)
 
@@ -5856,8 +5963,8 @@ fun BrandKitSheet(
 
             // Rendered preview badge
             val displayTitle = watermarkText.ifBlank { "ClipCut Creator" }
-            val fontFam = remember(selectedFont, ctx) {
-                com.clipcut.ui.util.FontHelper.getFontFamily(ctx, selectedFont)
+            val fontFam = remember(selectedFont, ctx, watermarkText) {
+                com.clipcut.ui.util.FontHelper.getFontFamily(ctx, selectedFont, watermarkText)
             }
 
             Box(
@@ -5914,7 +6021,30 @@ fun BrandKitSheet(
                         )
                     }
 
-                    if (selectedIcon != BrandIconType.NONE && selectedIcon.glyph.isNotEmpty()) {
+                    if (!customLogoUri.isNullOrBlank()) {
+                        val customBmp = remember(customLogoUri) {
+                            try {
+                                val u = customLogoUri!!
+                                if (u.startsWith("content://")) {
+                                    ctx.contentResolver.openInputStream(android.net.Uri.parse(u))?.use {
+                                        android.graphics.BitmapFactory.decodeStream(it)
+                                    }
+                                } else {
+                                    val path = if (u.startsWith("file://")) android.net.Uri.parse(u).path ?: u.removePrefix("file://") else u
+                                    android.graphics.BitmapFactory.decodeFile(path)
+                                }
+                            } catch (_: Throwable) { null }
+                        }
+                        if (customBmp != null) {
+                            androidx.compose.foundation.Image(
+                                bitmap = customBmp.asImageBitmap(),
+                                contentDescription = "Logo",
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                            )
+                        }
+                    } else if (selectedIcon != BrandIconType.NONE && selectedIcon.glyph.isNotEmpty()) {
                         Box(
                             modifier = Modifier
                                 .size(22.dp)
@@ -6058,16 +6188,58 @@ fun BrandKitSheet(
 
         Spacer(Modifier.height(14.dp))
 
-        // ── 4. Creator & Social Icons ──
+        // ── 4. Creator & Social Icons or Custom Brand Logo ──
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Creator & Social Badge Icons", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Text(selectedIcon.label, color = AccentPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            if (!customLogoUri.isNullOrBlank()) {
+                TextButton(onClick = { customLogoUri = null }) {
+                    Text("Clear Custom Logo", color = AccentPrimary, fontSize = 10.sp)
+                }
+            } else {
+                Text(selectedIcon.label, color = AccentPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
         }
         Spacer(Modifier.height(6.dp))
+
+        // Upload custom logo button
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(if (!customLogoUri.isNullOrBlank()) AccentPrimary.copy(alpha = 0.2f) else Surface2)
+                .border(
+                    width = if (!customLogoUri.isNullOrBlank()) 1.5.dp else 1.dp,
+                    color = if (!customLogoUri.isNullOrBlank()) AccentPrimary else HairlineBorder,
+                    shape = RoundedCornerShape(10.dp)
+                )
+                .clickable { logoPickerLauncher.launch("image/*") }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(20.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (!customLogoUri.isNullOrBlank()) "Custom Logo Attached" else "Upload Custom Brand Logo / Avatar",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = if (!customLogoUri.isNullOrBlank()) "Tap to replace logo image (PNG/WEBP/JPG)" else "Import transparent PNG or icon from device gallery",
+                    color = TextSecondary,
+                    fontSize = 10.sp
+                )
+            }
+            if (!customLogoUri.isNullOrBlank()) {
+                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(18.dp))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
 
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(BrandIconType.values().toList()) { icon ->
@@ -6115,8 +6287,17 @@ fun BrandKitSheet(
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(FontFamilyOption.values().toList()) { font ->
                 val isSel = selectedFont == font
-                val fontFam = remember(font, ctx) {
-                    com.clipcut.ui.util.FontHelper.getFontFamily(ctx, font)
+                val fontFam = remember(font, ctx, watermarkText) {
+                    com.clipcut.ui.util.FontHelper.getFontFamily(ctx, font, watermarkText)
+                }
+                val sampleGlyph = remember(font, watermarkText) {
+                    if (watermarkText.isNotBlank()) {
+                        watermarkText.take(4)
+                    } else when (font) {
+                        FontFamilyOption.URDU_NASTALIQ -> "اردو"
+                        FontFamilyOption.ARABIC_AMIRI, FontFamilyOption.ARABIC_MODERN, FontFamilyOption.ARABIC_KUFI -> "عربي"
+                        else -> "Aa"
+                    }
                 }
                 Box(
                     modifier = Modifier
@@ -6134,7 +6315,7 @@ fun BrandKitSheet(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "Aa",
+                            text = sampleGlyph,
                             fontFamily = fontFam,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
@@ -6305,6 +6486,7 @@ fun BrandKitSheet(
                 onApply(
                     com.clipcut.core.model.BrandKitConfig(
                         brandColor = selectedColor,
+                        logoUri = customLogoUri,
                         watermarkText = watermarkText,
                         tagline = tagline,
                         watermarkPosIndex = posIndex,
@@ -6312,7 +6494,7 @@ fun BrandKitSheet(
                         opacity = opacity,
                         fontFamily = selectedFont,
                         logoStyle = selectedStyle,
-                        iconType = selectedIcon
+                        iconType = if (!customLogoUri.isNullOrBlank()) BrandIconType.NONE else selectedIcon
                     )
                 )
                 onDismiss()
@@ -6781,6 +6963,646 @@ fun AudioExtractorSheet(
         }
 
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+// ── LiveAudioTrimmerSheet (Live Audition & Waveform Trimmer) ──────────────
+@Composable
+fun LiveAudioTrimmerSheet(
+    audioUri: android.net.Uri? = null,
+    existingTrack: com.clipcut.core.model.AudioTrackItem? = null,
+    onAddTrack: (uri: android.net.Uri, name: String, startUs: Long, endUs: Long, durationUs: Long) -> Unit,
+    onUpdateTrack: ((id: String, startUs: Long, endUs: Long) -> Unit)? = null,
+    onDismiss: () -> Unit
+) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+
+    val effectiveUri = remember(audioUri, existingTrack) {
+        audioUri ?: existingTrack?.uri?.let { android.net.Uri.parse(it) }
+    }
+
+    var trackTitle by remember(effectiveUri, existingTrack) {
+        val initialName = existingTrack?.name
+        if (!initialName.isNullOrBlank()) {
+            mutableStateOf(initialName)
+        } else if (audioUri != null) {
+            var resolved = "Custom Audio Track"
+            try {
+                ctx.contentResolver.query(audioUri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                    if (it.moveToFirst()) {
+                        val idx = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (idx != -1) {
+                            val n = it.getString(idx)
+                            if (!n.isNullOrBlank()) resolved = n
+                        }
+                    }
+                }
+            } catch (_: Throwable) {}
+            mutableStateOf(resolved)
+        } else {
+            mutableStateOf("Audio Track")
+        }
+    }
+
+    var totalDurationMs by remember(effectiveUri, existingTrack) {
+        val durFromTrack = existingTrack?.sourceDurationUs?.div(1000L) ?: 0L
+        if (durFromTrack > 0L) {
+            mutableLongStateOf(durFromTrack)
+        } else {
+            var dur = 10_000L
+            if (effectiveUri != null) {
+                try {
+                    val retriever = android.media.MediaMetadataRetriever()
+                    if (effectiveUri.scheme == "content") {
+                        retriever.setDataSource(ctx, effectiveUri)
+                    } else {
+                        val path = effectiveUri.path ?: effectiveUri.toString()
+                        if (path.startsWith("asset://")) {
+                            val clean = path.removePrefix("asset://").removePrefix("/")
+                            val tempFile = java.io.File(ctx.cacheDir, "meta_temp.tmp")
+                            ctx.assets.open(clean).use { input -> tempFile.outputStream().use { input.copyTo(it) } }
+                            retriever.setDataSource(tempFile.absolutePath)
+                        } else {
+                            retriever.setDataSource(path)
+                        }
+                    }
+                    val dStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    retriever.release()
+                    dur = dStr?.toLongOrNull() ?: 10_000L
+                } catch (_: Throwable) {}
+            }
+            mutableLongStateOf(dur.coerceAtLeast(1000L))
+        }
+    }
+
+    var trimStartMs by remember(existingTrack, totalDurationMs) {
+        val st = (existingTrack?.trimStartUs ?: 0L) / 1000L
+        mutableLongStateOf(st.coerceIn(0L, totalDurationMs))
+    }
+
+    var trimEndMs by remember(existingTrack, totalDurationMs) {
+        val ed = if (existingTrack != null && existingTrack.trimEndUs > 0L) {
+            existingTrack.trimEndUs / 1000L
+        } else {
+            totalDurationMs
+        }
+        mutableLongStateOf(ed.coerceIn(trimStartMs + 100L, totalDurationMs))
+    }
+
+    var currentPlayPosMs by remember(trimStartMs) { mutableLongStateOf(trimStartMs) }
+    var isPlaying by remember { mutableStateOf(false) }
+    var isLoopingCut by remember { mutableStateOf(true) }
+    var isAuditionOnlyCut by remember { mutableStateOf(true) }
+    val mediaPlayerRef = remember { mutableStateOf<android.media.MediaPlayer?>(null) }
+
+    fun formatMs(ms: Long): String {
+        val s = (ms / 1000L).coerceAtLeast(0L)
+        val m = s / 60L
+        val sec = s % 60L
+        val tenths = ((ms.coerceAtLeast(0L) % 1000L) / 100L)
+        return String.format(java.util.Locale.US, "%02d:%02d.%d", m, sec, tenths)
+    }
+
+    DisposableEffect(effectiveUri) {
+        if (effectiveUri != null) {
+            try {
+                val mp = android.media.MediaPlayer()
+                if (effectiveUri.scheme == "content") {
+                    mp.setDataSource(ctx, effectiveUri)
+                } else {
+                    val path = effectiveUri.path ?: effectiveUri.toString()
+                    if (path.startsWith("asset://") || (!path.contains("://") && !path.startsWith("/"))) {
+                        val clean = path.removePrefix("asset://").removePrefix("/")
+                        val tempFile = java.io.File(ctx.cacheDir, "trimmer_preview.tmp")
+                        ctx.assets.open(clean).use { input -> tempFile.outputStream().use { input.copyTo(it) } }
+                        mp.setDataSource(tempFile.absolutePath)
+                    } else {
+                        mp.setDataSource(path)
+                    }
+                }
+                mp.prepare()
+                val dur = mp.duration.toLong()
+                if (dur > 0L && totalDurationMs <= 10_000L) {
+                    totalDurationMs = dur
+                    if (trimEndMs <= 10_000L || trimEndMs > dur) trimEndMs = dur
+                }
+                mp.seekTo(trimStartMs.toInt())
+                mediaPlayerRef.value = mp
+            } catch (_: Throwable) {}
+        }
+
+        onDispose {
+            try {
+                mediaPlayerRef.value?.stop()
+                mediaPlayerRef.value?.release()
+            } catch (_: Throwable) {}
+            mediaPlayerRef.value = null
+            isPlaying = false
+        }
+    }
+
+    fun seekAudio(toMs: Long) {
+        val clamped = toMs.coerceIn(0L, totalDurationMs)
+        currentPlayPosMs = clamped
+        try {
+            val mp = mediaPlayerRef.value ?: return
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                mp.seekTo(clamped, android.media.MediaPlayer.SEEK_CLOSEST)
+            } else {
+                mp.seekTo(clamped.toInt())
+            }
+        } catch (_: Throwable) {}
+    }
+
+    fun togglePlayback() {
+        val mp = mediaPlayerRef.value ?: return
+        try {
+            if (mp.isPlaying) {
+                mp.pause()
+                isPlaying = false
+            } else {
+                if (isAuditionOnlyCut) {
+                    if (currentPlayPosMs < trimStartMs || currentPlayPosMs >= trimEndMs) {
+                        seekAudio(trimStartMs)
+                    }
+                }
+                mp.start()
+                isPlaying = true
+            }
+        } catch (_: Throwable) {}
+    }
+
+    LaunchedEffect(isPlaying, isAuditionOnlyCut, isLoopingCut, trimStartMs, trimEndMs) {
+        while (isActive && isPlaying) {
+            val mp = mediaPlayerRef.value
+            if (mp != null && mp.isPlaying) {
+                val pos = mp.currentPosition.toLong()
+                currentPlayPosMs = pos
+
+                if (isAuditionOnlyCut && pos >= trimEndMs) {
+                    if (isLoopingCut) {
+                        mp.seekTo(trimStartMs.toInt())
+                        currentPlayPosMs = trimStartMs
+                    } else {
+                        mp.pause()
+                        mp.seekTo(trimStartMs.toInt())
+                        currentPlayPosMs = trimStartMs
+                        isPlaying = false
+                    }
+                }
+            } else if (mp != null && !mp.isPlaying && isPlaying) {
+                isPlaying = false
+            }
+            kotlinx.coroutines.delay(35)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 24.dp)
+    ) {
+        SheetHeader(
+            if (existingTrack != null) "Live Audio Trimmer (Audition & Cut)" else "Live Custom Audio Preview & Cut",
+            onDismiss
+        )
+        Spacer(Modifier.height(10.dp))
+
+        // Track Info Card
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Surface2)
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(AccentPrimary.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Audiotrack, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(24.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(trackTitle, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "Total Duration: ${formatMs(totalDurationMs)} • Drag waveform to audition",
+                    color = TextSecondary,
+                    fontSize = 11.sp
+                )
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // Interactive Audio Waveform & Cut Segment Visualizer
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(84.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFF13151D))
+                .border(1.dp, HairlineBorder, RoundedCornerShape(12.dp))
+                .pointerInput(totalDurationMs) {
+                    detectTapGestures { offset ->
+                        val ratio = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                        val targetMs = (ratio * totalDurationMs).toLong()
+                        seekAudio(targetMs)
+                    }
+                }
+                .pointerInput(totalDurationMs) {
+                    detectDragGestures { change, _ ->
+                        change.consume()
+                        val ratio = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+                        val targetMs = (ratio * totalDurationMs).toLong()
+                        seekAudio(targetMs)
+                    }
+                }
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                val barCount = 54
+                val barWidth = (w / barCount) * 0.65f
+                val barSpacing = w / barCount
+
+                val startRatio = (trimStartMs.toFloat() / totalDurationMs).coerceIn(0f, 1f)
+                val endRatio = (trimEndMs.toFloat() / totalDurationMs).coerceIn(startRatio, 1f)
+                val playheadRatio = (currentPlayPosMs.toFloat() / totalDurationMs).coerceIn(0f, 1f)
+
+                // Draw simulated waveform bars
+                for (i in 0 until barCount) {
+                    val barCenterRatio = (i + 0.5f) / barCount
+                    val isInsideCut = barCenterRatio in startRatio..endRatio
+                    val barH = (0.28f + 0.65f * kotlin.math.abs(kotlin.math.sin(i * 0.44f) * kotlin.math.cos(i * 0.23f))) * (h * 0.70f)
+                    val x = i * barSpacing + (barSpacing - barWidth) / 2f
+                    val y = (h - barH) / 2f
+
+                    drawRoundRect(
+                        color = if (isInsideCut) Color(0xFF00E5FF) else Color(0xFF2C3246),
+                        topLeft = Offset(x, y),
+                        size = Size(barWidth, barH),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f, 4f)
+                    )
+                }
+
+                // Shaded cut-off zones
+                val cutStartX = startRatio * w
+                val cutEndX = endRatio * w
+                if (cutStartX > 0f) {
+                    drawRect(
+                        color = Color.Black.copy(alpha = 0.55f),
+                        topLeft = Offset(0f, 0f),
+                        size = Size(cutStartX, h)
+                    )
+                }
+                if (cutEndX < w) {
+                    drawRect(
+                        color = Color.Black.copy(alpha = 0.55f),
+                        topLeft = Offset(cutEndX, 0f),
+                        size = Size(w - cutEndX, h)
+                    )
+                }
+
+                // Active cut selection highlight
+                drawRect(
+                    color = Color(0xFF00E5FF).copy(alpha = 0.12f),
+                    topLeft = Offset(cutStartX, 0f),
+                    size = Size(cutEndX - cutStartX, h)
+                )
+
+                // Start Marker Line
+                drawLine(
+                    color = Color(0xFF00E676),
+                    start = Offset(cutStartX, 0f),
+                    end = Offset(cutStartX, h),
+                    strokeWidth = 3.dp.toPx()
+                )
+
+                // End Marker Line
+                drawLine(
+                    color = Color(0xFFFF5252),
+                    start = Offset(cutEndX, 0f),
+                    end = Offset(cutEndX, h),
+                    strokeWidth = 3.dp.toPx()
+                )
+
+                // Playhead line
+                val playheadX = playheadRatio * w
+                drawLine(
+                    color = Color(0xFFFFEB3B),
+                    start = Offset(playheadX, 0f),
+                    end = Offset(playheadX, h),
+                    strokeWidth = 2.5.dp.toPx()
+                )
+                drawCircle(
+                    color = Color(0xFFFFEB3B),
+                    radius = 4.dp.toPx(),
+                    center = Offset(playheadX, 6.dp.toPx())
+                )
+            }
+
+            // In / Out Marker labels
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                Text("[ IN ${formatMs(trimStartMs)}", color = Color(0xFF00E676), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text("OUT ${formatMs(trimEndMs)} ]", color = Color(0xFFFF5252), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        // Time indicator row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Playhead: ${formatMs(currentPlayPosMs)} / ${formatMs(totalDurationMs)}",
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium
+            )
+            val cutDurMs = (trimEndMs - trimStartMs).coerceAtLeast(0L)
+            Text(
+                "Cut Length: ${formatMs(cutDurMs)}",
+                color = AccentPrimary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // Live Audition Controls Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Surface2)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = { seekAudio(trimStartMs) },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(Icons.Filled.SkipPrevious, contentDescription = "To Start", tint = Color.White, modifier = Modifier.size(24.dp))
+            }
+
+            IconButton(
+                onClick = { togglePlayback() },
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(AccentPrimary)
+            ) {
+                Icon(
+                    if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (isPlaying) "Pause" else "Play",
+                    tint = Color.Black,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+
+            IconButton(
+                onClick = { seekAudio((trimEndMs - 1000L).coerceAtLeast(0L)) },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(Icons.Filled.SkipNext, contentDescription = "To End", tint = Color.White, modifier = Modifier.size(24.dp))
+            }
+
+            FilterChip(
+                selected = isAuditionOnlyCut,
+                onClick = {
+                    isAuditionOnlyCut = !isAuditionOnlyCut
+                    if (isAuditionOnlyCut && (currentPlayPosMs < trimStartMs || currentPlayPosMs >= trimEndMs)) {
+                        seekAudio(trimStartMs)
+                    }
+                },
+                label = { Text(if (isAuditionOnlyCut) "Cut Only" else "Full Track", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = AccentPrimary.copy(alpha = 0.25f),
+                    selectedLabelColor = AccentPrimary
+                )
+            )
+
+            FilterChip(
+                selected = isLoopingCut,
+                onClick = { isLoopingCut = !isLoopingCut },
+                label = { Text("🔁 Loop", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = AccentPrimary.copy(alpha = 0.25f),
+                    selectedLabelColor = AccentPrimary
+                )
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Start Cut (In-Point) Slider & Nudges
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(Surface2)
+                .padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF00E676)))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Start Cut (In Point)", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Text(formatMs(trimStartMs), color = Color(0xFF00E676), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Slider(
+                value = trimStartMs.toFloat(),
+                onValueChange = { newStart ->
+                    trimStartMs = newStart.toLong().coerceIn(0L, (trimEndMs - 200L).coerceAtLeast(0L))
+                    seekAudio(trimStartMs)
+                },
+                valueRange = 0f..totalDurationMs.toFloat(),
+                colors = SliderDefaults.colors(
+                    thumbColor = Color(0xFF00E676),
+                    activeTrackColor = Color(0xFF00E676)
+                ),
+                modifier = Modifier.fillMaxWidth().height(32.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(-1000L to "-1.0s", -100L to "-0.1s", 100L to "+0.1s", 1000L to "+1.0s").forEach { (delta, label) ->
+                    OutlinedButton(
+                        onClick = {
+                            val target = (trimStartMs + delta).coerceIn(0L, (trimEndMs - 100L).coerceAtLeast(0L))
+                            trimStartMs = target
+                            seekAudio(target)
+                        },
+                        modifier = Modifier.weight(1f).height(28.dp),
+                        contentPadding = PaddingValues(0.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, HairlineBorder)
+                    ) {
+                        Text(label, fontSize = 10.sp, color = Color.White)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        // End Cut (Out-Point) Slider & Nudges
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(Surface2)
+                .padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFFF5252)))
+                    Spacer(Modifier.width(6.dp))
+                    Text("End Cut (Out Point)", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Text(formatMs(trimEndMs), color = Color(0xFFFF5252), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Slider(
+                value = trimEndMs.toFloat(),
+                onValueChange = { newEnd ->
+                    trimEndMs = newEnd.toLong().coerceIn((trimStartMs + 200L).coerceAtMost(totalDurationMs), totalDurationMs)
+                },
+                valueRange = 0f..totalDurationMs.toFloat(),
+                colors = SliderDefaults.colors(
+                    thumbColor = Color(0xFFFF5252),
+                    activeTrackColor = Color(0xFFFF5252)
+                ),
+                modifier = Modifier.fillMaxWidth().height(32.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(-1000L to "-1.0s", -100L to "-0.1s", 100L to "+0.1s", 1000L to "+1.0s").forEach { (delta, label) ->
+                    OutlinedButton(
+                        onClick = {
+                            val target = (trimEndMs + delta).coerceIn((trimStartMs + 100L).coerceAtMost(totalDurationMs), totalDurationMs)
+                            trimEndMs = target
+                            seekAudio((target - 1500L).coerceAtLeast(trimStartMs))
+                        },
+                        modifier = Modifier.weight(1f).height(28.dp),
+                        contentPadding = PaddingValues(0.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, HairlineBorder)
+                    ) {
+                        Text(label, fontSize = 10.sp, color = Color.White)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        // Quick Presets
+        Text("Quick Cut Presets", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf(5L to "5s", 10L to "10s", 15L to "15s", 30L to "30s", 60L to "60s").forEach { (sec, label) ->
+                OutlinedButton(
+                    onClick = {
+                        val durTargetMs = sec * 1000L
+                        trimEndMs = (trimStartMs + durTargetMs).coerceAtMost(totalDurationMs)
+                        seekAudio(trimStartMs)
+                    },
+                    modifier = Modifier.weight(1f).height(30.dp),
+                    contentPadding = PaddingValues(0.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(1.dp, HairlineBorder)
+                ) {
+                    Text(label, fontSize = 11.sp, color = Color.White)
+                }
+            }
+            OutlinedButton(
+                onClick = {
+                    trimStartMs = 0L
+                    trimEndMs = totalDurationMs
+                    seekAudio(0L)
+                },
+                modifier = Modifier.weight(1.2f).height(30.dp),
+                contentPadding = PaddingValues(0.dp),
+                shape = RoundedCornerShape(6.dp),
+                border = BorderStroke(1.dp, HairlineBorder)
+            ) {
+                Text("Full Track", fontSize = 11.sp, color = AccentPrimary)
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // Action Buttons Row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            SecondaryButton(
+                text = "Cancel",
+                onClick = onDismiss,
+                modifier = Modifier.weight(1f)
+            )
+            PrimaryButton(
+                text = if (existingTrack != null) "✓ Apply Cut" else "+ Add Cut to Video",
+                onClick = {
+                    try {
+                        mediaPlayerRef.value?.stop()
+                        mediaPlayerRef.value?.release()
+                    } catch (_: Throwable) {}
+                    mediaPlayerRef.value = null
+                    isPlaying = false
+
+                    val startUs = trimStartMs * 1000L
+                    val endUs = trimEndMs * 1000L
+                    val durUs = totalDurationMs * 1000L
+
+                    if (existingTrack != null && onUpdateTrack != null) {
+                        onUpdateTrack(existingTrack.id, startUs, endUs)
+                    } else if (audioUri != null) {
+                        onAddTrack(audioUri, trackTitle, startUs, endUs, durUs)
+                    }
+                },
+                icon = Icons.Filled.Check,
+                modifier = Modifier.weight(1.5f)
+            )
+        }
     }
 }
 

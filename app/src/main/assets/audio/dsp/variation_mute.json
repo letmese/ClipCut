@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "variation_mute",
+    "unique_name": "audio/effect/variation_mute",
+    "params": [
+        {
+            "name": "EffectType",
+            "type": 5,
+            "min_value": 4,
+            "max_value": 4,
+            "default_value": 4
+        }
+    ],
+    "ENCRYPT": "0"
+}

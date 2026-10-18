@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "voice_change_water",
+    "unique_name": "audio/effect/voice_change_water",
+    "params": [
+        {
+            "name": "VoiceChange_Type",
+            "type": 5,
+            "min_value": 10,
+            "max_value": 10,
+            "default_value": 10
+        }
+    ],
+    "ENCRYPT": "0"
+}

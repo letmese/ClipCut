@@ -1,0 +1,7 @@
+{
+    "type": "audio_effect",
+    "display_name": "audio_church",
+    "unique_name": "audio/effect/audio_church",
+    "params": [],
+    "ENCRYPT": "0"
+}

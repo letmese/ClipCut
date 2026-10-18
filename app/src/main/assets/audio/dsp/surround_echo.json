@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "surround_echo",
+    "unique_name": "audio/effect/surround_echo",
+    "params": [
+        {
+            "name": "Mode",
+            "type": 5,
+            "min_value": 1,
+            "max_value": 1,
+            "default_value": 1
+        }
+    ],
+    "ENCRYPT": "0"
+}

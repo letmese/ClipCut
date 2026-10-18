@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+        <Filter>
+        <GUID>108D84A2-AE20-4A99-A4FD-1EA595812893</GUID>
+        <Name>Fast Spin2</Name>
+        <Transition>1</Transition>
+        <GPUFilter>
+    	<ConfigFile>Fast Spin2.conf</ConfigFile>
+    	</GPUFilter>
+    	</Filter>
+    	

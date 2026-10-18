@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "audio_desert",
+    "unique_name": "audio/effect/audio_desert",
+    "params": [
+        {
+            "name": "effect_type",
+            "type": 5,
+            "min_value": 4,
+            "max_value": 4,
+            "default_value": 4
+        }
+    ],
+    "ENCRYPT": "0"
+}

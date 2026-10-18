@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "variation_high_resolution_voice",
+    "unique_name": "audio/effect/variation_high_resolution_voice",
+    "params": [
+        {
+            "name": "EffectType",
+            "type": 5,
+            "min_value": 3,
+            "max_value": 3,
+            "default_value": 3
+        }
+    ],
+    "ENCRYPT": "0"
+}

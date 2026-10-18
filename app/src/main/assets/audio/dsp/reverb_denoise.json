@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "reverb_denoise",
+    "unique_name": "audio/effect/reverb_denoise",
+    "params": [
+        {
+            "name": "Level",
+            "type": 5,
+            "min_value": 0,
+            "max_value": 100,
+            "default_value": 70
+        }
+    ],
+    "ENCRYPT": "0"
+}

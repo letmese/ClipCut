@@ -1,0 +1,22 @@
+{
+    "type": "audio_effect",
+    "display_name": "change_channel",
+    "unique_name": "audio/effect/change_channel",
+    "params": [
+        {
+            "name": "Left",
+            "type": 5,
+            "min_value": 1,
+            "max_value": 2,
+            "default_value": 1
+        },
+        {
+            "name": "Right",
+            "type": 5,
+            "min_value": 1,
+            "max_value": 2,
+            "default_value": 2
+        }
+    ],
+    "ENCRYPT": "0"
+}

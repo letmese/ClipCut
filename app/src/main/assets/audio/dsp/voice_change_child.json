@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "voice_change_child",
+    "unique_name": "audio/effect/voice_change_child",
+    "params": [
+        {
+            "name": "VoiceChange_Type",
+            "type": 5,
+            "min_value": 3,
+            "max_value": 3,
+            "default_value": 3
+        }
+    ],
+    "ENCRYPT": "0"
+}

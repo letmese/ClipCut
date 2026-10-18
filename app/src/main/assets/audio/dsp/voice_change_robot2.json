@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "voice_change_robot2",
+    "unique_name": "audio/effect/voice_change_robot2",
+    "params": [
+        {
+            "name": "VoiceChange_Type",
+            "type": 5,
+            "min_value": 12,
+            "max_value": 12,
+            "default_value": 12
+        }
+    ],
+    "ENCRYPT": "0"
+}

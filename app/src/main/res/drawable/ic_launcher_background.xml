@@ -6,7 +6,7 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Premium dark gradient canvas backdrop -->
+    <!-- Deep obsidian matte background -->
     <path
         android:pathData="M0,0 L108,0 L108,108 L0,108 Z">
         <aapt:attr name="android:fillColor">
@@ -16,43 +16,43 @@
                 android:endX="108"
                 android:endY="108"
                 android:type="linear">
-                <item android:color="#FF1A1028" android:offset="0.0" />
-                <item android:color="#FF0D0B14" android:offset="0.55" />
-                <item android:color="#FF07080F" android:offset="1.0" />
+                <item android:color="#FF161C26" android:offset="0.0" />
+                <item android:color="#FF0D111A" android:offset="0.5" />
+                <item android:color="#FF06080D" android:offset="1.0" />
             </gradient>
         </aapt:attr>
     </path>
 
-    <!-- Subtle radial glow behind the emblem -->
+    <!-- Warm amber radial flare from traffic signal light -->
     <path
-        android:pathData="M54,54m-42,0a42,42 0,1 1,84 0a42,42 0,1 1,-84 0">
+        android:pathData="M54,54m-46,0a46,46 0,1 1,92 0a46,46 0,1 1,-92 0">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:centerX="54"
                 android:centerY="54"
-                android:gradientRadius="42"
+                android:gradientRadius="46"
                 android:type="radial">
-                <item android:color="#33FF007F" android:offset="0.0" />
-                <item android:color="#1A7B2CBF" android:offset="0.6" />
+                <item android:color="#33FFB300" android:offset="0.0" />
+                <item android:color="#1A00E5FF" android:offset="0.65" />
                 <item android:color="#00000000" android:offset="1.0" />
             </gradient>
         </aapt:attr>
     </path>
 
-    <!-- Stylized Cine-Film Ribbon Ring / Glow border -->
+    <!-- Subtle technical reticle ring -->
     <path
-        android:strokeWidth="1.2"
-        android:pathData="M32,24 C40,20 68,20 76,24 C86,29 88,40 88,54 C88,68 86,79 76,84 C68,88 40,88 32,84 C22,79 20,68 20,54 C20,40 22,29 32,24 Z">
+        android:strokeWidth="0.8"
+        android:pathData="M54,54m-38,0a38,38 0,1 1,76 0a38,38 0,1 1,-76 0">
         <aapt:attr name="android:strokeColor">
             <gradient
-                android:startX="20"
-                android:startY="20"
-                android:endX="88"
-                android:endY="88"
+                android:startX="16"
+                android:startY="16"
+                android:endX="92"
+                android:endY="92"
                 android:type="linear">
-                <item android:color="#55FF3366" android:offset="0.0" />
-                <item android:color="#447928CA" android:offset="0.5" />
-                <item android:color="#3300F5D4" android:offset="1.0" />
+                <item android:color="#3300E5FF" android:offset="0.0" />
+                <item android:color="#15FFFFFF" android:offset="0.5" />
+                <item android:color="#33FFB300" android:offset="1.0" />
             </gradient>
         </aapt:attr>
     </path>

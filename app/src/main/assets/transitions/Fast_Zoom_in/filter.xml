@@ -1,0 +1,11 @@
+
+        <?xml version="1.0" encoding="utf-8"?>
+        <Filter>
+        <GUID>BAB3F817-8CCA-4E6C-9BFB-1CB5ECFF079E</GUID>
+        <Name>Fast Zoom in</Name>
+        <Transition>1</Transition>
+        <GPUFilter>
+    	<ConfigFile>Fast Zoom in.conf</ConfigFile>
+    	</GPUFilter>
+    	</Filter>
+    	

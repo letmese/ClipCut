@@ -821,6 +821,61 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun addAudioTrackWithTrim(uri: Uri, displayName: String, startUs: Long, endUs: Long, sourceDurUs: Long = 0L) {
+        val app = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            val audioDir = java.io.File(app.filesDir, "audio_tracks").apply { mkdirs() }
+            val cleanExt = displayName.substringAfterLast('.', "mp3")
+            val destFile = java.io.File(audioDir, "audio_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}.$cleanExt")
+            try {
+                app.contentResolver.openInputStream(uri)?.use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            } catch (t: Throwable) {
+                AppLog.e(TAG, "Failed to copy audio track to local filesDir", t)
+            }
+
+            val targetFileOrUri = if (destFile.exists() && destFile.length() > 0) {
+                android.net.Uri.fromFile(destFile).toString()
+            } else {
+                uri.toString()
+            }
+
+            val durationUs = if (sourceDurUs > 0) sourceDurUs else {
+                try {
+                    val retriever = android.media.MediaMetadataRetriever()
+                    if (destFile.exists() && destFile.length() > 0) {
+                        retriever.setDataSource(destFile.absolutePath)
+                    } else {
+                        retriever.setDataSource(app, uri)
+                    }
+                    val durStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    retriever.release()
+                    (durStr?.toLongOrNull() ?: 5_000L) * 1000L
+                } catch (t: Throwable) {
+                    AppLog.w(TAG, "extract audio duration failed: ${t.message}")
+                    5_000_000L
+                }
+            }
+
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                val finalStartUs = startUs.coerceIn(0L, durationUs)
+                val finalEndUs = if (endUs > finalStartUs) endUs.coerceAtMost(durationUs) else durationUs
+                val item = AudioTrackItem(
+                    uri = targetFileOrUri,
+                    name = displayName,
+                    sourceDurationUs = durationUs,
+                    timelineStartUs = 0L,
+                    trimStartUs = finalStartUs,
+                    trimEndUs = finalEndUs
+                )
+                addAudioTrack(item)
+            }
+        }
+    }
+
     fun addAssetAudioTrack(assetPath: String, displayName: String) {
         val app = getApplication<Application>()
         viewModelScope.launch(Dispatchers.IO) {

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Filter>
+<GUID>8A7E9212-F9C2-4A90-BB48-28EE57AB4724</GUID>
+<Name>Slow Zoom</Name>
+<Transition>1</Transition>
+<GPUFilter>
+<ConfigFile>Slow Zoom.conf</ConfigFile>
+</GPUFilter>
+</Filter>
+    	

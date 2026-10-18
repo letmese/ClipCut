@@ -1,0 +1,29 @@
+{
+    "type": "audio_effect",
+    "display_name": "ducking",
+    "unique_name": "audio/effect/ducking",
+    "params": [
+        {
+            "name": "DuckingLevel",
+            "type": 3,
+            "min_value": 0.0,
+            "max_value": 1.0,
+            "default_value": 0.5
+        },
+        {
+            "name": "DuckingFadeLength",
+            "type": 3,
+            "min_value": 0.0,
+            "max_value": 5.0,
+            "default_value": 2.0
+        },
+        {
+            "name": "DuckingOffset",
+            "type": 3,
+            "min_value": 0.0,
+            "max_value": 1.0,
+            "default_value": 0.0
+        }
+    ],
+    "ENCRYPT": "0"
+}

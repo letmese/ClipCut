@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "audio_phonograph",
+    "unique_name": "audio/effect/audio_phonograph",
+    "params": [
+        {
+            "name": "level_strength",
+            "type": 5,
+            "min_value": 0,
+            "max_value": 10,
+            "default_value": 10
+        }
+    ],
+    "ENCRYPT": "0"
+}

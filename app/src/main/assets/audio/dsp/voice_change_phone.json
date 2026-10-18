@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "voice_change_phone",
+    "unique_name": "audio/effect/voice_change_phone",
+    "params": [
+        {
+            "name": "VoiceChange_Type",
+            "type": 5,
+            "min_value": 8,
+            "max_value": 8,
+            "default_value": 8
+        }
+    ],
+    "ENCRYPT": "0"
+}

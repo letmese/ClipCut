@@ -1,0 +1,36 @@
+{
+    "type": "audio_effect",
+    "display_name": "compressor",
+    "unique_name": "audio/effect/compressor",
+    "params": [
+        {
+            "name": "Threshold",
+            "type": 3,
+            "min_value": -30.0,
+            "max_value": 0.0,
+            "default_value": -21.0
+        },
+        {
+            "name": "Ratio",
+            "type": 3,
+            "min_value": 1.0,
+            "max_value": 20.0,
+            "default_value": 5.0
+        },
+        {
+            "name": "Attack_time",
+            "type": 3,
+            "min_value": 1.5,
+            "max_value": 400.0,
+            "default_value": 1.5
+        },
+        {
+            "name": "Release_time",
+            "type": 3,
+            "min_value": 2.0,
+            "max_value": 800.0,
+            "default_value": 2.0
+        }
+    ],
+    "ENCRYPT": "0"
+}

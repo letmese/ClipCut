@@ -1,0 +1,29 @@
+{
+    "type": "audio_effect",
+    "display_name": "clip_volume",
+    "unique_name": "audio/effect/clip_volume",
+    "params": [
+        {
+            "name": "VolumeGain",
+            "type": 2,
+            "min_value": -100.0,
+            "max_value": 100.0,
+            "default_value": 0
+        },
+        {
+            "name": "Agc",
+            "type": 1,
+            "min_value": false,
+            "max_value": true,
+            "default_value": false
+        },
+		{
+            "name": "Limit",
+            "type": 1,
+            "min_value": false,
+            "max_value": true,
+            "default_value": false
+        }
+    ],
+    "ENCRYPT": "0"
+}

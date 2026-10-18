@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "audio_music_hall_reverb",
+    "unique_name": "audio/effect/audio_music_hall_reverb",
+    "params": [
+        {
+            "name": "preset",
+            "type": 5,
+            "min_value": 1,
+            "max_value": 1,
+            "default_value": 1
+        }
+    ],
+    "ENCRYPT": "0"
+}

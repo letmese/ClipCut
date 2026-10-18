@@ -1,0 +1,22 @@
+{
+    "type": "audio_effect",
+    "display_name": "expander",
+    "unique_name": "audio/effect/expander",
+    "params": [
+        {
+            "name": "Threshold",
+            "type": 3,
+            "min_value": -60.0,
+            "max_value": 60.0,
+            "default_value": -8.0
+        },
+        {
+            "name": "Ratio",
+            "type": 3,
+            "min_value": 1.0,
+            "max_value": 10.0,
+            "default_value": 3.0
+        }
+    ],
+    "ENCRYPT": "0"
+}

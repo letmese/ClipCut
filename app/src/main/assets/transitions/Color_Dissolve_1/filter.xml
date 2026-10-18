@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Filter>
+<GUID>04C6C71A-E9ED-466C-AA18-90A451309927</GUID>
+<Name>Color Dissolve 1</Name>
+<Transition>1</Transition>
+<GPUFilter>
+<ConfigFile>Color Dissolve 1.conf</ConfigFile>
+</GPUFilter>
+</Filter>

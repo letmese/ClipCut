@@ -1,0 +1,10 @@
+
+        <?xml version="1.0" encoding="utf-8"?>
+        <Filter>
+        <GUID>F1C64830-8DB2-46B5-9720-04925503ACD0</GUID>
+        <Name>Grid</Name>
+        <Transition>1</Transition>
+        <GPUFilter>
+    	<ConfigFile>Grid.conf</ConfigFile>
+    	</GPUFilter>
+    	</Filter>

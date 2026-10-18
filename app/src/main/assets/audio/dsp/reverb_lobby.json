@@ -1,0 +1,22 @@
+{
+    "type": "audio_effect",
+    "display_name": "reverb_lobby",
+    "unique_name": "audio/effect/reverb_lobby",
+    "params": [
+        {
+            "name": "Type",
+            "type": 5,
+            "min_value": 2,
+            "max_value": 2,
+            "default_value": 2
+        },
+        {
+            "name": "Level",
+            "type": 5,
+            "min_value": 0,
+            "max_value": 10,
+            "default_value": 5
+        }
+    ],
+    "ENCRYPT": "0"
+}

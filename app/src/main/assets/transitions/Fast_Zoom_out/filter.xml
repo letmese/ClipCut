@@ -1,0 +1,11 @@
+
+        <?xml version="1.0" encoding="utf-8"?>
+        <Filter>
+        <GUID>5635D56C-F552-4534-9C0E-24F87CAA9E8E</GUID>
+        <Name>Fast Zoom out</Name>
+        <Transition>1</Transition>
+        <GPUFilter>
+    	<ConfigFile>Fast Zoom out.conf</ConfigFile>
+    	</GPUFilter>
+    	</Filter>
+    	

@@ -1,0 +1,22 @@
+{
+    "type": "audio_effect",
+    "display_name": "audio_circular",
+    "unique_name": "audio/effect/audio_circular",
+    "params": [
+        {
+            "name": "position_level",
+            "type": 5,
+            "min_value": -10,
+            "max_value": 10,
+            "default_value": 0
+        },
+		{
+            "name": "speed_level",
+            "type": 5,
+            "min_value": 0,
+            "max_value": 10,
+            "default_value": 0
+        }
+    ],
+    "ENCRYPT": "0"
+}

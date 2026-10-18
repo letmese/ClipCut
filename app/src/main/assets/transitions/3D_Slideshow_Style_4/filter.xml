@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+        <Filter>
+        <GUID>6E3365D4-B23E-4787-8D6B-2B25240E3463</GUID>
+        <Name>3D Slideshow Style 4</Name>
+        <Transition>1</Transition>
+        <GPUFilter>
+        <ConfigFile>3D Slideshow Style 4.conf</ConfigFile>
+        </GPUFilter>
+        </Filter>
+        

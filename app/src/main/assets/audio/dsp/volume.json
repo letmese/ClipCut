@@ -1,0 +1,66 @@
+{
+    "type": "audio_effect",
+    "display_name": "volume",
+    "unique_name": "audio/effect/volume",
+    "params": [
+        {
+            "name": "Mute",
+            "type": 1,
+            "min_value": false,
+            "max_value": true,
+            "default_value": false
+        },
+        {
+            "name": "VolumeGain",
+            "type": 2,
+            "min_value": -100.0,
+            "max_value": 20.0,
+            "default_value": 0
+        },
+        {
+            "name": "Balance",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 1.0,
+            "default_value": 0.5
+        },
+        {
+            "name": "Mix2Mono",
+            "type": 1,
+            "min_value": false,
+            "max_value": true,
+            "default_value": false
+        },
+        {
+            "name": "LoudnessGainEnable",
+            "type": 1,
+            "min_value": false,
+            "max_value": true,
+            "default_value": false,
+            "ui_type": "NoShow"
+        },
+        {
+            "name": "LoudnessGain",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 1.0,
+            "ui_type": "NoShow"
+        },
+        {
+            "name": "Limit",
+            "type": 1,
+            "min_value": false,
+            "max_value": true,
+            "default_value": true
+        },
+        {
+            "name": "Agc",
+            "type": 1,
+            "min_value": false,
+            "max_value": true,
+            "default_value": true
+        }
+    ],
+    "ENCRYPT": "0"
+}

@@ -1,0 +1,22 @@
+{
+    "type": "audio_effect",
+    "display_name": "echo",
+    "unique_name": "audio/effect/echo",
+    "params": [
+        {
+            "name": "Delay_ms",
+            "type": 5,
+            "min_value": 0,
+            "max_value": 2000,
+            "default_value": 100
+        },
+        {
+            "name": "Gain",
+            "type": 3,
+            "min_value": 0.0,
+            "max_value": 1.0,
+            "default_value": 0.5
+        }
+    ],
+    "ENCRYPT": "0"
+}

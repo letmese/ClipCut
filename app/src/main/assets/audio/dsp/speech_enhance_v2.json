@@ -1,0 +1,7 @@
+{
+    "type": "audio_effect",
+    "display_name": "speech_enhance_v2",
+    "unique_name": "audio/effect/speech_enhance_v2",
+    "params": [],
+    "ENCRYPT": "0"
+}

@@ -52,6 +52,7 @@ fun ProjectListScreen(
     var projectName by remember { mutableStateOf("") }
     var selectedRatio by remember { mutableStateOf(AspectRatio.R_9_16) }
     var selectedBottomTab by remember { mutableIntStateOf(0) }
+    var showAudioExtractor by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = DarkBackground,
@@ -87,15 +88,15 @@ fun ProjectListScreen(
                     ) {
                         Text(
                             "ClipCut",
-                            color = Color.White,
+                            color = TextPrimary,
                             fontWeight = FontWeight.Bold,
                             fontSize = 20.sp
                         )
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(AccentPrimary.copy(alpha = 0.2f))
-                                .border(1.dp, AccentPrimary.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                                .background(AccentPrimary.copy(alpha = 0.18f))
+                                .border(1.dp, AccentPrimary.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
@@ -108,7 +109,21 @@ fun ProjectListScreen(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(Surface3)
+                                .background(VibrantViolet.copy(alpha = 0.18f))
+                                .border(1.dp, VibrantViolet.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                "STUDIO",
+                                color = Color(0xFFC6BFFF),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 9.sp
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(ObsidianSurfaceHigh)
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
@@ -120,11 +135,19 @@ fun ProjectListScreen(
                         }
                     }
 
-                    IconButton(onClick = onOpenSettings) {
+                    IconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(ObsidianSurface)
+                            .border(1.dp, GlassBorderSubtle, RoundedCornerShape(10.dp))
+                    ) {
                         Icon(
                             Icons.Filled.Settings,
                             contentDescription = "Settings",
-                            tint = Color.White
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -169,9 +192,7 @@ fun ProjectListScreen(
                     }
                 },
                 onAudioExtractor = {
-                    viewModel.createProject("Audio Studio", selectedRatio) { id ->
-                        onOpenProject(id)
-                    }
+                    showAudioExtractor = true
                 },
                 onBrandKit = {
                     viewModel.createProject("Branded Video", selectedRatio) { id ->
@@ -260,6 +281,28 @@ fun ProjectListScreen(
         )
     }
 
+    if (showAudioExtractor) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showAudioExtractor = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.95f)
+                    .fillMaxHeight(0.88f)
+                    .clip(RoundedCornerShape(20.dp)),
+                color = ObsidianSurfaceLow,
+                border = androidx.compose.foundation.BorderStroke(1.dp, HairlineBorder)
+            ) {
+                Box(modifier = Modifier.padding(16.dp)) {
+                    AudioExtractorSheet(
+                        onDismiss = { showAudioExtractor = false }
+                    )
+                }
+            }
+        }
+    }
+
     if (showCreateDialog) {
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
@@ -340,13 +383,13 @@ private fun HeroNewProjectCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(
                 Brush.verticalGradient(
-                    listOf(Surface2, Surface1)
+                    listOf(Color(0xFF1E2230), Color(0xFF131520))
                 )
             )
-            .border(1.dp, AccentPrimary.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+            .border(1.5.dp, AccentPrimary.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
             .padding(20.dp)
     ) {
         Column {
@@ -356,39 +399,63 @@ private fun HeroNewProjectCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text(
-                        "Start Creating",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(AccentPrimary)
+                        )
+                        Text(
+                            "STUDIO WORKSPACE",
+                            color = AccentPrimary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Import video, photos, or RAW media",
+                        "Start New Project",
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "4K 60FPS • Multi-Track NLE Engine",
                         color = TextSecondary,
-                        fontSize = 12.sp
+                        fontSize = 11.sp
                     )
                 }
 
                 // Aspect ratio badges
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     listOf(
                         AspectRatio.R_9_16 to "9:16",
                         AspectRatio.R_16_9 to "16:9",
-                        AspectRatio.R_1_1 to "1:1"
+                        AspectRatio.R_1_1 to "1:1",
+                        AspectRatio.R_4_5 to "4:5"
                     ).forEach { (ratio, label) ->
                         val isSel = selectedRatio == ratio
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(if (isSel) AccentPrimary else Surface3)
+                                .background(if (isSel) AccentPrimary else ObsidianSurfaceHigh)
+                                .border(
+                                    1.dp,
+                                    if (isSel) AccentPrimary else GlassBorderSubtle,
+                                    RoundedCornerShape(8.dp)
+                                )
                                 .clickable { onSelectRatio(ratio) }
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                .padding(horizontal = 8.dp, vertical = 5.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 label,
-                                color = if (isSel) DarkBackground else Color.White,
+                                color = if (isSel) Color(0xFF0C0E14) else Color.White,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -397,14 +464,47 @@ private fun HeroNewProjectCard(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(18.dp))
 
-            PrimaryButton(
-                text = "+ New Project",
+            // Master Gradient + New Project Button
+            Button(
                 onClick = onCreateNew,
-                icon = Icons.Filled.Add,
-                modifier = Modifier.fillMaxWidth()
-            )
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                contentPadding = PaddingValues(0.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(AccentPrimary, AccentSecondary, VibrantViolet)
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Add,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            "+ New Project",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -419,26 +519,40 @@ private fun QuickToolsGrid(
     onBrandKit: () -> Unit
 ) {
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-        Text(
-            "Quick Studios & Benchmark Tools",
-            color = Color.White,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Studio Tools & Benchmark Modules",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp
+            )
+            Text(
+                "6 Pro Engines",
+                color = AccentPrimary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
         Spacer(Modifier.height(12.dp))
 
         val tools = listOf(
-            ToolTileData("Collage Maker", "Multi-clip layout", Icons.Filled.GridView, AccentPrimary, onOpenCollage),
-            ToolTileData("Photo Studio", "ColorMatrix FX", Icons.Filled.PhotoCamera, AccentViolet, onOpenPhotoEditor),
-            ToolTileData("Teleprompter", "Glass rig scroller", Icons.Filled.PlayArrow, ProGold, onOpenTeleprompter),
-            ToolTileData("Speed Ramp", "VN 2D curves", Icons.Filled.Speed, AccentBlue, onSpeedRamp),
-            ToolTileData("Audio Studio", "10-Band EQ & FX", Icons.Filled.GraphicEq, AccentGold, onAudioExtractor),
-            ToolTileData("Brand Kit", "VN watermark & logo", Icons.Filled.Verified, Color(0xFF00E676), onBrandKit)
+            ToolTileData("AI Magic Studio", "Smart Cutout & Sky", Icons.Filled.AutoFixHigh, AccentPrimary, onSpeedRamp),
+            ToolTileData("Speed Curves", "Cubic Bezier Graph", Icons.Filled.Speed, VibrantViolet, onSpeedRamp),
+            ToolTileData("Color Grading", "3-Way Wheels & LUTs", Icons.Filled.Palette, LuminescentAmber, onSpeedRamp),
+            ToolTileData("Collage Maker", "Multi-clip layout", Icons.Filled.GridView, EmeraldWave, onOpenCollage),
+            ToolTileData("Photo Studio", "ColorMatrix RAW FX", Icons.Filled.PhotoCamera, Color(0xFFFF5252), onOpenPhotoEditor),
+            ToolTileData("Teleprompter", "Glass rig scroller", Icons.Filled.Videocam, Color(0xFF29B6F6), onOpenTeleprompter)
         )
 
         for (row in 0 until 2) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 for (col in 0 until 3) {
@@ -446,6 +560,63 @@ private fun QuickToolsGrid(
                     ToolTile(item = item, modifier = Modifier.weight(1f))
                 }
             }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // Auxiliary Tools Row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            AuxiliaryToolChip(
+                title = "Extract Audio to MP3",
+                icon = Icons.Filled.Audiotrack,
+                tint = Color(0xFF00E676),
+                onClick = onAudioExtractor,
+                modifier = Modifier.weight(1f)
+            )
+            AuxiliaryToolChip(
+                title = "Brand Kit & Watermark",
+                icon = Icons.Filled.Verified,
+                tint = LuminescentAmber,
+                onClick = onBrandKit,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun AuxiliaryToolChip(
+    title: String,
+    icon: ImageVector,
+    tint: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(44.dp),
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xFF1B1E2A),
+        border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorderSubtle)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+            Text(
+                title,
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1
+            )
         }
     }
 }
@@ -462,10 +633,10 @@ private data class ToolTileData(
 private fun ToolTile(item: ToolTileData, modifier: Modifier = Modifier) {
     Surface(
         onClick = item.onClick,
-        modifier = modifier.height(86.dp),
-        shape = RoundedCornerShape(12.dp),
-        color = Surface2,
-        border = androidx.compose.foundation.BorderStroke(1.dp, HairlineBorder)
+        modifier = modifier.height(92.dp),
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF1B1E2A),
+        border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorderSubtle)
     ) {
         Column(
             modifier = Modifier
@@ -476,15 +647,16 @@ private fun ToolTile(item: ToolTileData, modifier: Modifier = Modifier) {
         ) {
             Box(
                 modifier = Modifier
-                    .size(28.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(item.tint.copy(alpha = 0.2f)),
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(item.tint.copy(alpha = 0.18f))
+                    .border(1.dp, item.tint.copy(alpha = 0.35f), RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(item.icon, contentDescription = item.title, tint = item.tint, modifier = Modifier.size(16.dp))
+                Icon(item.icon, contentDescription = item.title, tint = item.tint, modifier = Modifier.size(17.dp))
             }
-            Spacer(Modifier.height(6.dp))
-            Text(item.title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Spacer(Modifier.height(8.dp))
+            Text(item.title, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             Text(item.subtitle, color = TextSecondary, fontSize = 9.sp, maxLines = 1)
         }
     }
@@ -605,10 +777,10 @@ private fun ProjectCard(
 
     Box(
         modifier = modifier
-            .height(160.dp)
+            .height(165.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(Surface2)
-            .border(1.dp, HairlineBorder, RoundedCornerShape(14.dp))
+            .background(Color(0xFF1B1E2A))
+            .border(1.dp, GlassBorderSubtle, RoundedCornerShape(14.dp))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
@@ -620,14 +792,14 @@ private fun ProjectCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Surface3),
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF131520)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     Icons.Filled.Movie,
                     contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.3f),
+                    tint = Color.White.copy(alpha = 0.25f),
                     modifier = Modifier.size(32.dp)
                 )
 
@@ -638,14 +810,15 @@ private fun ProjectCard(
                         .align(Alignment.BottomStart)
                         .padding(6.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(Color.Black.copy(alpha = 0.7f))
-                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                        .background(Color(0xCC0C0E14))
+                        .border(0.5.dp, GlassBorderSubtle, RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
                         "${secs}s",
                         color = Color.White,
                         fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Bold
                     )
                 }
 
@@ -653,23 +826,27 @@ private fun ProjectCard(
                 Box(modifier = Modifier.align(Alignment.TopEnd)) {
                     IconButton(
                         onClick = { menuExpanded = true },
-                        modifier = Modifier.size(32.dp).padding(2.dp)
+                        modifier = Modifier
+                            .size(32.dp)
+                            .padding(2.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x800C0E14))
                     ) {
                         Icon(
                             Icons.Filled.MoreVert,
                             contentDescription = "Project Options",
                             tint = Color.White,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
 
                     DropdownMenu(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false },
-                        modifier = Modifier.background(Surface2)
+                        modifier = Modifier.background(Color(0xFF1B1E2A))
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Open Project", color = Color.White) },
+                            text = { Text("Open Project", color = Color.White, fontWeight = FontWeight.Medium) },
                             leadingIcon = { Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = AccentPrimary) },
                             onClick = {
                                 menuExpanded = false
@@ -677,24 +854,24 @@ private fun ProjectCard(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Duplicate", color = Color.White) },
-                            leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = AccentViolet) },
+                            text = { Text("Duplicate", color = Color.White, fontWeight = FontWeight.Medium) },
+                            leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = VibrantViolet) },
                             onClick = {
                                 menuExpanded = false
                                 onDuplicate(project)
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Rename", color = Color.White) },
-                            leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, tint = ProGold) },
+                            text = { Text("Rename", color = Color.White, fontWeight = FontWeight.Medium) },
+                            leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, tint = LuminescentAmber) },
                             onClick = {
                                 menuExpanded = false
                                 onRename(project)
                             }
                         )
-                        HorizontalDivider(color = HairlineBorder)
+                        HorizontalDivider(color = GlassBorderSubtle)
                         DropdownMenuItem(
-                            text = { Text("Delete", color = Color(0xFFFF5252)) },
+                            text = { Text("Delete", color = Color(0xFFFF5252), fontWeight = FontWeight.Bold) },
                             leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, tint = Color(0xFFFF5252)) },
                             onClick = {
                                 menuExpanded = false
@@ -708,17 +885,27 @@ private fun ProjectCard(
             Text(
                 project.name,
                 color = Color.White,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Bold,
                 fontSize = 13.sp,
                 maxLines = 1
             )
             Spacer(Modifier.height(2.dp))
-            Text(
-                project.aspectRatio.label,
-                color = AccentPrimary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    project.aspectRatio.label,
+                    color = AccentPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "• ${project.videoClips.size} clips",
+                    color = TextSecondary,
+                    fontSize = 10.sp
+                )
+            }
         }
     }
 }
@@ -731,7 +918,7 @@ private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
         "Settings" to Icons.Filled.Settings
     )
     Surface(
-        color = DarkSurface,
+        color = Surface1,
         tonalElevation = 0.dp
     ) {
         Row(
@@ -748,16 +935,22 @@ private fun HomeBottomBar(tab: Int, onTabChange: (Int) -> Unit) {
                 val color = if (selected) AccentPrimary else TextSecondary
                 Column(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (selected) AccentPrimary.copy(alpha = 0.15f) else Color.Transparent)
+                        .border(
+                            1.dp,
+                            if (selected) AccentPrimary.copy(alpha = 0.5f) else Color.Transparent,
+                            RoundedCornerShape(12.dp)
+                        )
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
                         ) { onTabChange(i) }
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(24.dp))
+                    Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(22.dp))
                     Spacer(Modifier.height(3.dp))
                     Text(
                         label,
@@ -926,19 +1119,25 @@ fun TemplatesShowcaseView(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(categories.size) { i ->
-                val cat = categories[i]
+            val categoriesWithAi = listOf("All", "AI Magic", "Cinematic", "Reels & Shorts", "Beat Sync", "Travel Vlog", "Gaming")
+            items(categoriesWithAi.size) { i ->
+                val cat = categoriesWithAi[i]
                 val selected = cat == selectedCategory
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(20.dp))
-                        .background(if (selected) AccentPrimary else Surface2)
+                        .background(if (selected) AccentPrimary else Color(0xFF1B1E2A))
+                        .border(
+                            1.dp,
+                            if (selected) AccentPrimary else GlassBorderSubtle,
+                            RoundedCornerShape(20.dp)
+                        )
                         .clickable { selectedCategory = cat }
-                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
                     Text(
                         cat,
-                        color = if (selected) Color.Black else Color.White,
+                        color = if (selected) Color(0xFF0C0E14) else Color.White,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                         fontSize = 12.sp
                     )
@@ -970,70 +1169,110 @@ private fun TemplateShowcaseCard(
     index: Int,
     onUse: () -> Unit
 ) {
-    val accentColors = listOf(AccentPrimary, AccentSecondary, AccentGold, AccentViolet, AccentBlue)
-    val cardColor = accentColors[index % accentColors.size]
     val durationSec = template.durationUs / 1_000_000L
     val clipCount = template.clipSlots.size
+    val isVertical = template.aspectRatio == "9:16"
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(Surface2)
-            .border(1.dp, HairlineBorder, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color(0xFF1B1E2A))
+            .border(1.dp, GlassBorderSubtle, RoundedCornerShape(18.dp))
             .padding(16.dp)
     ) {
         Column {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            // Visual Preview Banner
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                Color(0xFF202538),
+                                Color(0xFF12141F)
+                            )
+                        )
+                    )
+                    .border(1.dp, GlassBorderSubtle, RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center
             ) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(AccentPrimary.copy(alpha = 0.2f))
+                                .border(1.dp, AccentPrimary.copy(alpha = 0.6f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Filled.PlayArrow,
+                                contentDescription = null,
+                                tint = AccentPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                template.name,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                "Multi-Layer Auto Sync",
+                                color = TextSecondary,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+
+                    // Aspect ratio chip
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(cardColor.copy(alpha = 0.2f)),
-                        contentAlignment = Alignment.Center
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (isVertical) AccentPrimary.copy(alpha = 0.2f) else VibrantViolet.copy(alpha = 0.2f))
+                            .border(
+                                1.dp,
+                                if (isVertical) AccentPrimary.copy(alpha = 0.6f) else VibrantViolet.copy(alpha = 0.6f),
+                                RoundedCornerShape(6.dp)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Icon(
-                            Icons.Filled.AutoAwesome,
-                            contentDescription = null,
-                            tint = cardColor,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    Column {
                         Text(
-                            template.name,
-                            color = Color.White,
+                            template.aspectRatio,
+                            color = if (isVertical) AccentPrimary else Color(0xFFC6BFFF),
                             fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
-                        )
-                        Text(
-                            "${durationSec}s • $clipCount clips • ${template.aspectRatio}",
-                            color = TextSecondary,
                             fontSize = 11.sp
                         )
                     }
                 }
 
+                // Bottom strip with timeline info
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(cardColor.copy(alpha = 0.15f))
-                        .border(1.dp, cardColor.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xCC0C0E14))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        template.aspectRatio,
-                        color = cardColor,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 10.sp
+                        "${durationSec}s • $clipCount CLIPS",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
@@ -1048,9 +1287,10 @@ private fun TemplateShowcaseCard(
                 template.effects.take(3).forEach { eff ->
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Surface3)
-                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF222638))
+                            .border(0.5.dp, GlassBorderSubtle, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Text(
                             eff.replace("_", " ").uppercase(),
@@ -1063,15 +1303,16 @@ private fun TemplateShowcaseCard(
                 template.transitions.take(2).forEach { trans ->
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Surface3)
-                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(VibrantViolet.copy(alpha = 0.15f))
+                            .border(0.5.dp, VibrantViolet.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Text(
                             trans.replace("_", " ").uppercase(),
-                            color = AccentSecondary,
+                            color = Color(0xFFC6BFFF),
                             fontSize = 9.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -1079,34 +1320,43 @@ private fun TemplateShowcaseCard(
 
             Spacer(Modifier.height(14.dp))
 
-            // 1-Tap Use Template Action Button
+            // 1-Tap Use Template Action Button with Electric Gradient
             Button(
                 onClick = onUse,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp),
+                    .height(46.dp),
                 shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = cardColor,
-                    contentColor = Color.Black
-                )
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                contentPadding = PaddingValues(0.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(AccentPrimary, AccentSecondary, VibrantViolet)
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        Icons.Filled.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = Color.Black
-                    )
-                    Text(
-                        "Use This Template",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        color = Color.Black
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.AutoAwesome,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            "Use This Template",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = Color.White
+                        )
+                    }
                 }
             }
         }

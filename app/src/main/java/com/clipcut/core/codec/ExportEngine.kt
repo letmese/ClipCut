@@ -419,11 +419,13 @@ class ExportEngine(
                     val transProgress = if (clip.transitionType != com.clipcut.core.model.TransitionType.NONE && clip.transitionDurationUs > 0) {
                         (timelineOffsetUs.toFloat() / clip.transitionDurationUs.toFloat()).coerceIn(0f, 1f)
                     } else 0f
+                    renderBackgroundIfPresent(timelinePtsUs, passthrough, overlayRenderer)
+                    val videoMvp = computeVideoMvp(timelinePtsUs, overlayRenderer, clip)
                     pipeline.applyPostProcessing(
                         sourceTexId = revTexId,
                         sourceTexMatrix = GlUtil.IDENTITY_MATRIX,
                         sourceIsOes = false,
-                        mvpMatrix = GlUtil.IDENTITY_MATRIX,
+                        mvpMatrix = videoMvp,
                         rotationDegrees = clip.rotationDegrees,
                         clip = clip,
                         transitionProgress = transProgress,
@@ -487,11 +489,13 @@ class ExportEngine(
                 val transProgress = if (clip.transitionType != com.clipcut.core.model.TransitionType.NONE && clip.transitionDurationUs > 0) {
                     (timelineOffsetUs.toFloat() / clip.transitionDurationUs.toFloat()).coerceIn(0f, 1f)
                 } else 0f
+                renderBackgroundIfPresent(timelinePtsUs, passthrough, overlayRenderer)
+                val videoMvp = computeVideoMvp(timelinePtsUs, overlayRenderer, clip)
                 pipeline.applyPostProcessing(
                     sourceTexId = oesTexId,
                     sourceTexMatrix = texMatrix,
                     sourceIsOes = true,
-                    mvpMatrix = GlUtil.IDENTITY_MATRIX,
+                    mvpMatrix = videoMvp,
                     rotationDegrees = clip.rotationDegrees,
                     clip = clip,
                     transitionProgress = transProgress,
@@ -548,11 +552,13 @@ class ExportEngine(
                     val transProgress = if (clip.transitionType != com.clipcut.core.model.TransitionType.NONE && clip.transitionDurationUs > 0) {
                         (timelineOffsetUs.toFloat() / clip.transitionDurationUs.toFloat()).coerceIn(0f, 1f)
                     } else 0f
+                    renderBackgroundIfPresent(timelinePtsUs, passthrough, overlayRenderer)
+                    val videoMvp = computeVideoMvp(timelinePtsUs, overlayRenderer, clip)
                     pipeline.applyPostProcessing(
                         sourceTexId = imgTexId,
                         sourceTexMatrix = GlUtil.IDENTITY_MATRIX,
                         sourceIsOes = false,
-                        mvpMatrix = GlUtil.IDENTITY_MATRIX,
+                        mvpMatrix = videoMvp,
                         rotationDegrees = clip.rotationDegrees,
                         clip = clip,
                         transitionProgress = transProgress,
@@ -593,6 +599,41 @@ class ExportEngine(
         }
 
         return currentLastPtsNs
+    }
+
+    private fun renderBackgroundIfPresent(
+        timelinePtsUs: Long,
+        passthrough: PassthroughFilter,
+        overlayRenderer: OverlayRenderer
+    ) {
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        GLES20.glViewport(0, 0, config.width, config.height)
+        GLES20.glClearColor(0f, 0f, 0f, 1f)
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        val activeBg = project.overlays.firstOrNull {
+            overlayRenderer.isBackgroundOverlay(it) && timelinePtsUs in it.timelineStartUs..it.timelineEndUs
+        }
+        if (activeBg != null) {
+            val bgTexId = overlayRenderer.getBackgroundTexture(activeBg)
+            if (bgTexId != -1) {
+                passthrough.draw(bgTexId, GlUtil.FLIP_Y_MATRIX, GlUtil.IDENTITY_MATRIX, config.width, config.height)
+            }
+        }
+    }
+
+    private fun computeVideoMvp(timelinePtsUs: Long, overlayRenderer: OverlayRenderer, clip: TimelineItem): FloatArray {
+        val activeBg = project.overlays.firstOrNull {
+            overlayRenderer.isBackgroundOverlay(it) && timelinePtsUs in it.timelineStartUs..it.timelineEndUs
+        }
+        val videoMvp = FloatArray(16)
+        if (activeBg != null) {
+            android.opengl.Matrix.setIdentityM(videoMvp, 0)
+            val s = if (clip.chromaKeyColor != null) 0.88f else 0.80f
+            android.opengl.Matrix.scaleM(videoMvp, 0, s, s, 1.0f)
+        } else {
+            android.opengl.Matrix.setIdentityM(videoMvp, 0)
+        }
+        return videoMvp
     }
 
     private fun renderPiPAndOverlays(
@@ -665,16 +706,26 @@ class ExportEngine(
             }
         }
 
-        // 2. Overlays & Blur Image Stickers
-        val activeOverlays = project.overlays.filter { timelinePtsUs in it.timelineStartUs..it.timelineEndUs }
-        val activeImageBlurs = project.blurTracks.filter { it.blurType == com.clipcut.core.model.BlurType.IMAGE && timelinePtsUs in it.timelineStartUs..it.timelineEndUs }
-        if (activeOverlays.isNotEmpty() || activeImageBlurs.isNotEmpty()) {
+        // 2. Overlays & Blur Image / Paint Stickers
+        val activeOverlays = project.overlays.filter { !overlayRenderer.isBackgroundOverlay(it) && timelinePtsUs in it.timelineStartUs..it.timelineEndUs }
+        val activeBlurs = project.blurTracks.filter {
+            (it.blurType == com.clipcut.core.model.BlurType.IMAGE || it.paintStrokes.isNotEmpty()) &&
+            timelinePtsUs in it.timelineStartUs..it.timelineEndUs
+        }
+        val hasBrandKit = project.brandKitConfig != null && (
+            project.brandKitConfig.watermarkText.isNotBlank() ||
+            !project.brandKitConfig.logoUri.isNullOrBlank() ||
+            project.brandKitConfig.iconType != com.clipcut.core.model.BrandIconType.NONE ||
+            project.brandKitConfig.tagline.isNotBlank()
+        )
+        if (activeOverlays.isNotEmpty() || activeBlurs.isNotEmpty() || hasBrandKit) {
             overlayRenderer.renderOverlays(
-                overlays = project.overlays,
-                blurTracks = activeImageBlurs,
+                overlays = activeOverlays,
+                blurTracks = activeBlurs,
                 currentPtsUs = timelinePtsUs,
                 viewportWidth = config.width,
-                viewportHeight = config.height
+                viewportHeight = config.height,
+                brandKitConfig = project.brandKitConfig
             )
             GLES20.glEnable(GLES20.GL_BLEND)
             GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)

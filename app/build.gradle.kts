@@ -12,8 +12,8 @@ android {
         applicationId = "com.clipcut"
         minSdk = 26
         targetSdk = 35
-        versionCode = 101
-        versionName = "1.2.90"
+        versionCode = 105
+        versionName = "1.2.94"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }

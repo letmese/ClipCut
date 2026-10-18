@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Filter>
+<GUID>2DF0B554-780C-455C-921C-E83F62B59FD8</GUID>
+<Name>Fast Wipe Right</Name>
+<Transition>1</Transition>
+<GPUFilter>
+<ConfigFile>Fast Wipe Right.conf</ConfigFile>
+</GPUFilter>
+</Filter>
+    	

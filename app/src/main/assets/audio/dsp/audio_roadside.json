@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "audio_roadside",
+    "unique_name": "audio/effect/audio_roadside",
+    "params": [
+        {
+            "name": "effect_type",
+            "type": 5,
+            "min_value": 5,
+            "max_value": 5,
+            "default_value": 5
+        }
+    ],
+    "ENCRYPT": "0"
+}

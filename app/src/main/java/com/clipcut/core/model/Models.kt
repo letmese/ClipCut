@@ -93,7 +93,11 @@ enum class FontFamilyOption(val label: String, val assetPath: String? = null) {
     TYPEWRITER("Typewriter", "fonts/Typewriter.otf"),
     PLAYBALL("Playball", "fonts/Playball-Regular.ttf"),
     BARLOW("Barlow Bold", "fonts/Barlow-Bold.ttf"),
-    HONEY_JAR("Honey Jar", "fonts/HoneyJar.otf")
+    HONEY_JAR("Honey Jar", "fonts/HoneyJar.otf"),
+    URDU_NASTALIQ("Urdu Nastaliq", "fonts/NotoNastaliqUrdu-Regular.ttf"),
+    ARABIC_AMIRI("Amiri Arabic", "fonts/Amiri-Regular.ttf"),
+    ARABIC_MODERN("Arabic Modern", "fonts/NotoSansArabic-Regular.ttf"),
+    ARABIC_KUFI("Kufi Bold", "fonts/NotoKufiArabic-Bold.ttf")
 }
 
 data class CropRect(

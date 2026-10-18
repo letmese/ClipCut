@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "under_glacier",
+    "unique_name": "audio/effect/under_glacier",
+    "params": [
+        {
+            "name": "effect_type",
+            "type": 5,
+            "min_value": 3,
+            "max_value": 3,
+            "default_value": 3
+        }
+    ],
+    "ENCRYPT": "0"
+}

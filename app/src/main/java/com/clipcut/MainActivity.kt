@@ -32,7 +32,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         AppLog.i(TAG, "MainActivity.onCreate")
         setContent {
-            ClipCutTheme {
+            val settingsVm: com.clipcut.ui.viewmodel.SettingsViewModel = viewModel()
+            ClipCutTheme(settingsViewModel = settingsVm) {
                 val navController = rememberNavController()
                 val startRoute = remember { getStartRoute() }
 
@@ -60,6 +61,7 @@ class MainActivity : ComponentActivity() {
                     }
                     composable(Screen.Settings.route) {
                         SettingsScreen(
+                            viewModel = settingsVm,
                             onNavigateBack = { navController.popBackStack() },
                             onOpenLogs = { navController.navigate(Screen.LogViewer.route) }
                         )

@@ -16,7 +16,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _theme = MutableStateFlow(prefs.getString(KEY_THEME, "system") ?: "system")
     val theme: StateFlow<String> = _theme.asStateFlow()
 
-    private val _accent = MutableStateFlow(prefs.getString(KEY_ACCENT, "#E94560") ?: "#E94560")
+    private val _accent = MutableStateFlow(prefs.getString(KEY_ACCENT, "#FACC15") ?: "#FACC15")
     val accent: StateFlow<String> = _accent.asStateFlow()
 
     private val _exportRes = MutableStateFlow(prefs.getString(KEY_RES, "1080p") ?: "1080p")
@@ -64,8 +64,16 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _highBitrateExport = MutableStateFlow(prefs.getBoolean(KEY_HIGH_BITRATE, true))
     val highBitrateExport: StateFlow<Boolean> = _highBitrateExport.asStateFlow()
 
-    fun setTheme(v: String) { _theme.value = v; prefs.edit().putString(KEY_THEME, v).apply() }
-    fun setAccent(v: String) { _accent.value = v; prefs.edit().putString(KEY_ACCENT, v).apply() }
+    fun setTheme(v: String) {
+        _theme.value = v
+        prefs.edit().putString(KEY_THEME, v).apply()
+        com.clipcut.ui.theme.ThemeState.update(v, _accent.value, com.clipcut.ui.theme.ThemeState.isDark)
+    }
+    fun setAccent(v: String) {
+        _accent.value = v
+        prefs.edit().putString(KEY_ACCENT, v).apply()
+        com.clipcut.ui.theme.ThemeState.update(_theme.value, v, com.clipcut.ui.theme.ThemeState.isDark)
+    }
     fun setExportRes(v: String) { _exportRes.value = v; prefs.edit().putString(KEY_RES, v).apply() }
     fun setExportCodec(v: String) { _exportCodec.value = v; prefs.edit().putString(KEY_CODEC, v).apply() }
     fun setExportFps(v: Int) { _exportFps.value = v; prefs.edit().putInt(KEY_FPS, v).apply() }

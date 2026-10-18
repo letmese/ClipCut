@@ -1,0 +1,10 @@
+
+        <?xml version="1.0" encoding="utf-8"?>
+        <Filter>
+        <GUID>6AAC15D0-6228-4536-8C79-39A5BCBC703A</GUID>
+        <Name>BeamTransition5</Name>
+        <Transition>1</Transition>
+        <GPUFilter>
+    	<ConfigFile>BeamTransition5.conf</ConfigFile>
+    	</GPUFilter>
+    	</Filter>

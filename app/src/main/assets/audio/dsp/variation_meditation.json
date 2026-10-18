@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "variation_meditation",
+    "unique_name": "audio/effect/variation_meditation",
+    "params": [
+        {
+            "name": "EffectType",
+            "type": 5,
+            "min_value": 11,
+            "max_value": 11,
+            "default_value": 11
+        }
+    ],
+    "ENCRYPT": "0"
+}

@@ -1,0 +1,6 @@
+{
+  "type": "audio_effect",
+  "display_name": "phone",
+  "unique_name": "audio/effect/phone",
+  "ENCRYPT": "1"
+}

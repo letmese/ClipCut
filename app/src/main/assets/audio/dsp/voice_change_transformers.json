@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "voice_change_transformers",
+    "unique_name": "audio/effect/voice_change_transformers",
+    "params": [
+        {
+            "name": "VoiceChange_Type",
+            "type": 5,
+            "min_value": 7,
+            "max_value": 7,
+            "default_value": 7
+        }
+    ],
+    "ENCRYPT": "0"
+}

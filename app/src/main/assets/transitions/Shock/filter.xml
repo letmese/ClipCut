@@ -1,0 +1,11 @@
+
+        <?xml version="1.0" encoding="utf-8"?>
+        <Filter>
+        <GUID>9750249B-7D24-4AE4-8314-A2C96FE0862A</GUID>
+        <Name>Shock</Name>
+        <Transition>1</Transition>
+        <GPUFilter>
+    	<ConfigFile>Shock.conf</ConfigFile>
+    	</GPUFilter>
+    	</Filter>
+    	

@@ -1,0 +1,78 @@
+{
+    "type": "audio_effect",
+    "display_name": "equalizer",
+    "unique_name": "audio/effect/equalizer",
+    "params": [
+        {
+            "name": "31Hz",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 0.0
+        },
+        {
+            "name": "63Hz",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 0.0
+        },
+        {
+            "name": "125Hz",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 0.0
+        },
+        {
+            "name": "250Hz",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 0.0
+        },
+        {
+            "name": "500Hz",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 0.0
+        },
+        {
+            "name": "1kHz",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 0.0
+        },
+        {
+            "name": "2kHz",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 0.0
+        },
+        {
+            "name": "4kHz",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 0.0
+        },
+        {
+            "name": "8kHz",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 0.0
+        },
+        {
+            "name": "16kHz",
+            "type": 2,
+            "min_value": 0.0,
+            "max_value": 0.0,
+            "default_value": 0.0
+        }      
+    ],
+    "ENCRYPT": "0"
+}

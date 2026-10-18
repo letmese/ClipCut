@@ -1,0 +1,22 @@
+{
+    "type": "audio_effect",
+    "display_name": "click_removal",
+    "unique_name": "audio/effect/click_removal",
+    "params": [
+        {
+            "name": "DetectionMult",
+            "type": 3,
+            "min_value": 6.0,
+            "max_value": 10.0,
+            "default_value": 8.0
+        },
+        {
+            "name": "ClickLen",
+            "type": 5,
+            "min_value": 5,
+            "max_value": 30,
+            "default_value": 10
+        }
+    ],
+    "ENCRYPT": "0"
+}

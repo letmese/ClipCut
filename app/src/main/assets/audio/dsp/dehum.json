@@ -1,0 +1,15 @@
+{
+    "type": "audio_effect",
+    "display_name": "dehum",
+    "unique_name": "audio/effect/dehum",
+    "params": [
+        {
+            "name": "Dehum_Gaindb",
+            "type": 3,
+            "min_value": -60.0,
+            "max_value": 0.0,
+            "default_value": -25.0
+        }
+    ],
+    "ENCRYPT": "0"
+}

@@ -95,8 +95,8 @@ class OverlayRenderer(private val context: Context) {
     private val imageCache = mutableMapOf<String, Bitmap>()
     private val typefaceCache = mutableMapOf<String, Typeface>()
 
-    private fun getTypefaceFor(option: FontFamilyOption): Typeface {
-        return com.clipcut.ui.util.FontHelper.getTypeface(context, option)
+    private fun getTypefaceFor(option: FontFamilyOption, sampleText: String? = null): Typeface {
+        return com.clipcut.ui.util.FontHelper.getTypeface(context, option, sampleText)
     }
 
     private val stickerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -182,7 +182,12 @@ class OverlayRenderer(private val context: Context) {
             it.paintStrokes.isNotEmpty() && currentPtsUs in it.timelineStartUs..it.timelineEndUs
         }
 
-        val hasBrandKit = brandKitConfig != null && (brandKitConfig.watermarkText.isNotBlank() || brandKitConfig.logoUri != null)
+        val hasBrandKit = brandKitConfig != null && (
+            brandKitConfig.watermarkText.isNotBlank() ||
+            !brandKitConfig.logoUri.isNullOrBlank() ||
+            brandKitConfig.iconType != com.clipcut.core.model.BrandIconType.NONE ||
+            brandKitConfig.tagline.isNotBlank()
+        )
         if (activeOverlays.isEmpty() && activeImageBlurs.isEmpty() && activePaintBlurs.isEmpty() && !hasBrandKit) {
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexId)
             GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
@@ -227,6 +232,13 @@ class OverlayRenderer(private val context: Context) {
                 }
             }
 
+            val text = applyAnimation(o, currentPtsUs)
+            val assetPath = when {
+                text.startsWith("asset://") || (!text.contains(" ") && (text.endsWith(".png") || text.endsWith(".webp"))) -> text
+                o.imageUri != null && (o.imageUri.startsWith("asset://") || o.imageUri.endsWith(".png") || o.imageUri.endsWith(".webp")) -> o.imageUri
+                else -> null
+            }
+
             textPaint.reset()
             textPaint.isAntiAlias = true
             textPaint.color = o.textColor.toInt()
@@ -234,16 +246,9 @@ class OverlayRenderer(private val context: Context) {
             textPaint.textSize = o.textSizeSp * scale * animScaleMul * (width / 1080f)
             textPaint.isFakeBoldText = o.textBold
             textPaint.textSkewX = if (o.textItalic) -0.25f else 0f
-            textPaint.typeface = getTypefaceFor(o.fontFamily)
+            textPaint.typeface = getTypefaceFor(o.fontFamily, text)
             if (o.dropShadow) {
                 textPaint.setShadowLayer(8f * (width / 1080f), 3f * (width / 1080f), 3f * (width / 1080f), 0xCC000000.toInt())
-            }
-
-            val text = applyAnimation(o, currentPtsUs)
-            val assetPath = when {
-                text.startsWith("asset://") || (!text.contains(" ") && (text.endsWith(".png") || text.endsWith(".webp"))) -> text
-                o.imageUri != null && (o.imageUri.startsWith("asset://") || o.imageUri.endsWith(".png") || o.imageUri.endsWith(".webp")) -> o.imageUri
-                else -> null
             }
             if (assetPath != null) {
                 val bmp = getOrLoadBitmap(assetPath)
@@ -318,37 +323,44 @@ class OverlayRenderer(private val context: Context) {
                     canvas.restore()
                 }
             } else if (text.isNotEmpty()) {
+                val lines = text.split("\n")
                 val fm = textPaint.fontMetrics
-                val textWidth = textPaint.measureText(text)
-                val textHeight = fm.descent - fm.ascent
-                val drawX = (cx + animOffsetX) - textWidth / 2
-                val drawY = (cy + animOffsetY) - textHeight / 2 - fm.ascent
+                val lineHeight = fm.descent - fm.ascent
+                val totalTextHeight = lineHeight * lines.size
+                val maxLineWidth = lines.maxOfOrNull { textPaint.measureText(it) } ?: 0f
 
                 if (o.backgroundColor != 0L) {
                     bgPaint.color = o.backgroundColor.toInt()
                     bgPaint.alpha = (Color.alpha(o.backgroundColor.toInt()) * animAlpha).toInt()
                     val pad = o.backgroundPaddingPx.toFloat()
                     canvas.drawRect(
-                        (cx + animOffsetX) - textWidth / 2 - pad, (cy + animOffsetY) - textHeight / 2 - pad,
-                        (cx + animOffsetX) + textWidth / 2 + pad, (cy + animOffsetY) + textHeight / 2 + pad, bgPaint
+                        (cx + animOffsetX) - maxLineWidth / 2 - pad, (cy + animOffsetY) - totalTextHeight / 2 - pad,
+                        (cx + animOffsetX) + maxLineWidth / 2 + pad, (cy + animOffsetY) + totalTextHeight / 2 + pad, bgPaint
                     )
                 }
                 canvas.save()
                 canvas.rotate(rot, (cx + animOffsetX), (cy + animOffsetY))
 
-                // Draw stroke outline if specified
-                if (o.strokeWidthPx > 0f && o.strokeColor != 0L) {
-                    val strokePaint = Paint(textPaint).apply {
-                        style = Paint.Style.STROKE
-                        strokeWidth = o.strokeWidthPx * (width / 1080f)
-                        color = o.strokeColor.toInt()
-                        alpha = (255 * animAlpha.coerceIn(0f, 1f)).toInt()
-                        clearShadowLayer()
-                    }
-                    canvas.drawText(text, drawX, drawY, strokePaint)
-                }
+                var currentBaselineY = (cy + animOffsetY) - totalTextHeight / 2 - fm.ascent
+                for (line in lines) {
+                    val lineW = textPaint.measureText(line)
+                    val lineDrawX = (cx + animOffsetX) - lineW / 2
 
-                canvas.drawText(text, drawX, drawY, textPaint)
+                    // Draw stroke outline if specified
+                    if (o.strokeWidthPx > 0f && o.strokeColor != 0L) {
+                        val strokePaint = Paint(textPaint).apply {
+                            style = Paint.Style.STROKE
+                            strokeWidth = o.strokeWidthPx * (width / 1080f)
+                            color = o.strokeColor.toInt()
+                            alpha = (255 * animAlpha.coerceIn(0f, 1f)).toInt()
+                            clearShadowLayer()
+                        }
+                        canvas.drawText(line, lineDrawX, currentBaselineY, strokePaint)
+                    }
+
+                    canvas.drawText(line, lineDrawX, currentBaselineY, textPaint)
+                    currentBaselineY += lineHeight
+                }
                 canvas.restore()
             }
         }
@@ -626,7 +638,12 @@ class OverlayRenderer(private val context: Context) {
         }
 
         // Render VN Creator Brand Kit Signature Watermark
-        if (brandKitConfig != null && (brandKitConfig.watermarkText.isNotBlank() || brandKitConfig.logoUri != null)) {
+        if (brandKitConfig != null && (
+            brandKitConfig.watermarkText.isNotBlank() ||
+            !brandKitConfig.logoUri.isNullOrBlank() ||
+            brandKitConfig.iconType != com.clipcut.core.model.BrandIconType.NONE ||
+            brandKitConfig.tagline.isNotBlank()
+        )) {
             renderBrandKitWatermark(canvas, brandKitConfig, width, height)
         }
 
@@ -693,15 +710,25 @@ class OverlayRenderer(private val context: Context) {
         w: Int,
         h: Int
     ) {
-        val brandText = config.watermarkText.ifEmpty { "ClipCut Creator" }
+        val brandText = config.watermarkText.trim()
         val tagline = config.tagline.trim()
+        val hasBrandText = brandText.isNotEmpty()
         val hasTagline = tagline.isNotEmpty()
+
+        var iconBmp: Bitmap? = null
+        if (!config.logoUri.isNullOrBlank()) {
+            iconBmp = getOrLoadBitmap(config.logoUri)
+        }
+        val hasIcon = config.iconType != BrandIconType.NONE || iconBmp != null
+
+        // If no text, no tagline, and no icon/logo, nothing to draw
+        if (!hasBrandText && !hasTagline && !hasIcon) return
 
         val baseScale = (w / 1080f) * config.watermarkScale.coerceIn(0.5f, 2.5f)
         val opacityAlpha = (config.opacity.coerceIn(0.15f, 1.0f) * 255).toInt()
         val brandColorInt = ((config.brandColor and 0x00FFFFFFL) or ((opacityAlpha.toLong()) shl 24)).toInt()
 
-        val primaryTf = getTypefaceFor(config.fontFamily)
+        val primaryTf = getTypefaceFor(config.fontFamily, brandText)
 
         val primaryTextSize = 28f * baseScale
         val primaryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -709,29 +736,29 @@ class OverlayRenderer(private val context: Context) {
             textSize = primaryTextSize
             typeface = primaryTf
         }
-        val textWidth = primaryPaint.measureText(brandText)
+        val textWidth = if (hasBrandText) primaryPaint.measureText(brandText) else 0f
 
         val tagTextSize = 16f * baseScale
+        val tagTf = getTypefaceFor(FontFamilyOption.DEFAULT, tagline)
         val tagPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb((opacityAlpha * 0.75f).toInt(), 220, 225, 235)
             textSize = tagTextSize
-            typeface = Typeface.DEFAULT_BOLD
+            typeface = tagTf
         }
         val tagWidth = if (hasTagline) tagPaint.measureText(tagline) else 0f
 
-        var iconBmp: Bitmap? = null
-        if (!config.logoUri.isNullOrBlank()) {
-            iconBmp = getOrLoadBitmap(config.logoUri)
-        }
-        val hasIcon = config.iconType != BrandIconType.NONE || iconBmp != null
-        val iconSize = (if (hasTagline) 34f else 28f) * baseScale
+        val iconSize = (if (hasTagline) 34f else if (hasBrandText) 28f else 48f) * baseScale
 
         val padH = 18f * baseScale
         val padV = 10f * baseScale
-        val iconSpacing = if (hasIcon) (10f * baseScale + iconSize) else 0f
+        val iconSpacing = if (hasIcon && (hasBrandText || hasTagline)) (10f * baseScale + iconSize) else if (hasIcon) iconSize else 0f
         val contentW = maxOf(textWidth, tagWidth) + iconSpacing
         val totalW = contentW + padH * 2f
-        val totalH = if (hasTagline) (primaryTextSize + tagTextSize + 16f * baseScale + padV * 2f) else (primaryTextSize + 18f * baseScale + padV * 2f)
+        val totalH = when {
+            hasTagline && hasBrandText -> (primaryTextSize + tagTextSize + 16f * baseScale + padV * 2f)
+            hasBrandText -> (primaryTextSize + 18f * baseScale + padV * 2f)
+            else -> iconSize + padV * 2f
+        }
 
         val (normX, normY) = config.watermarkPosition
         val posX = normX * w
@@ -862,15 +889,19 @@ class OverlayRenderer(private val context: Context) {
 
         val textStartX = if (hasIcon) (iconLeft + iconSize + 10f * baseScale) else (badgeRect.left + padH)
 
-        if (hasTagline) {
+        if (hasTagline && hasBrandText) {
             val textTopY = badgeRect.top + padV + primaryTextSize * 0.85f
             canvas.drawText(brandText, textStartX, textTopY, primaryPaint)
             val tagY = textTopY + tagTextSize * 1.25f
             canvas.drawText(tagline, textStartX, tagY, tagPaint)
-        } else {
+        } else if (hasBrandText) {
             val fm = primaryPaint.fontMetrics
             val textY = badgeRect.centerY() - (fm.descent + fm.ascent) / 2f
             canvas.drawText(brandText, textStartX, textY, primaryPaint)
+        } else if (hasTagline) {
+            val fm = tagPaint.fontMetrics
+            val tagY = badgeRect.centerY() - (fm.descent + fm.ascent) / 2f
+            canvas.drawText(tagline, textStartX, tagY, tagPaint)
         }
     }
 
