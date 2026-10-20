@@ -10,3 +10,6 @@
 build/
 app/build/
 *.log
+videos/
+*.mp4
+*.apk

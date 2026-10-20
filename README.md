@@ -21,7 +21,23 @@
 
 ---
 
-## ✨ Key Features & Capabilities
+## 📱 App Preview (Live Firebase Test Lab Pixel 5 Screenshots)
+
+<div align="center">
+  <img src="screenshots/0.png" width="220" alt="Home Dashboard" />
+  <img src="screenshots/2.png" width="220" alt="Video Editor Timeline" />
+  <img src="screenshots/4.png" width="220" alt="Media Asset Picker" />
+  <img src="screenshots/7.png" width="220" alt="Playback Controls" />
+</div>
+
+<div align="center">
+  <img src="screenshots/9.png" width="220" alt="Filters & Effects" />
+  <img src="screenshots/11.png" width="220" alt="Speed Ramping Curves" />
+  <img src="screenshots/26.png" width="220" alt="Audio Mixer" />
+  <img src="screenshots/29.png" width="220" alt="Render & Export Dialog" />
+</div>
+
+---
 
 - 🔒 **100% Offline & Private:** Zero account requirement, zero network telemetry, and no server-side rendering. Everything stays on the user's device.
 - ⚡ **Zero-Copy Hardware Pipeline:** Surface-to-Surface hardware acceleration using Android's native `MediaCodec` and `MediaExtractor` / `MediaMuxer` pipeline for maximum export speed and thermal efficiency.
