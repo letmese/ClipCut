@@ -24,17 +24,17 @@
 ## 📱 App Preview (Live Firebase Test Lab Pixel 5 Screenshots)
 
 <div align="center">
-  <img src="screenshots/0.png" width="220" alt="Home Dashboard" />
-  <img src="screenshots/2.png" width="220" alt="Video Editor Timeline" />
-  <img src="screenshots/4.png" width="220" alt="Media Asset Picker" />
-  <img src="screenshots/7.png" width="220" alt="Playback Controls" />
+  <img src="screenshots/2.png" width="220" alt="ClipCut Studio Main Workspace" />
+  <img src="screenshots/4.png" width="220" alt="Media Asset Picker & Timeline" />
+  <img src="screenshots/7.png" width="220" alt="Hardware Codec & Export Preferences" />
+  <img src="screenshots/9.png" width="220" alt="Filters & OpenGL Shader Effects" />
 </div>
 
 <div align="center">
-  <img src="screenshots/9.png" width="220" alt="Filters & Effects" />
   <img src="screenshots/11.png" width="220" alt="Speed Ramping Curves" />
-  <img src="screenshots/26.png" width="220" alt="Audio Mixer" />
-  <img src="screenshots/29.png" width="220" alt="Render & Export Dialog" />
+  <img src="screenshots/26.png" width="220" alt="Multi-Track Audio Mixer" />
+  <img src="screenshots/29.png" width="220" alt="Project Render & Export Dialog" />
+  <img src="screenshots/30.png" width="220" alt="Color Grading & Teleprompter Studio" />
 </div>
 
 ---
